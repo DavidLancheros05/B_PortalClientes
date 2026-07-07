@@ -52,11 +52,15 @@ export class NotificacionesController {
     @Body()
     body: {
       nombre: string;
+      usuario_login?: string;
       usuario_email: string;
       usuario_password: string;
       portal_url: string;
     },
   ) {
-    return this.notificacionesService.notificarCredencialesUsuario(body);
+    return this.notificacionesService.notificarCredencialesUsuario({
+      ...body,
+      usuario_login: body.usuario_login || body.usuario_email,
+    });
   }
 }

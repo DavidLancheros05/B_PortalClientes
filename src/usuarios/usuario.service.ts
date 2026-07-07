@@ -318,6 +318,7 @@ export class UsuarioService {
       this.notificacionesService
         .notificarCredencialesUsuario({
           nombre: dto.usr_nombre,
+          usuario_login: dto.usr_usuario,
           usuario_email: dto.usr_correo,
           usuario_password: dto.usuario_password,
           portal_url: process.env.PORTAL_CLIENTES_URL || '',

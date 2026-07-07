@@ -554,6 +554,7 @@ export class NotificacionesService {
 
   async notificarCredencialesUsuario(payload: {
     nombre: string;
+    usuario_login: string;
     usuario_email: string;
     usuario_password: string;
     portal_url: string;
@@ -565,6 +566,7 @@ export class NotificacionesService {
 
     const variables = {
       usuario_nombre: String(payload.nombre || 'Usuario').trim(),
+      usuario_login: String(payload.usuario_login || '').trim(),
       usuario_email: email,
       usuario_password: String(payload.usuario_password || ''),
       portal_url: String(payload.portal_url || '').trim(),
