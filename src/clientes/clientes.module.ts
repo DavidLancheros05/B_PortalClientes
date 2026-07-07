@@ -4,9 +4,14 @@ import { ClientesService } from './clientes.service';
 import { ClientesController } from './clientes.controller';
 import { ClienteEntity } from './entities/clientes.entity';
 import { AuthModule } from '../auth/auth.module';
+import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([ClienteEntity]), AuthModule],
+  imports: [
+    TypeOrmModule.forFeature([ClienteEntity]),
+    AuthModule,
+    NotificacionesModule,
+  ],
   providers: [ClientesService],
   controllers: [ClientesController],
 })

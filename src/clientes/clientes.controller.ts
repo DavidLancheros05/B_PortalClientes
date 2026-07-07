@@ -26,6 +26,12 @@ export class ClientesController {
     return this.clientesService.findAll();
   }
 
+  // Debe ir antes de @Get(':id') para no ser interpretada como un id.
+  @Get('ejecutivos-negocio')
+  async getEjecutivosNegocio() {
+    return this.clientesService.getEjecutivosNegocio();
+  }
+
   @Post()
   async create(
     @Body() dto: CreateClienteDto,

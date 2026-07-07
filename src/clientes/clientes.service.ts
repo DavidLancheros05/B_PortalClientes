@@ -8,13 +8,26 @@ import { UpdateClienteDto } from './dto/update-cliente.dto';
 import { ClienteListResponseDto } from './dto/cliente-list.response.dto';
 import { ClienteDetailResponseDto } from './dto/cliente-detail.response.dto';
 import { CentroOperacionResponseDto } from './dto/centro-operacion.response.dto';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
 
 @Injectable()
 export class ClientesService {
   constructor(
     @InjectRepository(ClienteEntity)
     private readonly clienteRepo: Repository<ClienteEntity>,
+    private readonly notificacionesService: NotificacionesService,
   ) {}
+
+  // ========================
+  // CATÁLOGO DE EJECUTIVOS DE NEGOCIO
+  // ========================
+  async getEjecutivosNegocio(): Promise<
+    { ejng_id: number; ejng_nombre: string }[]
+  > {
+    return this.clienteRepo.query(
+      `SELECT ejng_id, ejng_nombre FROM Ejecutivo_negocio ORDER BY ejng_nombre`,
+    );
+  }
 
   // ========================
   // LISTAR (con estado y ejecutivoId)
@@ -185,15 +198,32 @@ export class ClientesService {
   // CREAR
   // ========================
   async create(dto: CreateClienteDto): Promise<ClienteDetailResponseDto> {
+    const habilitaAcceso = dto.cli_acceso_portal_clientes ?? false;
+    // El login de clientes compara la contraseña en texto plano
+    // (auth.service.ts), así que se genera y se guarda igual.
+    const passwordGenerada = habilitaAcceso
+      ? Math.random().toString(36).slice(-8)
+      : null;
+
     const entity = plainToInstance(ClienteEntity, {
       cli_razon_social: dto.cli_razon_social,
       cli_nro_identificacion: dto.cli_nro_identificacion,
       cli_tipo_identificacion: dto.cli_tipo_identificacion,
       cli_direccion: dto.cli_direccion,
       cli_correo: dto.cli_correo,
-      cli_acceso_portal_clientes: dto.cli_acceso_portal_clientes ?? false,
+      cli_acceso_portal_clientes: habilitaAcceso,
+      cli_password: passwordGenerada,
       ejng_id: dto.ejng_id,
       cli_estado: 'A',
+      // Columnas obligatorias sin default en la BD: valores genéricos
+      // hasta que el formulario permita capturarlas de verdad.
+      pai_id: 1,
+      dpto_id: 6,
+      ciu_id: 4,
+      cli_porcentaje_entrega: 0,
+      cli_tonelada_objetivo: 0,
+      cli_estado_aprobacion: 'P',
+      cli_fecha_usr: new Date(),
     });
 
     const saved = await this.clienteRepo.save(entity);
@@ -202,11 +232,29 @@ export class ClientesService {
     if (dto.centro_operacion_ids && Array.isArray(dto.centro_operacion_ids)) {
       for (const copId of dto.centro_operacion_ids) {
         await this.clienteRepo.query(
-          `INSERT INTO dbo.Detalle_cliente_centro (cli_id, cop_id, dclc_estado)
-           VALUES (@0, @1, 'A')`,
+          `INSERT INTO dbo.Detalle_cliente_centro (cli_id, cop_id, dclc_estado, dclc_fecha_usr)
+           VALUES (@0, @1, 'A', GETDATE())`,
           [saved.cli_id, copId],
         );
       }
+    }
+
+    if (habilitaAcceso && dto.cli_correo && passwordGenerada) {
+      // No debe bloquear la creación del cliente si el correo falla.
+      this.notificacionesService
+        .notificarCredencialesUsuario({
+          nombre: dto.cli_razon_social,
+          usuario_login: dto.cli_nro_identificacion,
+          usuario_email: dto.cli_correo,
+          usuario_password: passwordGenerada,
+          portal_url: process.env.PORTAL_CLIENTES_URL || '',
+        })
+        .catch((error) =>
+          console.error(
+            '[ClientesService] Error enviando correo de credenciales:',
+            error,
+          ),
+        );
     }
 
     return this.findOne(saved.cli_id);

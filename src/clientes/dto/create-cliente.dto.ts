@@ -32,8 +32,7 @@ export class CreateClienteDto {
   cli_acceso_portal_clientes?: boolean;
 
   @IsNumber()
-  @IsOptional()
-  ejng_id?: number;
+  ejng_id: number;
 
   @IsArray()
   centro_operacion_ids: number[];
