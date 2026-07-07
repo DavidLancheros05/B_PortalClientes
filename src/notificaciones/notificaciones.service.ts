@@ -357,7 +357,9 @@ export class NotificacionesService {
       LEFT JOIN clientes c ON c.cli_id = s.sol_cliente_id
       LEFT JOIN Centro_operacion co ON co.cop_id = s.sol_co_id
       LEFT JOIN usuarios u ON u.ejng_id = s.sol_ejecutivo_id
-      WHERE s.sol_id = @0
+      LEFT JOIN pc_usuario_rol ur ON ur.ur_usuario_id = u.usr_id AND ur.ur_activo = 1
+      LEFT JOIN pc_roles r ON r.rol_id = ur.ur_rol_id AND r.rol_nombre = 'EJECUTIVO'
+      WHERE s.sol_id = @0 AND r.rol_id IS NOT NULL
       `,
       [solicitudId],
     );
