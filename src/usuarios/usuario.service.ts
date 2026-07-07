@@ -9,6 +9,7 @@ import {
   AssignCentroDto,
   AssignMultipleCentrosDto,
 } from './dto/assign-centro.dto';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
 
 @Injectable()
 export class UsuarioService {
@@ -19,6 +20,7 @@ export class UsuarioService {
     private usuariosCentrosRepository: Repository<UsuariosCentrosEntity>,
     @InjectRepository(CentroOperacionEntity)
     private centrosRepository: Repository<CentroOperacionEntity>,
+    private notificacionesService: NotificacionesService,
   ) {}
 
   async findByEmail(email: string): Promise<UsuarioEntity | null> {
@@ -236,32 +238,97 @@ export class UsuarioService {
   }
 
   async findAll() {
-    const usuarios = await this.usuarioRepository.find({
-      relations: ['rol'],
-      order: { usr_nombre: 'ASC' },
-    });
+    // UsuarioEntity no tiene relación "rol": el rol vive en la tabla puente
+    // pc_usuario_rol (no hay FK directa en usuarios), por eso se resuelve
+    // con SQL crudo en vez de relations de TypeORM.
+    const rows = await this.usuarioRepository.query(`
+      SELECT
+        u.usr_id AS usr_id,
+        u.usr_nombre AS nombre,
+        u.usr_correo AS usuario_email,
+        u.usr_inactivar AS usr_inactivar,
+        u.usr_fecha_usr AS usuario_created_at,
+        r.rol_id AS rol_id,
+        r.rol_nombre AS rol_nombre
+      FROM usuarios u
+      LEFT JOIN pc_usuario_rol ur ON ur.ur_usuario_id = u.usr_id AND ur.ur_activo = 1
+      LEFT JOIN pc_roles r ON r.rol_id = ur.ur_rol_id
+      ORDER BY u.usr_nombre ASC
+    `);
 
-    return usuarios;
+    return rows.map((row: any) => ({
+      usr_id: row.usr_id,
+      nombre: row.nombre,
+      usuario_email: row.usuario_email,
+      usuario_activo: !row.usr_inactivar,
+      usuario_created_at: row.usuario_created_at,
+      rol: row.rol_id
+        ? { rol_id: row.rol_id, rol_nombre: row.rol_nombre }
+        : undefined,
+    }));
   }
 
   async createUser(dto: {
     usr_nombre: string;
     usr_correo?: string;
     usuario_password: string;
+    usr_usuario: string;
+    usuario_rol_id: number;
+    ejng_id?: number;
   }) {
-    const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash(dto.usuario_password, salt);
+    const existente = await this.usuarioRepository.findOne({
+      where: { usr_usuario: dto.usr_usuario },
+    });
+    if (existente) {
+      throw new BadRequestException(
+        `El nombre de usuario "${dto.usr_usuario}" ya está en uso`,
+      );
+    }
 
+    // El login (auth.service.ts) compara la contraseña en texto plano,
+    // igual que se hace para los clientes: se guarda sin hash para que
+    // el usuario recién creado pueda autenticarse.
     const usuario = this.usuarioRepository.create({
+      usr_id_usuario: dto.usr_usuario,
+      usr_usuario: dto.usr_usuario,
       usr_nombre: dto.usr_nombre,
       usr_correo: dto.usr_correo,
-      usr_password: passwordHash,
+      usr_password: dto.usuario_password,
       usr_inactivar: false,
       usr_estado: 'A',
       usr_fecha_usr: new Date(),
+      usr_acceso_portal_clientes: true,
+      usr_ejecutivo: !!dto.ejng_id,
+      usr_recupera_todo: false,
+      usr_exportacion: false,
+      usr_elimina_cliente: false,
+      ...(dto.ejng_id ? { ejng_id: dto.ejng_id } : {}),
     });
 
     const saved = await this.usuarioRepository.save(usuario);
+
+    await this.usuarioRepository.query(
+      `INSERT INTO pc_usuario_rol (ur_usuario_id, ur_rol_id, ur_activo, ur_created_at)
+       VALUES (@0, @1, 1, GETDATE())`,
+      [saved.usr_id, dto.usuario_rol_id],
+    );
+
+    if (dto.usr_correo) {
+      // No debe bloquear la creación del usuario si el correo falla.
+      this.notificacionesService
+        .notificarCredencialesUsuario({
+          nombre: dto.usr_nombre,
+          usuario_email: dto.usr_correo,
+          usuario_password: dto.usuario_password,
+          portal_url: process.env.PORTAL_CLIENTES_URL || '',
+        })
+        .catch((error) =>
+          console.error(
+            '[UsuarioService] Error enviando correo de credenciales:',
+            error,
+          ),
+        );
+    }
 
     return { usr_id: saved.usr_id, message: 'Usuario creado exitosamente' };
   }
@@ -310,12 +377,11 @@ export class UsuarioService {
     });
     if (!usuario) throw new Error('Usuario no encontrado');
 
-    // Eliminar asignaciones de centros primero
-    await this.usuariosCentrosRepository
-      .createQueryBuilder()
-      .delete()
-      .where('uco_usr_id = :userId', { userId: usrId })
-      .execute();
+    // Eliminar asignación de rol primero (FK hacia usuarios)
+    await this.usuarioRepository.query(
+      `DELETE FROM pc_usuario_rol WHERE ur_usuario_id = @0`,
+      [usrId],
+    );
 
     // Eliminar usuario
     await this.usuarioRepository.delete(usrId);

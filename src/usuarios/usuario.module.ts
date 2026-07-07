@@ -9,12 +9,14 @@ import { RolEntity } from '../roles/entities/rol.entity';
 import { CentroOperacionEntity } from '../centros-operacion/entities/centro-operacion.entity';
 import { AuthModule } from '../auth/auth.module';
 import { MailModule } from '../mail/mail.module';
+import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 import { CorreosPorRolService } from '../parametrizacion/correos-por-rol/correos-por-rol.service';
 
 @Module({
   imports: [
     forwardRef(() => AuthModule),
     MailModule,
+    NotificacionesModule,
     TypeOrmModule.forFeature([
       UsuarioEntity,
       UsuariosCentrosEntity,

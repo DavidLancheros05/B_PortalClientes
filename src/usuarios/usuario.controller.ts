@@ -43,16 +43,18 @@ export class UsuarioController {
     @Body()
     body: {
       nombre: string;
+      usuario_login: string;
       usuario_email: string;
       usuario_password: string;
       usuario_rol_id: number;
+      ejng_id?: number;
       cliente_id?: number;
     },
   ) {
     try {
       if (
         !body.nombre ||
-        !body.usuario_email ||
+        !body.usuario_login ||
         !body.usuario_password ||
         !body.usuario_rol_id
       ) {
@@ -63,15 +65,18 @@ export class UsuarioController {
       }
       return await this.usersService.createUser({
         usr_nombre: body.nombre,
+        usr_usuario: body.usuario_login,
         usr_correo: body.usuario_email,
         usuario_password: body.usuario_password,
+        usuario_rol_id: body.usuario_rol_id,
+        ejng_id: body.ejng_id,
       });
     } catch (error: any) {
-      if (error.message?.includes('duplicada')) {
-        throw new HttpException(
-          'El email ya está registrado',
-          HttpStatus.CONFLICT,
-        );
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      if (error.message?.includes('ya está en uso')) {
+        throw new HttpException(error.message, HttpStatus.CONFLICT);
       }
       throw new HttpException(
         error.message || 'Error al crear usuario',

@@ -564,7 +564,7 @@ export class NotificacionesService {
     }
 
     const variables = {
-      nombre: String(payload.nombre || 'Usuario').trim(),
+      usuario_nombre: String(payload.nombre || 'Usuario').trim(),
       usuario_email: email,
       usuario_password: String(payload.usuario_password || ''),
       portal_url: String(payload.portal_url || '').trim(),
