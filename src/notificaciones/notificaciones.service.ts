@@ -241,7 +241,7 @@ export class NotificacionesService {
         s.sol_estado_id,
         s.sol_fecha_creacion AS fecha_creacion,
         c.cli_razon_social AS cliente_nombre,
-        c.cli_email AS cliente_email,
+        c.cli_correo AS cliente_email,
         co.cop_nombre AS centro_operacion_nombre
       FROM solicitudes s
       LEFT JOIN clientes c ON c.cli_id = s.sol_cliente_id
@@ -351,12 +351,12 @@ export class NotificacionesService {
         s.sol_fecha_creacion AS fecha_creacion,
         c.cli_razon_social AS cliente_nombre,
         co.cop_nombre AS centro_operacion_nombre,
-        u.usr_email AS ejecutivo_email,
+        u.usr_correo AS ejecutivo_email,
         u.usr_nombre AS ejecutivo_nombre
       FROM solicitudes s
       LEFT JOIN clientes c ON c.cli_id = s.sol_cliente_id
       LEFT JOIN Centro_operacion co ON co.cop_id = s.sol_co_id
-      LEFT JOIN usuarios u ON u.usr_id = s.sol_ejecutivo_id
+      LEFT JOIN usuarios u ON u.ejng_id = s.sol_ejecutivo_id
       WHERE s.sol_id = @0
       `,
       [solicitudId],
