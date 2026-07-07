@@ -75,6 +75,9 @@ export class ClientesService {
         c.cli_acceso_portal_clientes AS [cli_acceso_portal_clientes],
         c.cli_correo AS [cli_correo],
         c.cli_estado AS [cli_estado],
+        c.pai_id AS [pai_id],
+        c.dpto_id AS [dpto_id],
+        c.ciu_id AS [ciu_id],
         e.ejng_nombre AS [ejng_nombre],
         c.ejng_id AS [ejng_id]
       FROM dbo.Clientes c
@@ -111,6 +114,9 @@ export class ClientesService {
       cli_correo: cliente.cli_correo,
       cli_acceso_portal_clientes: cliente.cli_acceso_portal_clientes,
       cli_estado: cliente.cli_estado,
+      pai_id: cliente.pai_id,
+      dpto_id: cliente.dpto_id,
+      ciu_id: cliente.ciu_id,
       ejng_id: cliente.ejng_id,
       ejecutivo: cliente.ejng_nombre
         ? { nombre: cliente.ejng_nombre }
