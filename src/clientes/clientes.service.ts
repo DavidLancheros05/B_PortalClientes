@@ -215,11 +215,11 @@ export class ClientesService {
       cli_password: passwordGenerada,
       ejng_id: dto.ejng_id,
       cli_estado: 'A',
-      // Columnas obligatorias sin default en la BD: valores genéricos
-      // hasta que el formulario permita capturarlas de verdad.
-      pai_id: 1,
-      dpto_id: 6,
-      ciu_id: 4,
+      pai_id: dto.pai_id,
+      dpto_id: dto.dpto_id,
+      ciu_id: dto.ciu_id,
+      // Columnas obligatorias sin default en la BD, sin captura en el
+      // formulario todavía: valores genéricos.
       cli_porcentaje_entrega: 0,
       cli_tonelada_objetivo: 0,
       cli_estado_aprobacion: 'P',

@@ -34,6 +34,15 @@ export class CreateClienteDto {
   @IsNumber()
   ejng_id: number;
 
+  @IsNumber()
+  pai_id: number;
+
+  @IsNumber()
+  dpto_id: number;
+
+  @IsNumber()
+  ciu_id: number;
+
   @IsArray()
   centro_operacion_ids: number[];
 }
