@@ -269,9 +269,26 @@ export class ClientesService {
   ): Promise<ClienteDetailResponseDto> {
     const { centro_operacion_ids, ...updateData } = dto;
 
-    const updateEntity = plainToInstance(ClienteEntity, updateData, {
-      excludeExtraneousValues: false,
-    });
+    const actual = await this.clienteRepo.findOne({ where: { cli_id } });
+    const habilitandoAccesoAhora =
+      dto.cli_acceso_portal_clientes === true &&
+      !actual?.cli_acceso_portal_clientes;
+    const correoDestino = dto.cli_correo ?? actual?.cli_correo ?? undefined;
+
+    let passwordGenerada: string | null = null;
+    if (habilitandoAccesoAhora && correoDestino) {
+      // Se genera solo si no tenía acceso antes; si ya lo tenía, se
+      // conserva la contraseña existente en vez de invalidarla.
+      passwordGenerada = Math.random().toString(36).slice(-8);
+    }
+
+    const updateEntity = plainToInstance(
+      ClienteEntity,
+      passwordGenerada
+        ? { ...updateData, cli_password: passwordGenerada }
+        : updateData,
+      { excludeExtraneousValues: false },
+    );
 
     await this.clienteRepo.update(cli_id, updateEntity);
 
@@ -283,11 +300,30 @@ export class ClientesService {
 
       for (const copId of centro_operacion_ids) {
         await this.clienteRepo.query(
-          `INSERT INTO dbo.Detalle_cliente_centro (cli_id, cop_id, dclc_estado)
-           VALUES (@0, @1, 'A')`,
+          `INSERT INTO dbo.Detalle_cliente_centro (cli_id, cop_id, dclc_estado, dclc_fecha_usr)
+           VALUES (@0, @1, 'A', GETDATE())`,
           [cli_id, copId],
         );
       }
+    }
+
+    if (passwordGenerada && correoDestino) {
+      const nombre = dto.cli_razon_social ?? actual?.cli_razon_social ?? '';
+      this.notificacionesService
+        .notificarCredencialesUsuario({
+          nombre,
+          usuario_login:
+            dto.cli_nro_identificacion ?? actual?.cli_nro_identificacion ?? '',
+          usuario_email: correoDestino,
+          usuario_password: passwordGenerada,
+          portal_url: process.env.PORTAL_CLIENTES_URL || '',
+        })
+        .catch((error) =>
+          console.error(
+            '[ClientesService] Error enviando correo de credenciales:',
+            error,
+          ),
+        );
     }
 
     return this.findOne(cli_id);
