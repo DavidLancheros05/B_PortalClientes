@@ -164,10 +164,10 @@ export class ClientesService {
     const result = await this.clienteRepo.query(
       `
       SELECT
-        cop_id AS [cop_id],
-        cop_nombre AS [cop_nombre]
+        co.cop_id AS [cop_id],
+        co.cop_nombre AS [cop_nombre]
       FROM dbo.Detalle_cliente_centro dcc
-      INNER JOIN dbo.Centros_operacion co ON co.cop_id = dcc.cop_id
+      INNER JOIN dbo.Centro_operacion co ON co.cop_id = dcc.cop_id
       WHERE dcc.cli_id = @0 AND dcc.dclc_estado = 'A'
     `,
       [cli_id],
