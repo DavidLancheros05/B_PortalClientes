@@ -1,7 +1,7 @@
 // src/solicitudes/solicitudes.service.ts
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
-import { mkdir, cp, stat } from 'fs/promises';
+import { mkdir, cp, stat, readFile } from 'fs/promises';
 import { join } from 'path';
 import { addBusinessDays } from '../common/utils/business-days.util';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
@@ -1114,9 +1114,10 @@ export class SolicitudesService {
 
       yPos -= 15;
 
-      // Separar preguntas NOTA, TABLA (con filas) y preguntas normales
+      // Separar preguntas NOTA, TABLA (con filas), IMAGEN (con archivo) y preguntas normales
       const notaPreguntas: any[] = [];
       const tablaPreguntas: any[] = [];
+      const imagenPreguntas: any[] = [];
       const normalPreguntas: any[] = [];
       for (const preg of seccion.preguntas) {
         if (preg.fp_tipo === 'NOTA') {
@@ -1129,6 +1130,8 @@ export class SolicitudesService {
           preg.tabla_filas.length > 0
         ) {
           tablaPreguntas.push(preg);
+        } else if (preg.fp_tipo === 'IMAGEN' && preg.imagen_ruta) {
+          imagenPreguntas.push(preg);
         } else {
           normalPreguntas.push(preg);
         }
@@ -1296,6 +1299,83 @@ export class SolicitudesService {
         });
 
         yPos -= 10;
+      }
+
+      // Renderizar preguntas IMAGEN embebiendo la imagen real en el PDF
+      for (const imagenPregunta of imagenPreguntas) {
+        const tituloLines = wrapText(
+          String(imagenPregunta.fp_descripcion),
+          contentWidth,
+          9,
+        );
+        for (const line of tituloLines) {
+          if (yPos < 100) {
+            currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
+            pageNumber++;
+            yPos = pageHeight - 40;
+          }
+          currentPage.drawText(line, {
+            x: marginLeft,
+            y: yPos,
+            size: 9,
+            font: helveticaBold,
+            color: rgb(0, 0.239, 0.6),
+          });
+          yPos -= 11;
+        }
+        yPos -= 3;
+
+        try {
+          const bytes = await readFile(imagenPregunta.imagen_ruta);
+          const esPng = /png/i.test(imagenPregunta.imagen_tipo_mime || '');
+          const embeddedImage = esPng
+            ? await pdfDoc.embedPng(bytes)
+            : await pdfDoc.embedJpg(bytes);
+
+          const maxWidth = Math.min(contentWidth, 220);
+          const maxHeight = 160;
+          const scale = Math.min(
+            maxWidth / embeddedImage.width,
+            maxHeight / embeddedImage.height,
+            1,
+          );
+          const imgWidth = embeddedImage.width * scale;
+          const imgHeight = embeddedImage.height * scale;
+
+          if (yPos - imgHeight < 100) {
+            currentPage.drawText(`Página ${pageNumber}`, {
+              x: pageWidth / 2 - 20,
+              y: 20,
+              size: 8,
+              font: helvetica,
+              color: rgb(0.6, 0.6, 0.6),
+            });
+            currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
+            pageNumber++;
+            yPos = pageHeight - 40;
+          }
+
+          currentPage.drawImage(embeddedImage, {
+            x: marginLeft,
+            y: yPos - imgHeight,
+            width: imgWidth,
+            height: imgHeight,
+          });
+          yPos -= imgHeight + 12;
+        } catch (err) {
+          console.error(
+            `❌ Error embebiendo imagen para pregunta ${imagenPregunta.fp_id}:`,
+            err,
+          );
+          currentPage.drawText('(No se pudo cargar la imagen)', {
+            x: marginLeft,
+            y: yPos,
+            size: 8,
+            font: helvetica,
+            color: rgb(0.6, 0.2, 0.2),
+          });
+          yPos -= 14;
+        }
       }
 
       // Organizar preguntas NORMALES en 3 columnas - ALTURA DINÁMICA

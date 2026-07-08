@@ -1,5 +1,5 @@
 // src/solicitudes/solicitudes-respuestas.service.ts
-import { Injectable } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { createHash } from 'crypto';
 import { mkdir, writeFile, readFile, unlink } from 'fs/promises';
@@ -229,6 +229,17 @@ export class SolicitudesRespuestasService {
         fp_id,
       });
       throw new Error('solicitud_id y fp_id son obligatorios');
+    }
+
+    const preguntaTipoResult = await this.dataSource.query(
+      `SELECT fp_tipo FROM Formulario_pregunta WHERE fp_id = @0`,
+      [fp_id],
+    );
+    const fpTipo = preguntaTipoResult?.[0]?.fp_tipo;
+    if (fpTipo === 'IMAGEN' && !/^image\//.test(file.mimetype || '')) {
+      throw new BadRequestException(
+        'Esta pregunta solo admite archivos de imagen (jpg, png, etc.)',
+      );
     }
 
     const checksum = createHash('sha256').update(file.buffer).digest('hex');

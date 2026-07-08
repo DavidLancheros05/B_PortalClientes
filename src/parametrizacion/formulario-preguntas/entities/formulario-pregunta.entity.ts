@@ -24,6 +24,7 @@ export enum TipoPregunta {
   SELECT_CONDICIONAL = 'SELECT_CONDICIONAL',
   ARCHIVO = 'ARCHIVO',
   TABLA = 'TABLA',
+  IMAGEN = 'IMAGEN',
 }
 
 @Entity({ name: 'Formulario_pregunta' })
@@ -31,7 +32,7 @@ export class FormularioPregunta {
   @PrimaryGeneratedColumn()
   fp_id: number;
 
-  @Column({ type: 'nvarchar', length: 500 })
+  @Column({ type: 'nvarchar', length: 'MAX' })
   fp_descripcion: string;
 
   @Column({ type: 'nvarchar', length: 100, nullable: true })

@@ -26,6 +26,10 @@ export interface PreguntaRenderizable {
   // Datos estructurados (para fp_tipo === 'TABLA')
   tabla_columnas?: string[];
   tabla_filas?: Record<string, string>[];
+
+  // Imagen cargada (para fp_tipo === 'IMAGEN')
+  imagen_ruta?: string | null;
+  imagen_tipo_mime?: string | null;
 }
 
 export interface FormularioRenderable {
@@ -144,6 +148,31 @@ export class FormularioRenderizableService {
       [solicitudId],
     );
 
+    // 5.5 Obtener imágenes cargadas (para fp_tipo === 'IMAGEN')
+    const imagenesResult = await this.dataSource.query(
+      `
+      SELECT sa.fp_id, sa.ruta_almacenamiento, sa.tipo_mime
+      FROM (
+        SELECT fp_id, ruta_almacenamiento, tipo_mime,
+          ROW_NUMBER() OVER (PARTITION BY fp_id ORDER BY created_at DESC) AS rn
+        FROM Solicitud_archivo
+        WHERE solicitud_id = @0 AND estado = 'activo'
+      ) sa
+      WHERE sa.rn = 1
+      `,
+      [solicitudId],
+    );
+    const imagenesMap = new Map<
+      number,
+      { ruta_almacenamiento: string; tipo_mime: string }
+    >();
+    for (const img of imagenesResult) {
+      imagenesMap.set(img.fp_id, {
+        ruta_almacenamiento: img.ruta_almacenamiento,
+        tipo_mime: img.tipo_mime,
+      });
+    }
+
     // 6. Crear mapa de respuestas resueltas
     const respuestasMap = new Map<number, string>();
     const tablaFilasMap = new Map<number, Record<string, string>[]>();
@@ -194,6 +223,14 @@ export class FormularioRenderizableService {
         tabla_columnas:
           p.fp_tipo === 'TABLA' ? this.parseTablaColumnas(p.fp_tabla_columnas) : undefined,
         tabla_filas: p.fp_tipo === 'TABLA' ? tablaFilasMap.get(p.fp_id) : undefined,
+        imagen_ruta:
+          p.fp_tipo === 'IMAGEN'
+            ? (imagenesMap.get(p.fp_id)?.ruta_almacenamiento ?? null)
+            : undefined,
+        imagen_tipo_mime:
+          p.fp_tipo === 'IMAGEN'
+            ? (imagenesMap.get(p.fp_id)?.tipo_mime ?? null)
+            : undefined,
       }),
     );
 
