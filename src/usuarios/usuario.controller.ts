@@ -63,6 +63,12 @@ export class UsuarioController {
           HttpStatus.BAD_REQUEST,
         );
       }
+      if (/\s/.test(body.usuario_login)) {
+        throw new HttpException(
+          'El usuario (login) no puede contener espacios',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
       return await this.usersService.createUser({
         usr_nombre: body.nombre,
         usr_usuario: body.usuario_login,
