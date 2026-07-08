@@ -907,81 +907,118 @@ export class SolicitudesService {
         yPos -= 10;
       }
 
-      // Renderizar preguntas IMAGEN embebiendo la imagen real en el PDF
-      for (const imagenPregunta of imagenPreguntas) {
-        const tituloLines = wrapText(
-          String(imagenPregunta.fp_descripcion),
-          contentWidth,
-          9,
+      // Renderizar preguntas IMAGEN embebiendo la imagen real en el PDF,
+      // dos por fila (p.ej. logo y firma quedan uno al lado del otro)
+      const imagenColWidth = contentWidth / 2;
+      const imagenColGap = 16;
+      const imagenMaxWidth = imagenColWidth - imagenColGap;
+      const imagenMaxHeight = 90;
+
+      for (let i = 0; i < imagenPreguntas.length; i += 2) {
+        const par = [imagenPreguntas[i], imagenPreguntas[i + 1]].filter(
+          Boolean,
         );
-        for (const line of tituloLines) {
-          if (yPos < 100) {
-            currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
-            pageNumber++;
-            yPos = pageHeight - 40;
-          }
-          currentPage.drawText(line, {
-            x: marginLeft,
-            y: yPos,
-            size: 9,
-            font: helveticaBold,
-            color: rgb(0, 0.239, 0.6),
-          });
-          yPos -= 11;
-        }
-        yPos -= 3;
 
-        try {
-          const bytes = await readFile(imagenPregunta.imagen_ruta);
-          const esPng = /png/i.test(imagenPregunta.imagen_tipo_mime || '');
-          const embeddedImage = esPng
-            ? await pdfDoc.embedPng(bytes)
-            : await pdfDoc.embedJpg(bytes);
+        // Pre-cargar/embeber ambas imágenes de la fila antes de dibujar,
+        // para poder calcular la altura real de la fila de antemano.
+        const items = await Promise.all(
+          par.map(async (imagenPregunta) => {
+            const tituloLines = wrapText(
+              String(imagenPregunta.fp_descripcion),
+              imagenMaxWidth,
+              9,
+            );
+            try {
+              const bytes = await readFile(imagenPregunta.imagen_ruta);
+              const esPng = /png/i.test(
+                imagenPregunta.imagen_tipo_mime || '',
+              );
+              const embeddedImage = esPng
+                ? await pdfDoc.embedPng(bytes)
+                : await pdfDoc.embedJpg(bytes);
 
-          const maxWidth = Math.min(contentWidth, 220);
-          const maxHeight = 160;
-          const scale = Math.min(
-            maxWidth / embeddedImage.width,
-            maxHeight / embeddedImage.height,
-            1,
-          );
-          const imgWidth = embeddedImage.width * scale;
-          const imgHeight = embeddedImage.height * scale;
+              const scale = Math.min(
+                imagenMaxWidth / embeddedImage.width,
+                imagenMaxHeight / embeddedImage.height,
+                1,
+              );
+              return {
+                tituloLines,
+                embeddedImage,
+                imgWidth: embeddedImage.width * scale,
+                imgHeight: embeddedImage.height * scale,
+                error: false,
+              };
+            } catch (err) {
+              console.error(
+                `❌ Error embebiendo imagen para pregunta ${imagenPregunta.fp_id}:`,
+                err,
+              );
+              return {
+                tituloLines,
+                embeddedImage: null,
+                imgWidth: 0,
+                imgHeight: 0,
+                error: true,
+              };
+            }
+          }),
+        );
 
-          if (yPos - imgHeight < 100) {
-            currentPage.drawText(`Página ${pageNumber}`, {
-              x: pageWidth / 2 - 20,
-              y: 20,
-              size: 8,
-              font: helvetica,
-              color: rgb(0.6, 0.6, 0.6),
-            });
-            currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
-            pageNumber++;
-            yPos = pageHeight - 40;
-          }
+        const rowHeight =
+          Math.max(...items.map((it) => it.tituloLines.length * 11 + 3)) +
+          Math.max(...items.map((it) => it.imgHeight));
 
-          currentPage.drawImage(embeddedImage, {
-            x: marginLeft,
-            y: yPos - imgHeight,
-            width: imgWidth,
-            height: imgHeight,
-          });
-          yPos -= imgHeight + 12;
-        } catch (err) {
-          console.error(
-            `❌ Error embebiendo imagen para pregunta ${imagenPregunta.fp_id}:`,
-            err,
-          );
-          currentPage.drawText('(No se pudo cargar la imagen)', {
-            x: marginLeft,
-            y: yPos,
+        if (yPos - rowHeight < 100) {
+          currentPage.drawText(`Página ${pageNumber}`, {
+            x: pageWidth / 2 - 20,
+            y: 20,
             size: 8,
             font: helvetica,
-            color: rgb(0.6, 0.2, 0.2),
+            color: rgb(0.6, 0.6, 0.6),
           });
-          yPos -= 14;
+          currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
+          pageNumber++;
+          yPos = pageHeight - 40;
         }
+
+        const rowTopY = yPos;
+
+        items.forEach((item, idx) => {
+          const colX = marginLeft + idx * imagenColWidth;
+          let colY = rowTopY;
+
+          for (const line of item.tituloLines) {
+            currentPage.drawText(line, {
+              x: colX,
+              y: colY,
+              size: 9,
+              font: helveticaBold,
+              color: rgb(0, 0.239, 0.6),
+            });
+            colY -= 11;
+          }
+          colY -= 3;
+
+          if (item.error) {
+            currentPage.drawText('(No se pudo cargar la imagen)', {
+              x: colX,
+              y: colY,
+              size: 8,
+              font: helvetica,
+              color: rgb(0.6, 0.2, 0.2),
+            });
+          } else if (item.embeddedImage) {
+            currentPage.drawImage(item.embeddedImage, {
+              x: colX,
+              y: colY - item.imgHeight,
+              width: item.imgWidth,
+              height: item.imgHeight,
+            });
+          }
+        });
+
+        yPos -= rowHeight + 12;
       }
 
       // Organizar preguntas NORMALES en 3 columnas - ALTURA DINÁMICA
