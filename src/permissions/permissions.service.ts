@@ -59,6 +59,7 @@ export class PermissionsService {
       LEFT JOIN dbo.pc_rol_modulo rm
         ON m.mod_id = rm.rm_mod_id
         AND rm.rm_rol_id = @0
+        AND rm.rm_activo = 1
       WHERE m.mod_estado = 1
       ORDER BY m.mod_posicion, m.mod_nombre
       `,
@@ -179,6 +180,7 @@ export class PermissionsService {
       FROM dbo.pc_modulos m
       LEFT JOIN dbo.pc_rol_modulo rm
         ON m.mod_id = rm.rm_mod_id
+        AND rm.rm_activo = 1
         AND rm.rm_rol_id IN (
           SELECT ur.ur_rol_id
           FROM dbo.pc_usuario_rol ur
