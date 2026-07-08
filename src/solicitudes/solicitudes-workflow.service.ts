@@ -57,6 +57,16 @@ export class SolicitudesWorkflowService {
     await queryRunner.startTransaction();
 
     try {
+      // Capturar el estado previo para saber si esta es una transición real
+      // hacia PENDIENTE (evita notificar dos veces cuando una solicitud nueva
+      // se crea directamente con estado PENDIENTE y luego se llama a este
+      // método de forma redundante con el mismo estado).
+      const estadoPrevioResult = await queryRunner.query(
+        `SELECT sol_estado_id FROM solicitudes WHERE sol_id = @0`,
+        [solicitudId],
+      );
+      const estadoPrevio = estadoPrevioResult?.[0]?.sol_estado_id ?? null;
+
       // Verificar si la solicitud está en estado PENDIENTE + etapa ASC + resultado RECHAZADO
       // Si se está cambiando a REVISIÓN, cambiar también el resultado a PENDIENTE
       let resultadoIdActualizar: number | null = null;
@@ -196,6 +206,14 @@ export class SolicitudesWorkflowService {
           await this.notificacionesService.notificarEstadoSolicitud(
             solicitudId,
             estadoId,
+          );
+        } else if (estadoId === 2 && estadoPrevio !== 2) {
+          // Transición real hacia PENDIENTE (p.ej. cliente envía un borrador
+          // ya existente): notificar registro igual que al crear una
+          // solicitud nueva, para que cliente/comercial/ejecutivo se enteren.
+          await this.notificacionesService.notificarRegistroSolicitud(
+            solicitudId,
+            true,
           );
         }
       } catch (notificationError: any) {
