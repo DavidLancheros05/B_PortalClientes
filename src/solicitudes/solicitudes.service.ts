@@ -977,27 +977,19 @@ export class SolicitudesService {
         }
 
         const rowTopY = yPos;
+        const maxImgHeight = Math.max(...items.map((it) => it.imgHeight));
 
         items.forEach((item, idx) => {
           const colX = marginLeft + idx * imagenColWidth;
-          let colY = rowTopY;
-
-          for (const line of item.tituloLines) {
-            currentPage.drawText(line, {
-              x: colX,
-              y: colY,
-              size: 9,
-              font: helveticaBold,
-              color: rgb(0, 0.239, 0.6),
-            });
-            colY -= 11;
-          }
-          colY -= 3;
+          // La imagen va arriba, alineada por abajo con la más alta del
+          // par, y el nombre del campo (p.ej. "Firma representante legal")
+          // queda debajo, a modo de leyenda.
+          let colY = rowTopY - (maxImgHeight - item.imgHeight);
 
           if (item.error) {
             currentPage.drawText('(No se pudo cargar la imagen)', {
               x: colX,
-              y: colY,
+              y: colY - item.imgHeight,
               size: 8,
               font: helvetica,
               color: rgb(0.6, 0.2, 0.2),
@@ -1009,6 +1001,18 @@ export class SolicitudesService {
               width: item.imgWidth,
               height: item.imgHeight,
             });
+          }
+
+          let leyendaY = rowTopY - maxImgHeight - 12;
+          for (const line of item.tituloLines) {
+            currentPage.drawText(line, {
+              x: colX,
+              y: leyendaY,
+              size: 9,
+              font: helveticaBold,
+              color: rgb(0, 0.239, 0.6),
+            });
+            leyendaY -= 11;
           }
         });
 
