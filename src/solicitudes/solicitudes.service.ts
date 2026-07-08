@@ -558,13 +558,14 @@ export class SolicitudesService {
       return lines;
     };
 
-    // ===== HEADER MEJORADO =====
+    // ===== HEADER MEJORADO (incluye la info de la solicitud) =====
+    const headerBoxHeight = 118;
     // Fondo header principal
     drawBox(
       marginLeft - 10,
       yPos + 10,
       contentWidth + 20,
-      70,
+      headerBoxHeight,
       rgb(0, 0.239, 0.6),
       rgb(0, 0.239, 0.6),
     );
@@ -598,20 +599,13 @@ export class SolicitudesService {
       color: rgb(0.95, 0.95, 0.95),
     });
 
-    yPos -= 80;
-
-    // ===== INFORMACIÓN DEL CLIENTE (PANEL) =====
-    const infoBoxHeight = 70;
-    drawBox(marginLeft, yPos, contentWidth, infoBoxHeight, rgb(0.93, 0.96, 1));
-
-    const infoTituloText = 'INFORMACIÓN DE LA SOLICITUD';
-    const infoTituloWidth = helveticaBold.widthOfTextAtSize(infoTituloText, 9);
-    currentPage.drawText(infoTituloText, {
-      x: marginLeft + (contentWidth - infoTituloWidth) / 2,
-      y: yPos - 12,
-      size: 9,
-      font: helveticaBold,
-      color: rgb(0, 0.239, 0.6),
+    // Separador fino entre el título y la info de la solicitud
+    currentPage.drawRectangle({
+      x: marginLeft + 20,
+      y: yPos - 42,
+      width: contentWidth - 40,
+      height: 1,
+      color: rgb(0.3, 0.45, 0.75),
     });
 
     const col1Width = contentWidth / 3;
@@ -640,23 +634,23 @@ export class SolicitudesService {
     const col1X = marginLeft;
     const col2X = marginLeft + col1Width;
     const col3X = marginLeft + col1Width + col2Width;
-    const labelColor = rgb(0.4, 0.4, 0.4);
-    const valueColor = rgb(0, 0, 0);
+    const infoLabelColor = rgb(0.82, 0.88, 1);
+    const infoValueColor = rgb(1, 1, 1);
 
     // Columna 1
-    drawCentered('N° Solicitud', col1X, col1Width, yPos - 28, 8, helvetica, labelColor);
+    drawCentered('N° Solicitud', col1X, col1Width, yPos - 60, 8, helvetica, infoLabelColor);
     drawCentered(
       formulario.sol_numero_solicitud || 'N/A',
       col1X,
       col1Width,
-      yPos - 38,
+      yPos - 72,
       10,
       helveticaBold,
-      valueColor,
+      infoValueColor,
     );
 
     // Columna 2
-    drawCentered('Cliente', col2X, col2Width, yPos - 28, 8, helvetica, labelColor);
+    drawCentered('Cliente', col2X, col2Width, yPos - 60, 8, helvetica, infoLabelColor);
     const clientLines = wrapText(
       formulario.cliente_nombre || 'N/A',
       col2Width - 16,
@@ -666,10 +660,10 @@ export class SolicitudesService {
       clientLines[0] || '',
       col2X,
       col2Width,
-      yPos - 38,
+      yPos - 72,
       10,
       helveticaBold,
-      valueColor,
+      infoValueColor,
     );
 
     // Columna 3
@@ -677,22 +671,22 @@ export class SolicitudesService {
       'Centro de Operación',
       col3X,
       col3Width,
-      yPos - 28,
+      yPos - 60,
       8,
       helvetica,
-      labelColor,
+      infoLabelColor,
     );
     drawCentered(
       formulario.centro_operacion_nombre || 'N/A',
       col3X,
       col3Width,
-      yPos - 38,
+      yPos - 72,
       10,
       helveticaBold,
-      valueColor,
+      infoValueColor,
     );
 
-    yPos -= infoBoxHeight + 15;
+    yPos -= headerBoxHeight + 15;
 
     // ===== TABLA DE SECCIONES =====
     for (const seccion of secciones) {
