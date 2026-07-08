@@ -36,6 +36,18 @@ export class UpdateClienteDto {
   @IsOptional()
   ejng_id?: number | null;
 
+  @IsNumber()
+  @IsOptional()
+  pai_id?: number;
+
+  @IsNumber()
+  @IsOptional()
+  dpto_id?: number;
+
+  @IsNumber()
+  @IsOptional()
+  ciu_id?: number;
+
   @IsArray()
   @IsOptional()
   centro_operacion_ids?: number[];
