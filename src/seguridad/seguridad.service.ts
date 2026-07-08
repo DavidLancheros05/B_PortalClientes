@@ -83,7 +83,18 @@ export class SeguridadService {
       rol.modulos = arbol;
     }
 
-    return roles;
+    // El SELECT * trae columnas snake_case (rol_id, rol_nombre...) tal
+    // como estan en pc_roles, pero el frontend espera camelCase.
+    return roles.map((rol: any) => ({
+      rolId: rol.rol_id,
+      rolNombre: rol.rol_nombre,
+      rolDescripcion: rol.rol_descripcion,
+      rolCodigo: rol.rol_codigo,
+      rolActivo: !!rol.rol_activo,
+      rolCreatedAt: rol.rol_created_at,
+      rolUpdatedAt: rol.rol_updated_at,
+      modulos: rol.modulos,
+    }));
   }
 
   async crearRol(data: any) {
