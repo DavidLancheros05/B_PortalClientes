@@ -107,4 +107,16 @@ export class CreateFormularioPreguntaDto {
   @IsOptional()
   @IsBoolean()
   fp_ancho_completo?: boolean;
+
+  @IsOptional()
+  @IsString()
+  fp_tabla_limite_modo?: string | null;
+
+  @IsOptional()
+  @IsInt()
+  fp_tabla_limite_pregunta_id?: number | null;
+
+  @IsOptional()
+  @IsString()
+  fp_tabla_limite_reglas?: string | null;
 }

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
+import { normalizeMojibake } from 'src/common/utils/text-encoding.util';
 
 export interface Formulario {
   frm_id: number;
@@ -531,6 +532,8 @@ export class FormulariosService {
           fp_requerida,
           fp_orden,
           fp_version,
+          fp_minimo,
+          fp_maximo,
           fp_patron,
           fp_tabla_maestro,
           fp_pregunta_padre_id,
@@ -538,11 +541,15 @@ export class FormulariosService {
           fp_catalogo_base_datos,
           fp_catalogo_tabla,
           fp_catalogo_columna,
+          fp_catalogo_pk_column,
           fp_tipo_documento_id,
           fp_precarga_fuente,
           fp_precarga_campo_cliente,
           fp_tabla_columnas,
-          fp_ancho_completo
+          fp_ancho_completo,
+          fp_tabla_limite_modo,
+          fp_tabla_limite_pregunta_id,
+          fp_tabla_limite_reglas
         FROM Formulario_pregunta
         WHERE formulario_id = @0
           AND fp_version = @1
@@ -562,10 +569,51 @@ export class FormulariosService {
       `),
     ]);
 
+    const idsConOpciones = preguntas
+      .filter((p: { fp_tipo: string }) =>
+        ['SELECT', 'MULTISELECT'].includes(p.fp_tipo),
+      )
+      .map((p: { fp_id: number }) => p.fp_id);
+
+    let opcionesPorPregunta = new Map<number, any[]>();
+    if (idsConOpciones.length > 0) {
+      const placeholders = idsConOpciones
+        .map((_: number, i: number) => `@${i}`)
+        .join(', ');
+      const opciones = await this.dataSource.query(
+        `
+          SELECT fpo_id, fpo_fp_id, fpo_valor, fpo_estado
+          FROM Formulario_pregunta_opcion
+          WHERE fpo_estado = 1
+            AND fpo_fp_id IN (${placeholders})
+        `,
+        idsConOpciones,
+      );
+
+      opcionesPorPregunta = opciones.reduce(
+        (acc: Map<number, any[]>, op: any) => {
+          const normalizada = {
+            ...op,
+            fpo_valor: normalizeMojibake(op.fpo_valor),
+          };
+          const lista = acc.get(op.fpo_fp_id) || [];
+          lista.push(normalizada);
+          acc.set(op.fpo_fp_id, lista);
+          return acc;
+        },
+        new Map<number, any[]>(),
+      );
+    }
+
+    const preguntasConOpciones = preguntas.map((p: { fp_id: number }) => ({
+      ...p,
+      opciones: opcionesPorPregunta.get(p.fp_id) || [],
+    }));
+
     return {
       formulario,
       secciones,
-      preguntas,
+      preguntas: preguntasConOpciones,
       tiposPregunta: tipos,
     };
   }

@@ -167,6 +167,7 @@ export class MaestrosService {
     tabla: string,
     baseDatos?: string,
     columnaDescripcion?: string,
+    columnaId?: string,
   ) {
     if (!tabla) {
       throw new BadRequestException('El parámetro tabla es requerido');
@@ -184,11 +185,35 @@ export class MaestrosService {
       throw new BadRequestException('Nombre de columna inválido');
     }
 
+    if (columnaId && !this.isSafeIdentifier(columnaId)) {
+      throw new BadRequestException('Nombre de columna llave inválido');
+    }
+
     const currentDbResult = await this.dataSource.query(
       `SELECT DB_NAME() AS db_name`,
     );
     const currentDb = String(currentDbResult?.[0]?.db_name ?? '').trim();
     const targetDb = baseDatos || currentDb;
+
+    // Si ya nos dan columna de valor Y columna llave explícitas, no hace
+    // falta consultar INFORMATION_SCHEMA para adivinarlas (nos ahorramos
+    // una ida y vuelta completa a la base de datos remota por cada catálogo).
+    if (columnaDescripcion && columnaId) {
+      const dataQueryDirecta = `
+        SELECT
+          TRY_CONVERT(INT, [${columnaId}]) AS op_id,
+          CAST([${columnaDescripcion}] AS NVARCHAR(255)) AS op_descripcion
+        FROM [${targetDb}].[dbo].[${tabla}]
+        ORDER BY [${columnaDescripcion}]
+      `;
+      const dataResultDirecto = await this.dataSource.query(dataQueryDirecta);
+      return dataResultDirecto
+        .filter((row: any) => row.op_id !== null && row.op_descripcion !== null)
+        .map((row: any) => ({
+          op_id: Number(row.op_id),
+          op_descripcion: String(row.op_descripcion),
+        }));
+    }
 
     const columnsQuery = `
       SELECT COLUMN_NAME, DATA_TYPE
@@ -232,7 +257,23 @@ export class MaestrosService {
         )?.name ?? columnaDescripcion;
     }
 
-    if (!idColumn || !effectiveLabelColumn) {
+    let effectiveIdColumn = idColumn;
+    if (columnaId) {
+      const existsSelectedId = columns.some(
+        (column) => this.normalize(column.name) === this.normalize(columnaId),
+      );
+      if (!existsSelectedId) {
+        throw new BadRequestException(
+          `La columna ${columnaId} no existe en la tabla ${tabla}`,
+        );
+      }
+      effectiveIdColumn =
+        columns.find(
+          (column) => this.normalize(column.name) === this.normalize(columnaId),
+        )?.name ?? columnaId;
+    }
+
+    if (!effectiveIdColumn || !effectiveLabelColumn) {
       throw new BadRequestException(
         'No fue posible identificar columnas id/nombre para el catálogo. Verifica la estructura de la tabla.',
       );
@@ -242,7 +283,7 @@ export class MaestrosService {
 
     const dataQuery = `
       SELECT
-        TRY_CONVERT(INT, [${idColumn}]) AS op_id,
+        TRY_CONVERT(INT, [${effectiveIdColumn}]) AS op_id,
         CAST([${effectiveLabelColumn}] AS NVARCHAR(255)) AS op_descripcion
       FROM [${targetDb}].[dbo].[${tabla}]
       ${whereActive}

@@ -49,6 +49,11 @@ import { AmpliacionCupoModule } from './ampliacion-cupo/ampliacion-cupo.module';
         encrypt: true,
         trustServerCertificate: true,
       },
+      pool: {
+        max: 10,
+        min: 1, // mantener al menos una conexion viva, evita reconectar (~900ms) en cada request tras inactividad
+        idleTimeoutMillis: 300000,
+      },
     }),
 
     UsuarioModule,

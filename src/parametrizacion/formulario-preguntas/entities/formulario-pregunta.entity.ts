@@ -107,6 +107,15 @@ export class FormularioPregunta {
   @Column({ type: 'bit', default: false })
   fp_ancho_completo: boolean;
 
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  fp_tabla_limite_modo: string | null;
+
+  @Column({ type: 'int', nullable: true })
+  fp_tabla_limite_pregunta_id: number | null;
+
+  @Column({ type: 'nvarchar', length: 'MAX', nullable: true })
+  fp_tabla_limite_reglas: string | null;
+
   @ManyToOne(() => Seccion, { nullable: true })
   @JoinColumn({ name: 'seccion_id' })
   seccion: Seccion;
