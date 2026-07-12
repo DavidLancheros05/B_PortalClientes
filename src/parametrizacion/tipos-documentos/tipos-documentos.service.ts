@@ -62,9 +62,11 @@ export class TiposDocumentosService {
       estado: createDto.estado ?? true,
       aplicaCliente: true,
       tienePlantilla: createDto.tienePlantilla ?? false,
-      plantillaContenido: createDto.tienePlantilla
-        ? (createDto.plantillaContenido ?? null)
-        : null,
+      tipoPlantilla: createDto.tipoPlantilla ?? 'TEXTO',
+      plantillaContenido:
+        createDto.tienePlantilla && createDto.tipoPlantilla !== 'PDF_SOLICITUD'
+          ? (createDto.plantillaContenido ?? null)
+          : null,
       createdBy: null,
       updatedBy: null,
     });
@@ -108,6 +110,9 @@ export class TiposDocumentosService {
       ...(updateDto.tienePlantilla !== undefined
         ? { tienePlantilla: updateDto.tienePlantilla }
         : {}),
+      ...(updateDto.tipoPlantilla !== undefined
+        ? { tipoPlantilla: updateDto.tipoPlantilla }
+        : {}),
       ...(updateDto.plantillaContenido !== undefined
         ? { plantillaContenido: updateDto.plantillaContenido }
         : {}),
@@ -124,6 +129,7 @@ export class TiposDocumentosService {
       aplicaZonaFranca: merged.aplicaZonaFranca ?? tipo.aplicaZonaFranca,
       estado: merged.estado,
       tienePlantilla: merged.tienePlantilla ?? tipo.tienePlantilla,
+      tipoPlantilla: merged.tipoPlantilla ?? tipo.tipoPlantilla,
       plantillaContenido:
         merged.plantillaContenido ?? tipo.plantillaContenido ?? undefined,
     });
@@ -141,7 +147,7 @@ export class TiposDocumentosService {
       merged.aniosAtrasPermitidos = null;
     }
 
-    if (!merged.tienePlantilla) {
+    if (!merged.tienePlantilla || merged.tipoPlantilla === 'PDF_SOLICITUD') {
       merged.plantillaContenido = null;
     }
 
@@ -167,6 +173,7 @@ export class TiposDocumentosService {
     aplicaZonaFranca: boolean;
     estado?: boolean;
     tienePlantilla?: boolean;
+    tipoPlantilla?: string | null;
     plantillaContenido?: string | null;
   }) {
     if (!input.nombre || !input.nombre.trim()) {
@@ -210,9 +217,13 @@ export class TiposDocumentosService {
       }
     }
 
-    if (input.tienePlantilla && !input.plantillaContenido?.trim()) {
+    if (
+      input.tienePlantilla &&
+      input.tipoPlantilla !== 'PDF_SOLICITUD' &&
+      !input.plantillaContenido?.trim()
+    ) {
       throw new BadRequestException(
-        'El contenido de la plantilla es obligatorio cuando el documento tiene plantilla descargable',
+        'El contenido de la plantilla es obligatorio cuando el documento tiene plantilla descargable de tipo texto',
       );
     }
   }

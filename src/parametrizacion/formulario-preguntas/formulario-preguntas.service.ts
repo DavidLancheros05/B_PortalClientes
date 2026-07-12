@@ -58,6 +58,7 @@ export class FormularioPreguntasService {
       seccion_nombre: p.seccion?.fs_nombre ?? null,
       seccion_descripcion: p.seccion?.fs_descripcion ?? null,
       seccion_orden: p.seccion?.fs_orden ?? null,
+      seccion_oculta_en_formulario: p.seccion?.fs_oculta_en_formulario ?? false,
       opciones: (p.opciones ?? [])
         .filter((o) => o.fpo_estado)
         .map((o) => ({

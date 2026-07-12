@@ -31,6 +31,130 @@ export class SolicitudesWorkflowService {
     };
   }
 
+  /**
+   * "Documentos diferidos": preguntas ARCHIVO/DOCUMENTOS_TABLA ocultas del
+   * formulario en vivo (fp_oculto_en_formulario, o su sección tiene
+   * fs_oculta_en_formulario) cuyo tipo de documento tiene plantilla
+   * descargable (tdo_tiene_plantilla) — se generan DESPUÉS de guardar la
+   * solicitud (necesitan el número de solicitud) y se suben aparte desde
+   * Mis Documentos. Mientras falten, la solicitud no debe pasar a EJN.
+   */
+  private async obtenerDocumentosDiferidosConSubidos(
+    solicitudId: number,
+    runner: DataSource | any = this.dataSource,
+  ) {
+    const [solicitud] = await runner.query(
+      `SELECT sol_formulario_version FROM solicitudes WHERE sol_id = @0`,
+      [solicitudId],
+    );
+    const version = solicitud?.sol_formulario_version ?? 1;
+
+    const diferidos = await runner.query(
+      `
+      SELECT DISTINCT td.tdo_id, td.tdo_nombre, td.tdo_plantilla_contenido, td.tdo_tipo_plantilla, fp.fp_id
+      FROM Formulario_pregunta fp
+      JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tipo_documento_id
+      LEFT JOIN Formulario_secciones fs ON fs.fs_id = fp.seccion_id
+      WHERE fp.fp_estado = 1
+        AND td.tdo_tiene_plantilla = 1
+        AND (fp.fp_oculto_en_formulario = 1 OR fs.fs_oculta_en_formulario = 1)
+        AND ISNULL(fp.fp_version, 1) = @0
+      `,
+      [version],
+    );
+
+    if (diferidos.length === 0) {
+      return { diferidos: [] as any[], subidosSet: new Set<number>() };
+    }
+
+    const subidos = await runner.query(
+      `
+      SELECT sa.sa_id, fp.fp_tipo_documento_id AS tdo_id
+      FROM Solicitud_archivo sa
+      JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
+      WHERE sa.sa_sol_id = @0 AND sa.sa_estado = 'activo'
+        AND fp.fp_tipo_documento_id IS NOT NULL
+      ORDER BY sa.sa_id ASC
+      `,
+      [solicitudId],
+    );
+
+    // Si un tdo_id llegara a tener más de un archivo activo, se usa el más
+    // reciente (sa_id más alto, por el ORDER BY + sobrescritura en el Map).
+    const subidosPorTdo = new Map<number, number>();
+    for (const s of subidos) subidosPorTdo.set(s.tdo_id, s.sa_id);
+
+    return {
+      diferidos,
+      subidosSet: new Set(subidosPorTdo.keys()),
+      subidosPorTdo,
+    };
+  }
+
+  // Solo los que aún faltan por subir — usado para decidir si la solicitud
+  // puede avanzar a Ejecutivo de Negocios (ver cambiarEstado/crearSolicitud).
+  async obtenerDocumentosDiferidosFaltantes(
+    solicitudId: number,
+    runner: DataSource | any = this.dataSource,
+  ): Promise<
+    {
+      tdo_id: number;
+      tdo_nombre: string;
+      tdo_plantilla_contenido: string | null;
+      tdo_tipo_plantilla: 'TEXTO' | 'PDF_SOLICITUD';
+      fp_id: number;
+    }[]
+  > {
+    const { diferidos, subidosSet } =
+      await this.obtenerDocumentosDiferidosConSubidos(solicitudId, runner);
+    return diferidos.filter((d: any) => !subidosSet.has(d.tdo_id));
+  }
+
+  // Todos los documentos diferidos de la solicitud (ya subidos o no) — usado
+  // para mostrarlos siempre juntos en Mis Documentos, aunque alguno ya se
+  // haya subido antes; el botón de envío se habilita cuando todos quedan
+  // en `yaSubido: true` (subidos antes o en la sesión actual).
+  async obtenerDocumentosDiferidos(
+    solicitudId: number,
+    runner: DataSource | any = this.dataSource,
+  ): Promise<
+    {
+      tdo_id: number;
+      tdo_nombre: string;
+      tdo_plantilla_contenido: string | null;
+      tdo_tipo_plantilla: 'TEXTO' | 'PDF_SOLICITUD';
+      fp_id: number;
+      yaSubido: boolean;
+      sa_id: number | null;
+    }[]
+  > {
+    const { diferidos, subidosPorTdo } =
+      await this.obtenerDocumentosDiferidosConSubidos(solicitudId, runner);
+    return diferidos.map((d: any) => ({
+      ...d,
+      yaSubido: subidosPorTdo.has(d.tdo_id),
+      sa_id: subidosPorTdo.get(d.tdo_id) ?? null,
+    }));
+  }
+
+  // Usado por "Mis Documentos" para decidir si aún debe mostrar la sección
+  // de documentos diferidos (con su botón de envío) — ya no basta con "falta
+  // alguno por subir", porque ahora los archivos se suben de inmediato al
+  // seleccionarlos: puede que todos estén subidos pero el cliente todavía no
+  // haya pulsado "Enviar e informar a Cartonera" para avanzar el estado.
+  async solicitudEnEsperaDocumentosDiferidos(solicitud: {
+    sol_estado_id: number;
+    sol_resultado_etapa_id: number;
+  }): Promise<boolean> {
+    const [resultadoPendDocs] = await this.dataSource.query(
+      `SELECT wee_id FROM workflow_estado_etapa WHERE wee_codigo = 'PEND_DOCS'`,
+    );
+    return (
+      Number(solicitud.sol_estado_id) === 2 &&
+      Number(solicitud.sol_resultado_etapa_id) === resultadoPendDocs?.wee_id
+    );
+  }
+
   private async resolveHistorialColumns() {
     const result = await this.dataSource.query(`
       SELECT
@@ -93,6 +217,9 @@ export class SolicitudesWorkflowService {
       // Obtener etapas según el estado
       let etapaId: number | null = null;
       let mensajeTransicion = '';
+      let resultadoCodigo = 'PENDIENTE';
+      let documentosDiferidosFaltantes: { tdo_id: number; tdo_nombre: string }[] =
+        [];
 
       if (estadoId === 1) {
         // BORRADOR → Etapa CLI
@@ -103,14 +230,46 @@ export class SolicitudesWorkflowService {
         mensajeTransicion =
           'Solicitud guardada como BORRADOR - Cliente llenando formulario';
       } else if (estadoId === 2) {
-        // PENDIENTE → Etapa EJN
-        const etapaResult = await queryRunner.query(
-          `SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'EJN'`,
+        documentosDiferidosFaltantes = await this.obtenerDocumentosDiferidosFaltantes(
+          solicitudId,
+          queryRunner,
         );
-        etapaId = etapaResult?.[0]?.wet_id;
-        mensajeTransicion = 'Solicitud enviada a Ejecutivo de Negocios';
+
+        if (documentosDiferidosFaltantes.length > 0) {
+          // Aún faltan documentos que se generan/suben después de guardar
+          // (ej. cartas con {{numero_solicitud}}) — se queda en etapa CLI
+          // con un resultado distinto, en vez de pasar a Ejecutivo de
+          // Negocios, hasta que el cliente los suba desde Mis Documentos.
+          const etapaResult = await queryRunner.query(
+            `SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'CLI'`,
+          );
+          etapaId = etapaResult?.[0]?.wet_id;
+          resultadoCodigo = 'PEND_DOCS';
+          mensajeTransicion = `Solicitud registrada - faltan documentos por generar y subir: ${documentosDiferidosFaltantes
+            .map((d) => d.tdo_nombre)
+            .join(', ')}`;
+        } else {
+          // PENDIENTE → Etapa EJN
+          const etapaResult = await queryRunner.query(
+            `SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'EJN'`,
+          );
+          etapaId = etapaResult?.[0]?.wet_id;
+          mensajeTransicion = 'Solicitud enviada a Ejecutivo de Negocios';
+        }
       }
       // Para estados 3+ (REVISIÓN, COMPLETADA), no cambiamos la etapa
+
+      // Resolver el resultado de etapa (PENDIENTE, o PEND_DOCS si faltan
+      // documentos diferidos) una sola vez, para usarlo tanto en el UPDATE
+      // como en el historial.
+      let resultadoId: number | null = null;
+      if (etapaId !== null) {
+        const resultadoResult = await queryRunner.query(
+          `SELECT wee_id FROM workflow_estado_etapa WHERE wee_codigo = @0`,
+          [resultadoCodigo],
+        );
+        resultadoId = resultadoResult?.[0]?.wee_id ?? null;
+      }
 
       // Actualizar estado (y etapa si corresponde)
       let updateSQL = `
@@ -129,6 +288,9 @@ export class SolicitudesWorkflowService {
       if (resultadoIdActualizar !== null) {
         updateSQL += `, sol_resultado_etapa_id = @${params.length}`;
         params.push(resultadoIdActualizar);
+      } else if (etapaId !== null && resultadoId !== null) {
+        updateSQL += `, sol_resultado_etapa_id = @${params.length}`;
+        params.push(resultadoId);
       }
 
       updateSQL += ` WHERE sol_id = @${params.length}`;
@@ -147,11 +309,6 @@ export class SolicitudesWorkflowService {
 
       // Registrar transición de workflow si se cambió la etapa
       if (etapaId !== null) {
-        const resultadoPdResult = await queryRunner.query(
-          `SELECT wee_id FROM workflow_estado_etapa WHERE wee_codigo = 'PENDIENTE'`,
-        );
-        const resultadoId = resultadoPdResult?.[0]?.wee_id;
-
         // Evitar filas duplicadas en el historial cuando se reenvía/guarda
         // la solicitud sin que haya una transición real de etapa/resultado
         // (p.ej. el cliente guarda varias veces el mismo formulario).
@@ -204,10 +361,16 @@ export class SolicitudesWorkflowService {
             solicitudId,
             estadoId,
           );
-        } else if (estadoId === 2 && estadoPrevio !== 2) {
+        } else if (
+          estadoId === 2 &&
+          estadoPrevio !== 2 &&
+          documentosDiferidosFaltantes.length === 0
+        ) {
           // Transición real hacia PENDIENTE (p.ej. cliente envía un borrador
           // ya existente): notificar registro igual que al crear una
           // solicitud nueva, para que cliente/comercial/ejecutivo se enteren.
+          // No se notifica todavía si quedó en PEND_DOCS: aún no llega a
+          // Ejecutivo de Negocios.
           await this.notificacionesService.notificarRegistroSolicitud(
             solicitudId,
             true,
@@ -220,13 +383,105 @@ export class SolicitudesWorkflowService {
         );
       }
 
-      return { ok: true, mensaje: 'Estado actualizado' };
+      return {
+        ok: true,
+        mensaje: 'Estado actualizado',
+        documentosDiferidosFaltantes,
+      };
     } catch (error) {
       await queryRunner.rollbackTransaction();
       throw error;
     } finally {
       await queryRunner.release();
     }
+  }
+
+  /**
+   * Se llama desde "Mis Documentos" después de subir un documento diferido
+   * (ej. la carta generada con la plantilla). Si ya no falta ninguno, recién
+   * ahí pasa la solicitud de CLI+PEND_DOCS a EJN+PENDIENTE (la transición
+   * que quedó pendiente en cambiarEstado). Si todavía falta alguno, no toca
+   * nada y solo informa cuáles.
+   */
+  async verificarYAvanzarDocumentosPlantilla(
+    solicitudId: number,
+    usuarioId: number = 1,
+  ) {
+    const faltantes = await this.obtenerDocumentosDiferidosFaltantes(
+      solicitudId,
+    );
+
+    if (faltantes.length > 0) {
+      return { ok: true, avanzo: false, documentosDiferidosFaltantes: faltantes };
+    }
+
+    const [solicitud] = await this.dataSource.query(
+      `SELECT sol_estado_id, sol_etapa_actual_id, sol_resultado_etapa_id FROM solicitudes WHERE sol_id = @0`,
+      [solicitudId],
+    );
+
+    if (
+      !solicitud ||
+      !(await this.solicitudEnEsperaDocumentosDiferidos(solicitud))
+    ) {
+      // No estaba en espera de documentos diferidos: nada que avanzar.
+      return { ok: true, avanzo: false, documentosDiferidosFaltantes: [] };
+    }
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const [etapaEJN] = await queryRunner.query(
+        `SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'EJN'`,
+      );
+      const [resultadoPendiente] = await queryRunner.query(
+        `SELECT wee_id FROM workflow_estado_etapa WHERE wee_codigo = 'PENDIENTE'`,
+      );
+
+      await queryRunner.query(
+        `UPDATE solicitudes
+         SET sol_etapa_actual_id = @0, sol_resultado_etapa_id = @1,
+             sol_usuario_modifica = @2, sol_updated_at = GETDATE()
+         WHERE sol_id = @3`,
+        [etapaEJN.wet_id, resultadoPendiente.wee_id, usuarioId, solicitudId],
+      );
+
+      await queryRunner.query(
+        `INSERT INTO solicitud_workflow_historial
+         (swh_sol_id, swh_etapa_id, swh_resultado_id, swh_usuario_id, swh_comentario, swh_fecha)
+         VALUES (@0, @1, @2, @3, @4, GETDATE())`,
+        [
+          solicitudId,
+          etapaEJN.wet_id,
+          resultadoPendiente.wee_id,
+          usuarioId,
+          'Cliente subió los documentos generados pendientes - Solicitud enviada a Ejecutivo de Negocios',
+        ],
+      );
+
+      await queryRunner.commitTransaction();
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+
+    try {
+      await this.notificacionesService.notificarRegistroSolicitud(
+        solicitudId,
+        true,
+      );
+    } catch (notificationError: any) {
+      console.error(
+        '⚠️ Error enviando notificación de estado:',
+        notificationError?.message || notificationError,
+      );
+    }
+
+    return { ok: true, avanzo: true, documentosDiferidosFaltantes: [] };
   }
 
   async aprobarRechazarSolicitud(

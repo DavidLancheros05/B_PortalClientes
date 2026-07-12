@@ -51,6 +51,14 @@ export class TipoDocumento {
   })
   plantillaContenido: string | null;
 
+  @Column({
+    name: 'tdo_tipo_plantilla',
+    type: 'varchar',
+    length: 20,
+    default: 'TEXTO',
+  })
+  tipoPlantilla: 'TEXTO' | 'PDF_SOLICITUD';
+
   @Column({ name: 'tdo_permite_vencimiento', type: 'bit', default: false })
   aplicaFechaEmision: boolean;
 

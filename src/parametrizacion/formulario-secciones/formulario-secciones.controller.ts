@@ -18,6 +18,7 @@ interface CreateSeccionDto {
   seccion_nombre: string;
   seccion_descripcion?: string;
   seccion_orden: number;
+  seccion_oculta_en_formulario?: boolean;
 }
 
 interface UpdateSeccionDto {
@@ -25,6 +26,7 @@ interface UpdateSeccionDto {
   seccion_descripcion?: string;
   seccion_orden?: number;
   seccion_activo?: boolean;
+  seccion_oculta_en_formulario?: boolean;
 }
 
 @UseGuards(JwtAuthGuard)

@@ -463,16 +463,19 @@ export class SolicitudesListadosService {
   async obtenerUltimaSolicitud(clienteId: number) {
     const sql = `
       SELECT TOP 1
-        sol_id AS [sol_id],
-        sol_numero_solicitud AS [sol_numero_solicitud],
-        sol_estado_id AS [sol_estado_id],
-        sol_etapa_actual_id AS [sol_etapa_actual_id],
-        sol_resultado_etapa_id AS [sol_resultado_etapa_id],
-        sol_fecha_creacion AS [sol_fecha_creacion],
-        sol_fecha_envio AS [sol_fecha_envio]
-      FROM solicitudes
-      WHERE sol_cliente_id = @0
-      ORDER BY sol_fecha_creacion DESC
+        s.sol_id AS [sol_id],
+        s.sol_numero_solicitud AS [sol_numero_solicitud],
+        s.sol_estado_id AS [sol_estado_id],
+        s.sol_etapa_actual_id AS [sol_etapa_actual_id],
+        s.sol_resultado_etapa_id AS [sol_resultado_etapa_id],
+        s.sol_fecha_creacion AS [sol_fecha_creacion],
+        s.sol_fecha_envio AS [sol_fecha_envio],
+        c.cli_razon_social AS [cliente_nombre],
+        c.cli_nro_identificacion AS [cliente_nit]
+      FROM solicitudes s
+      LEFT JOIN clientes c ON c.cli_id = s.sol_cliente_id
+      WHERE s.sol_cliente_id = @0
+      ORDER BY s.sol_fecha_creacion DESC
     `;
     const result = await this.dataSource.query(sql, [clienteId]);
     return result[0] || null;

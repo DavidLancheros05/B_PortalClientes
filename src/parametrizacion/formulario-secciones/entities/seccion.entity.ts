@@ -22,6 +22,9 @@ export class Seccion {
   @Column({ type: 'bit', default: 1, name: 'fs_activo' })
   fs_activo: boolean;
 
+  @Column({ type: 'bit', default: 0, name: 'fs_oculta_en_formulario' })
+  fs_oculta_en_formulario: boolean;
+
   @Column({ type: 'datetime2', name: 'created_at' })
   created_at: Date;
 }

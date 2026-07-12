@@ -259,9 +259,43 @@ export class SolicitudesService {
       const estadoId = body.estado_id || 1; // Default a BORRADOR si no se especifica
       const fechaEnvio = estadoId === 2 ? now : null; // Si es PENDIENTE, establecer fecha de envío
 
+      // 5.0 "Documentos diferidos": preguntas ocultas del formulario en vivo
+      // cuyo tipo de documento tiene plantilla descargable (se generan
+      // DESPUÉS de guardar la solicitud, con el número de solicitud). Como
+      // recién se está creando, ninguno puede estar subido todavía — si el
+      // formulario de esta versión tiene alguno configurado, la solicitud
+      // se queda en CLI+PEND_DOCS en vez de pasar directo a EJN.
+      let documentosDiferidosFaltantes: { tdo_id: number; tdo_nombre: string }[] =
+        [];
+      if (estadoId === 2) {
+        documentosDiferidosFaltantes = await queryRunner.query(
+          `
+          SELECT DISTINCT td.tdo_id, td.tdo_nombre
+          FROM Formulario_pregunta fp
+          JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tipo_documento_id
+          LEFT JOIN Formulario_secciones fs ON fs.fs_id = fp.seccion_id
+          WHERE fp.fp_estado = 1
+            AND td.tdo_tiene_plantilla = 1
+            AND (fp.fp_oculto_en_formulario = 1 OR fs.fs_oculta_en_formulario = 1)
+            AND ISNULL(fp.fp_version, 1) = @0
+          `,
+          [formularioVersion || 1],
+        );
+      }
+      const hayDocumentosDiferidos = documentosDiferidosFaltantes.length > 0;
+
+      let resultadoFinalId = resultadoPdId;
+      if (hayDocumentosDiferidos) {
+        const resultadoPendDocs = await queryRunner.query(
+          `SELECT wee_id FROM workflow_estado_etapa WHERE wee_codigo = 'PEND_DOCS'`,
+        );
+        resultadoFinalId = resultadoPendDocs?.[0]?.wee_id ?? resultadoPdId;
+      }
+
       // 5.1 Determinar etapa inicial según el estado
-      // BORRADOR (1) → CLI, PENDIENTE (2) → EJN
-      const etapaActualId = estadoId === 1 ? etapaClienteId : etapaCenId;
+      // BORRADOR (1) → CLI, PENDIENTE (2) → EJN (o CLI si faltan documentos diferidos)
+      const etapaActualId =
+        estadoId === 1 || hayDocumentosDiferidos ? etapaClienteId : etapaCenId;
 
       // 5.1 Parámetros en ARRAY en el ORDEN CORRECTO
       const solicitudParams = [
@@ -312,7 +346,7 @@ export class SolicitudesService {
         null, // @23 motivo_rechazo_id
         null, // @24 usuario_modifica
         etapaActualId, // @25 sol_etapa_actual_id (CLI si BORRADOR, EJN si PENDIENTE)
-        resultadoPdId, // @26 sol_resultado_etapa_id (PENDIENTE)
+        resultadoFinalId, // @26 sol_resultado_etapa_id (PENDIENTE, o PEND_DOCS si faltan documentos diferidos)
       ];
 
       console.log('🚀 Ejecutando SQL directo para solicitud...');
@@ -353,13 +387,17 @@ export class SolicitudesService {
       // 6.5 Registrar transición inicial en workflow historial SOLO si no es BORRADOR
       // BORRADOR es solo un estado local de edición, no forma parte del workflow
       if (estadoId !== 1) {
-        const etapaTransicion = estadoId === 2 ? etapaCenId : null;
-        const mensajeTransicion = 'Solicitud enviada a Ejecutivo de Negocios';
+        const etapaTransicion = estadoId === 2 ? etapaActualId : null;
+        const mensajeTransicion = hayDocumentosDiferidos
+          ? `Solicitud registrada - faltan documentos por generar y subir: ${documentosDiferidosFaltantes
+              .map((d) => d.tdo_nombre)
+              .join(', ')}`
+          : 'Solicitud enviada a Ejecutivo de Negocios';
         if (etapaTransicion) {
           await this.historialWorkflowService.registrarTransicion(
             solicitudId,
             etapaTransicion,
-            resultadoPdId,
+            resultadoFinalId,
             1, // usuario 1
             mensajeTransicion,
           );
@@ -401,22 +439,25 @@ export class SolicitudesService {
       // 8. Commit
       await queryRunner.commitTransaction();
 
-      try {
-        await this.notificacionesService.notificarRegistroSolicitud(
-          Number(solicitudId),
-          false,
-        );
-      } catch (notificationError: any) {
-        console.error(
-          '⚠️ Error enviando notificaciones de registro:',
-          notificationError?.message || notificationError,
-        );
+      if (!hayDocumentosDiferidos) {
+        try {
+          await this.notificacionesService.notificarRegistroSolicitud(
+            Number(solicitudId),
+            false,
+          );
+        } catch (notificationError: any) {
+          console.error(
+            '⚠️ Error enviando notificaciones de registro:',
+            notificationError?.message || notificationError,
+          );
+        }
       }
 
       return {
         ok: true,
         sa_sol_id: solicitudId,
         numero_solicitud: numeroSolicitud,
+        documentosDiferidosFaltantes,
         mensaje: 'Solicitud creada exitosamente con SQL directo',
       };
     } catch (error) {

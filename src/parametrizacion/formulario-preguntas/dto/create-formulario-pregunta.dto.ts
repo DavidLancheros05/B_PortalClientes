@@ -119,4 +119,8 @@ export class CreateFormularioPreguntaDto {
   @IsOptional()
   @IsString()
   fp_tabla_limite_reglas?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  fp_oculto_en_formulario?: boolean;
 }

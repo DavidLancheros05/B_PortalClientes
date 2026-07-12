@@ -8,6 +8,7 @@ export interface Seccion {
   fs_descripcion: string | null;
   fs_orden: number;
   fs_activo: boolean;
+  fs_oculta_en_formulario: boolean;
 }
 
 @Injectable()
@@ -25,7 +26,8 @@ export class FormularioSeccionesService {
         fs_nombre,
         fs_descripcion,
         fs_orden,
-        fs_activo
+        fs_activo,
+        fs_oculta_en_formulario
       FROM Formulario_secciones
       ORDER BY fs_orden ASC
     `,
@@ -37,6 +39,7 @@ export class FormularioSeccionesService {
     seccion_nombre: string;
     seccion_descripcion?: string;
     seccion_orden: number;
+    seccion_oculta_en_formulario?: boolean;
   }): Promise<Seccion> {
     const result = await this.dataSource.query(
       `
@@ -44,20 +47,23 @@ export class FormularioSeccionesService {
         fs_nombre,
         fs_descripcion,
         fs_orden,
-        fs_activo
+        fs_activo,
+        fs_oculta_en_formulario
       )
       OUTPUT
         INSERTED.fs_id,
         INSERTED.fs_nombre,
         INSERTED.fs_descripcion,
         INSERTED.fs_orden,
-        INSERTED.fs_activo
-      VALUES (@0, @1, @2, 1)
+        INSERTED.fs_activo,
+        INSERTED.fs_oculta_en_formulario
+      VALUES (@0, @1, @2, 1, @3)
     `,
       [
         data.seccion_nombre,
         data.seccion_descripcion || null,
         data.seccion_orden,
+        data.seccion_oculta_en_formulario ? 1 : 0,
       ],
     );
     return result[0];
@@ -70,6 +76,7 @@ export class FormularioSeccionesService {
       seccion_descripcion?: string;
       seccion_orden?: number;
       seccion_activo?: boolean;
+      seccion_oculta_en_formulario?: boolean;
     },
   ): Promise<Seccion> {
     let query = 'UPDATE Formulario_secciones SET ';
@@ -95,6 +102,11 @@ export class FormularioSeccionesService {
     if (data.seccion_activo !== undefined) {
       updates.push(`fs_activo = @${paramIndex}`);
       params.push(data.seccion_activo ? 1 : 0);
+      paramIndex++;
+    }
+    if (data.seccion_oculta_en_formulario !== undefined) {
+      updates.push(`fs_oculta_en_formulario = @${paramIndex}`);
+      params.push(data.seccion_oculta_en_formulario ? 1 : 0);
       paramIndex++;
     }
 

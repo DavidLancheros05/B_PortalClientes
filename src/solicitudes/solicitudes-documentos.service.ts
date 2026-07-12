@@ -57,7 +57,7 @@ export class SolicitudesDocumentosService {
     console.log(`Obteniendo archivos existentes: sa_sol_id=${solicitudId}`);
 
     const sql = `
-      SELECT sa.sa_id, sa.sa_sol_id, sa.sa_fp_id, sa.sa_nombre_original, sa.sa_nombre_guardado,
+      SELECT sa.sa_id, sa.sa_sol_id, sa.sa_fp_id AS fp_id, sa.sa_nombre_original, sa.sa_nombre_guardado,
              sa.sa_tamaño_bytes, sa.sa_tipo_mime, sa.sa_ruta_almacenamiento, sa.sa_cargado_por,
              sa.sa_estado, sa.sa_created_at as fecha_carga,
              sa.sa_fecha_emision AS sd_fecha_emision, sa.sa_fecha_vencimiento AS sd_fecha_vencimiento
@@ -78,13 +78,14 @@ export class SolicitudesDocumentosService {
 
   async obtenerDocumentosConVigencia(solicitudId: number) {
     const sql = `
-      SELECT sa.sa_id, sa.sa_sol_id, sa.sa_fp_id, sa.sa_nombre_original, sa.sa_nombre_guardado,
+      SELECT sa.sa_id, sa.sa_sol_id, sa.sa_fp_id AS fp_id, sa.sa_nombre_original, sa.sa_nombre_guardado,
              sa.sa_tamaño_bytes, sa.sa_tipo_mime, sa.sa_ruta_almacenamiento, sa.sa_cargado_por,
              sa.sa_estado, sa.sa_created_at as fecha_carga,
              sa.sa_fecha_emision AS sd_fecha_emision, sa.sa_fecha_vencimiento AS sd_fecha_vencimiento,
              sa.sa_requiere_cambio AS sd_requiere_cambio,
              td.tdo_id, td.tdo_nombre, td.tdo_vigencia_dias,
-             td.tdo_regla_vigencia, td.tdo_anios_atras_permitidos
+             td.tdo_regla_vigencia, td.tdo_anios_atras_permitidos,
+             td.tdo_tiene_plantilla, td.tdo_plantilla_contenido, td.tdo_tipo_plantilla
       FROM Solicitud_archivo sa
       LEFT JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
       LEFT JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tipo_documento_id

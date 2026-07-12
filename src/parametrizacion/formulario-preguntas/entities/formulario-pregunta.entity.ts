@@ -116,6 +116,9 @@ export class FormularioPregunta {
   @Column({ type: 'nvarchar', length: 'MAX', nullable: true })
   fp_tabla_limite_reglas: string | null;
 
+  @Column({ type: 'bit', default: false })
+  fp_oculto_en_formulario: boolean;
+
   @ManyToOne(() => Seccion, { nullable: true })
   @JoinColumn({ name: 'seccion_id' })
   seccion: Seccion;

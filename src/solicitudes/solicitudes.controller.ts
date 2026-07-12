@@ -375,6 +375,7 @@ export class SolicitudesController {
           documentos: [],
           puedeCorregir: false,
           rechazadoPorAuxiliar: false,
+          documentosDiferidos: [],
         };
       }
 
@@ -392,11 +393,91 @@ export class SolicitudesController {
         Number(solicitud.sol_etapa_actual_id) === 3 &&
         Number(solicitud.sol_resultado_etapa_id) === 3;
 
-      return { solicitud, documentos, puedeCorregir, rechazadoPorAuxiliar };
+      // Documentos "diferidos" (plantillas que se generan después de
+      // guardar la solicitud): mientras la solicitud siga en CLI+PEND_DOCS
+      // sin pasar a Ejecutivo de Negocios (ver solicitudes-workflow.service.ts),
+      // se muestra la sección completa — incluso si ya se subieron todos —
+      // porque el cliente aún debe pulsar "Enviar e informar a Cartonera"
+      // para que el estado avance (los archivos se suben de inmediato al
+      // seleccionarlos, pero eso no avanza el estado por sí solo).
+      const todosLosDiferidos = await this.workflowService.obtenerDocumentosDiferidos(
+        solicitud.sol_id,
+      );
+      const enEsperaDiferidos =
+        await this.workflowService.solicitudEnEsperaDocumentosDiferidos(
+          solicitud,
+        );
+      const documentosDiferidos = enEsperaDiferidos ? todosLosDiferidos : [];
+
+      return {
+        solicitud,
+        documentos,
+        puedeCorregir,
+        rechazadoPorAuxiliar,
+        documentosDiferidos,
+      };
     } catch (error) {
       console.error('[getMisDocumentos] Error:', error);
       throw new HttpException(
         error instanceof Error ? error.message : 'Error al obtener documentos',
+        500,
+      );
+    }
+  }
+
+  // Nombre/cédula del representante legal principal, para rellenar la
+  // plantilla de cualquier documento con tdo_tiene_plantilla desde Mis
+  // Documentos (mismo dato que usa el formulario en vivo, tomado de la
+  // pregunta TABLA "Representante legal..."). Requiere reconstruir el
+  // formulario renderizable completo (costoso) — por eso vive en un
+  // endpoint aparte, pedido solo cuando el cliente pulsa "Descargar
+  // plantilla", en vez de bloquear la carga inicial de Mis Documentos.
+  @Get(':id/representante-legal')
+  @UseGuards(JwtAuthGuard)
+  async getRepresentanteLegal(
+    @Param('id', ParseIntPipe) id: number,
+    @Req()
+    req: Request & {
+      user: { rol?: string; cliente_id?: number; cli_id?: number };
+    },
+  ) {
+    try {
+      await this.documentosService.verificarAccesoSolicitud(id, req.user);
+
+      let representanteLegal: {
+        nombre: string;
+        identificacion: string;
+      } | null = null;
+      const renderizable =
+        await this.formularioRenderizableService.obtenerFormularioRenderizable(
+          id,
+        );
+      const preguntaRepLegal = (renderizable?.preguntas || []).find(
+        (p: any) =>
+          p.fp_tipo === 'TABLA' &&
+          /representante legal/i.test(p.fp_descripcion || ''),
+      );
+      const filaPrincipal = preguntaRepLegal?.tabla_filas?.[0];
+      if (filaPrincipal) {
+        representanteLegal = {
+          nombre:
+            filaPrincipal['Apellidos y Nombre'] ||
+            filaPrincipal['Nombre'] ||
+            '',
+          identificacion:
+            filaPrincipal['Identificacion'] ||
+            filaPrincipal['Identificación'] ||
+            '',
+        };
+      }
+      return { representanteLegal };
+    } catch (error) {
+      if (error instanceof ForbiddenException) throw error;
+      console.error('[getRepresentanteLegal] Error:', error);
+      throw new HttpException(
+        error instanceof Error
+          ? error.message
+          : 'Error al obtener representante legal',
         500,
       );
     }
@@ -877,6 +958,27 @@ export class SolicitudesController {
     } catch (error: any) {
       console.error(
         '[actualizarResultadoPendiente] Error:',
+        error.message || error,
+      );
+      throw new HttpException(error.message || 'Error interno', 500);
+    }
+  }
+
+  @Patch(':id/documentos-diferidos/verificar')
+  @UseGuards(JwtAuthGuard)
+  async verificarDocumentosDiferidos(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request & { user: { usr_id?: number; id?: number } },
+  ) {
+    try {
+      const usuarioId = req.user?.usr_id || req.user?.id;
+      return await this.workflowService.verificarYAvanzarDocumentosPlantilla(
+        id,
+        usuarioId,
+      );
+    } catch (error: any) {
+      console.error(
+        '[verificarDocumentosDiferidos] Error:',
         error.message || error,
       );
       throw new HttpException(error.message || 'Error interno', 500);

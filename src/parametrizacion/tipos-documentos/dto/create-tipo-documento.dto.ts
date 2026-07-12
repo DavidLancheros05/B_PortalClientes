@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -63,7 +64,13 @@ export class CreateTipoDocumentoDto {
   @IsOptional()
   tienePlantilla?: boolean;
 
-  @ValidateIf((o) => o.tienePlantilla === true)
+  @IsOptional()
+  @IsIn(['TEXTO', 'PDF_SOLICITUD'])
+  tipoPlantilla?: 'TEXTO' | 'PDF_SOLICITUD';
+
+  @ValidateIf(
+    (o) => o.tienePlantilla === true && o.tipoPlantilla !== 'PDF_SOLICITUD',
+  )
   @IsString()
   @IsNotEmpty()
   plantillaContenido?: string;
