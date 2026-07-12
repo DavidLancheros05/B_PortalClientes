@@ -118,9 +118,7 @@ export class ClientesService {
       dpto_id: cliente.dpto_id,
       ciu_id: cliente.ciu_id,
       ejng_id: cliente.ejng_id,
-      ejecutivo: cliente.ejng_nombre
-        ? { nombre: cliente.ejng_nombre }
-        : null,
+      ejecutivo: cliente.ejng_nombre ? { nombre: cliente.ejng_nombre } : null,
       centro_operacion_ids,
     };
   }

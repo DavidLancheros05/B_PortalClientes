@@ -15,11 +15,11 @@ export class Documento {
   @PrimaryGeneratedColumn({ name: 'documento_id' })
   documentoId: number;
 
-  @Column({ name: 'solicitud_id', type: 'int' })
+  @Column({ name: 'sa_sol_id', type: 'int' })
   solicitudId: number;
 
   @ManyToOne(() => SolicitudEntity)
-  @JoinColumn({ name: 'solicitud_id' })
+  @JoinColumn({ name: 'sa_sol_id' })
   solicitud: SolicitudEntity;
 
   @Column({ name: 'tipo_documento_id', type: 'int' })
@@ -35,10 +35,10 @@ export class Documento {
   @Column({ name: 'ruta_archivo', type: 'varchar', length: 500 })
   rutaArchivo: string;
 
-  @Column({ name: 'fecha_emision', type: 'datetime', nullable: true })
+  @Column({ name: 'sa_fecha_emision', type: 'datetime', nullable: true })
   fechaEmision?: Date;
 
-  @Column({ name: 'fecha_vencimiento', type: 'datetime', nullable: true })
+  @Column({ name: 'sa_fecha_vencimiento', type: 'datetime', nullable: true })
   fechaVencimiento?: Date;
 
   @Column({ name: 'hash_archivo', type: 'varchar', length: 64 })

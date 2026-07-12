@@ -1,11 +1,18 @@
 // src/solicitudes/solicitudes-documentos.service.ts
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { TABLAS, COLUMNAS } from '../common/constants/tablas.constants';
+import {
+  IStorageService,
+  STORAGE_SERVICE,
+} from '../common/storage/storage.interface';
 
 @Injectable()
 export class SolicitudesDocumentosService {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    @Inject(STORAGE_SERVICE) private readonly storageService: IStorageService,
+  ) {}
 
   async obtenerSolicitud(id: number) {
     console.log(`📋 [obtenerSolicitud] Obteniendo solicitud con ID: ${id}`);
@@ -47,18 +54,16 @@ export class SolicitudesDocumentosService {
   }
 
   async obtenerArchivosExistentes(solicitudId: number) {
-    console.log(`Obteniendo archivos existentes: solicitud_id=${solicitudId}`);
+    console.log(`Obteniendo archivos existentes: sa_sol_id=${solicitudId}`);
 
     const sql = `
-      SELECT sa.sa_id, sa.solicitud_id, sa.fp_id, sa.nombre_original, sa.nombre_guardado,
-             sa.tamaño_bytes, sa.tipo_mime, sa.ruta_almacenamiento, sa.cargado_por,
-             sa.estado, sa.created_at as fecha_carga,
-             sd.sd_fecha_emision, sd.sd_fecha_vencimiento
+      SELECT sa.sa_id, sa.sa_sol_id, sa.sa_fp_id, sa.sa_nombre_original, sa.sa_nombre_guardado,
+             sa.sa_tamaño_bytes, sa.sa_tipo_mime, sa.sa_ruta_almacenamiento, sa.sa_cargado_por,
+             sa.sa_estado, sa.sa_created_at as fecha_carga,
+             sa.sa_fecha_emision AS sd_fecha_emision, sa.sa_fecha_vencimiento AS sd_fecha_vencimiento
       FROM Solicitud_archivo sa
-      LEFT JOIN Solicitud_documento sd ON sa.solicitud_id = sd.sd_solicitud_id
-             AND (SELECT fp_tipo_documento_id FROM Formulario_pregunta WHERE fp_id = sa.fp_id) = sd.sd_tipo_documento_id
-      WHERE sa.solicitud_id = @0 AND sa.estado = 'activo'
-      ORDER BY sa.created_at DESC
+      WHERE sa.sa_sol_id = @0 AND sa.sa_estado = 'activo'
+      ORDER BY sa.sa_created_at DESC
     `;
 
     try {
@@ -68,6 +73,55 @@ export class SolicitudesDocumentosService {
     } catch (error) {
       console.error('Error obteniendo archivos existentes:', error);
       throw error;
+    }
+  }
+
+  async obtenerDocumentosConVigencia(solicitudId: number) {
+    const sql = `
+      SELECT sa.sa_id, sa.sa_sol_id, sa.sa_fp_id, sa.sa_nombre_original, sa.sa_nombre_guardado,
+             sa.sa_tamaño_bytes, sa.sa_tipo_mime, sa.sa_ruta_almacenamiento, sa.sa_cargado_por,
+             sa.sa_estado, sa.sa_created_at as fecha_carga,
+             sa.sa_fecha_emision AS sd_fecha_emision, sa.sa_fecha_vencimiento AS sd_fecha_vencimiento,
+             sa.sa_requiere_cambio AS sd_requiere_cambio,
+             td.tdo_id, td.tdo_nombre, td.tdo_vigencia_dias,
+             td.tdo_regla_vigencia, td.tdo_anios_atras_permitidos
+      FROM Solicitud_archivo sa
+      LEFT JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
+      LEFT JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tipo_documento_id
+      WHERE sa.sa_sol_id = @0 AND sa.sa_estado = 'activo'
+      ORDER BY sa.sa_created_at DESC
+    `;
+
+    try {
+      return await this.dataSource.query(sql, [solicitudId]);
+    } catch (error) {
+      console.error('Error obteniendo documentos con vigencia:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * El personal interno (cualquier rol distinto de CLIENTE) puede gestionar
+   * archivos de cualquier solicitud (ej. ASC corrigiendo en nombre del
+   * cliente). Un usuario CLIENTE solo puede tocar archivos de sus propias
+   * solicitudes.
+   */
+  async verificarAccesoSolicitud(
+    solicitudId: number,
+    user: { rol?: string; cliente_id?: number; cli_id?: number },
+  ): Promise<void> {
+    if (user?.rol && user.rol !== 'CLIENTE') {
+      return;
+    }
+
+    const clienteId = user?.cliente_id ?? user?.cli_id;
+    const [row] = await this.dataSource.query(
+      `SELECT sol_cliente_id FROM solicitudes WHERE sol_id = @0`,
+      [solicitudId],
+    );
+
+    if (!row || Number(row.sol_cliente_id) !== Number(clienteId)) {
+      throw new ForbiddenException('No tienes acceso a esta solicitud');
     }
   }
 
@@ -82,32 +136,33 @@ export class SolicitudesDocumentosService {
     const sql = `
       SELECT
         sa.sa_id,
-        sa.solicitud_id,
+        sa.sa_sol_id,
         s.sol_numero_solicitud,
         s.sol_estado_id,
         ses.ses_nombre AS estado_solicitud,
         td.tdo_nombre AS documento_nombre,
-        sa.nombre_original,
-        sa.tipo_mime,
-        sa.tamaño_bytes,
-        sa.ruta_almacenamiento,
-        sa.created_at AS fecha_carga,
-        sd.sd_fecha_vencimiento AS fecha_vencimiento,
+        sa.sa_nombre_original,
+        sa.sa_tipo_mime,
+        sa.sa_tamaño_bytes,
+        sa.sa_ruta_almacenamiento,
+        sa.sa_created_at AS fecha_carga,
+        sa.sa_fecha_vencimiento AS sa_fecha_vencimiento,
         CASE
-          WHEN sd.sd_fecha_vencimiento IS NOT NULL AND CAST(sd.sd_fecha_vencimiento AS DATE) < CAST(GETDATE() AS DATE) THEN 'VENCIDO'
+          WHEN sa.sa_fecha_vencimiento IS NULL THEN 'SIN_VIGENCIA'
+          WHEN CAST(sa.sa_fecha_vencimiento AS DATE) < CAST(GETDATE() AS DATE) THEN 'VENCIDO'
           ELSE 'VIGENTE'
         END AS estado_vencimiento,
         c.cli_razon_social AS cliente_nombre,
         co.cop_nombre AS centro_operacion_nombre
       FROM Solicitud_archivo sa
-      INNER JOIN solicitudes s ON sa.solicitud_id = s.sol_id
+      INNER JOIN solicitudes s ON sa.sa_sol_id = s.sol_id
       INNER JOIN solicitud_estados ses ON s.sol_estado_id = ses.ses_id
-      LEFT JOIN Solicitud_documento sd ON sa.solicitud_id = sd.sd_solicitud_id
-      LEFT JOIN Tipos_documentos td ON sd.sd_tipo_documento_id = td.tdo_id
+      LEFT JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
+      LEFT JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tipo_documento_id
       INNER JOIN Clientes c ON s.sol_cliente_id = c.cli_id
       INNER JOIN Centro_operacion co ON s.sol_co_id = co.cop_id
-      WHERE sa.estado = 'activo'
-      ORDER BY sa.created_at DESC
+      WHERE sa.sa_estado = 'activo'
+      ORDER BY sa.sa_created_at DESC
     `;
 
     try {
@@ -144,37 +199,10 @@ export class SolicitudesDocumentosService {
     }
   }
 
-  async getDocumentosDeSolicitud(solicitudId: number) {
-    const sql = `
-      SELECT
-        sd.sd_id AS id,
-        sd.sd_solicitud_id AS solicitud_id,
-        td.${COLUMNAS.TIPOS_DOCUMENTOS.id} AS tipo_documento_id,
-        td.${COLUMNAS.TIPOS_DOCUMENTOS.nombre} AS nombre,
-        td.${COLUMNAS.TIPOS_DOCUMENTOS.descripcion} AS descripcion,
-        td.${COLUMNAS.TIPOS_DOCUMENTOS.obligatorio} AS obligatorio,
-        sd.sd_ruta_archivo AS ruta_archivo,
-        sd.sd_fecha_emision AS fecha_emision,
-        sd.sd_fecha_vencimiento AS fecha_vencimiento,
-        sd.sd_estado AS estado
-      FROM Solicitud_documento sd
-      INNER JOIN ${TABLAS.TIPOS_DOCUMENTOS} td ON sd.sd_tipo_documento_id = td.${COLUMNAS.TIPOS_DOCUMENTOS.id}
-      WHERE sd.sd_solicitud_id = @0 AND sd.sd_estado = 1
-      ORDER BY td.${COLUMNAS.TIPOS_DOCUMENTOS.nombre} ASC
-    `;
-
-    try {
-      const documentos = await this.dataSource.query(sql, [solicitudId]);
-      return documentos;
-    } catch (error) {
-      console.error('[getDocumentosDeSolicitud] Error:', error);
-      throw error;
-    }
-  }
-
   async descargarArchivoRespuesta(sa_id: number) {
     const sql = `
-      SELECT nombre_original, tipo_mime, ruta_almacenamiento
+      SELECT sa_nombre_original, sa_tipo_mime, sa_ruta_almacenamiento,
+             sa_cloudinary_public_id, sa_resource_type
       FROM Solicitud_archivo
       WHERE sa_id = @0
     `;
@@ -185,16 +213,22 @@ export class SolicitudesDocumentosService {
       throw new Error('Archivo no encontrado');
     }
 
-    const { ruta_almacenamiento, nombre_original, tipo_mime } = archivo[0];
+    const {
+      sa_ruta_almacenamiento,
+      sa_nombre_original,
+      sa_cloudinary_public_id,
+      sa_resource_type,
+    } = archivo[0];
 
-    try {
-      const { readFile } = await import('fs/promises');
-      const buffer = await readFile(ruta_almacenamiento);
-      return { buffer, nombreOriginal: nombre_original, tipo_mime };
-    } catch (error) {
-      console.error('Error leyendo archivo:', error);
-      throw new Error(`No se pudo leer el archivo: ${nombre_original}`);
-    }
+    const downloadUrl = sa_cloudinary_public_id
+      ? this.storageService.buildDownloadUrl(
+          sa_cloudinary_public_id,
+          sa_resource_type,
+          sa_nombre_original,
+        )
+      : sa_ruta_almacenamiento;
+
+    return { downloadUrl, nombreOriginal: sa_nombre_original };
   }
 
   async deleteSolicitud(solicitudId: number) {
@@ -205,7 +239,7 @@ export class SolicitudesDocumentosService {
     try {
       // Validar que la solicitud exista
       const solicitudResult = await queryRunner.query(
-        `SELECT solicitud_id, numero_solicitud, estado_id FROM solicitudes WHERE solicitud_id = @0`,
+        `SELECT sa_sol_id, numero_solicitud, estado_id FROM solicitudes WHERE sa_sol_id = @0`,
         [solicitudId],
       );
 
@@ -233,16 +267,15 @@ export class SolicitudesDocumentosService {
       );
 
       // Eliminar la solicitud
-      await queryRunner.query(
-        `DELETE FROM solicitudes WHERE solicitud_id = @0`,
-        [solicitudId],
-      );
+      await queryRunner.query(`DELETE FROM solicitudes WHERE sa_sol_id = @0`, [
+        solicitudId,
+      ]);
 
       await queryRunner.commitTransaction();
 
       return {
         ok: true,
-        solicitud_id: solicitudId,
+        sa_sol_id: solicitudId,
         numero_solicitud: solicitud.numero_solicitud,
         message: 'Solicitud eliminada correctamente',
       };

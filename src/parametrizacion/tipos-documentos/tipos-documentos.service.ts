@@ -8,12 +8,14 @@ import { Repository } from 'typeorm';
 import { TipoDocumento } from './entities/tipo-documento.entity';
 import { CreateTipoDocumentoDto } from './dto/create-tipo-documento.dto';
 import { UpdateTipoDocumentoDto } from './dto/update-tipo-documento.dto';
+import { TiposVigenciaService } from '../tipos-vigencia/tipos-vigencia.service';
 
 @Injectable()
 export class TiposDocumentosService {
   constructor(
     @InjectRepository(TipoDocumento)
     private readonly tiposDocumentoRepository: Repository<TipoDocumento>,
+    private readonly tiposVigenciaService: TiposVigenciaService,
   ) {}
 
   async findAll(onlyActive?: boolean): Promise<TipoDocumento[]> {
@@ -38,19 +40,31 @@ export class TiposDocumentosService {
   }
 
   async create(createDto: CreateTipoDocumentoDto): Promise<TipoDocumento> {
-    this.validateBusinessRules(createDto);
+    await this.validateBusinessRules(createDto);
+
+    const reglaVigencia = createDto.aplicaFechaEmision
+      ? (createDto.reglaVigencia ?? null)
+      : null;
 
     const entity = this.tiposDocumentoRepository.create({
       nombre: createDto.nombre.trim(),
       descripcion: createDto.descripcion.trim(),
       obligatorio: createDto.obligatorio,
       aplicaFechaEmision: createDto.aplicaFechaEmision,
-      vigenciaDias: createDto.aplicaFechaEmision
-        ? (createDto.vigenciaDias ?? null)
-        : null,
+      reglaVigencia,
+      vigenciaDias:
+        reglaVigencia === 'DIAS' ? (createDto.vigenciaDias ?? null) : null,
+      aniosAtrasPermitidos:
+        reglaVigencia === 'ANIO'
+          ? (createDto.aniosAtrasPermitidos ?? null)
+          : null,
       aplicaZonaFranca: createDto.aplicaZonaFranca,
       estado: createDto.estado ?? true,
       aplicaCliente: true,
+      tienePlantilla: createDto.tienePlantilla ?? false,
+      plantillaContenido: createDto.tienePlantilla
+        ? (createDto.plantillaContenido ?? null)
+        : null,
       createdBy: null,
       updatedBy: null,
     });
@@ -81,24 +95,54 @@ export class TiposDocumentosService {
       ...(updateDto.vigenciaDias !== undefined
         ? { vigenciaDias: updateDto.vigenciaDias }
         : {}),
+      ...(updateDto.reglaVigencia !== undefined
+        ? { reglaVigencia: updateDto.reglaVigencia }
+        : {}),
+      ...(updateDto.aniosAtrasPermitidos !== undefined
+        ? { aniosAtrasPermitidos: updateDto.aniosAtrasPermitidos }
+        : {}),
       ...(updateDto.aplicaZonaFranca !== undefined
         ? { aplicaZonaFranca: updateDto.aplicaZonaFranca }
         : {}),
       ...(updateDto.estado !== undefined ? { estado: updateDto.estado } : {}),
+      ...(updateDto.tienePlantilla !== undefined
+        ? { tienePlantilla: updateDto.tienePlantilla }
+        : {}),
+      ...(updateDto.plantillaContenido !== undefined
+        ? { plantillaContenido: updateDto.plantillaContenido }
+        : {}),
     };
 
-    this.validateBusinessRules({
+    await this.validateBusinessRules({
       nombre: merged.nombre ?? tipo.nombre,
       descripcion: merged.descripcion ?? tipo.descripcion,
       obligatorio: merged.obligatorio ?? tipo.obligatorio,
       aplicaFechaEmision: merged.aplicaFechaEmision ?? tipo.aplicaFechaEmision,
       vigenciaDias: merged.vigenciaDias ?? undefined,
+      reglaVigencia: merged.reglaVigencia ?? tipo.reglaVigencia ?? undefined,
+      aniosAtrasPermitidos: merged.aniosAtrasPermitidos ?? undefined,
       aplicaZonaFranca: merged.aplicaZonaFranca ?? tipo.aplicaZonaFranca,
       estado: merged.estado,
+      tienePlantilla: merged.tienePlantilla ?? tipo.tienePlantilla,
+      plantillaContenido:
+        merged.plantillaContenido ?? tipo.plantillaContenido ?? undefined,
     });
 
     if (!merged.aplicaFechaEmision) {
+      merged.reglaVigencia = null;
       merged.vigenciaDias = null;
+      merged.aniosAtrasPermitidos = null;
+    } else if (merged.reglaVigencia === 'DIAS') {
+      merged.aniosAtrasPermitidos = null;
+    } else if (merged.reglaVigencia === 'ANIO') {
+      merged.vigenciaDias = null;
+    } else {
+      merged.vigenciaDias = null;
+      merged.aniosAtrasPermitidos = null;
+    }
+
+    if (!merged.tienePlantilla) {
+      merged.plantillaContenido = null;
     }
 
     merged.updatedAt = new Date();
@@ -112,14 +156,18 @@ export class TiposDocumentosService {
     await this.tiposDocumentoRepository.remove(tipo);
   }
 
-  private validateBusinessRules(input: {
+  private async validateBusinessRules(input: {
     nombre: string;
     descripcion?: string | null;
     obligatorio: boolean;
     aplicaFechaEmision: boolean;
     vigenciaDias?: number | null;
+    reglaVigencia?: string | null;
+    aniosAtrasPermitidos?: number | null;
     aplicaZonaFranca: boolean;
     estado?: boolean;
+    tienePlantilla?: boolean;
+    plantillaContenido?: string | null;
   }) {
     if (!input.nombre || !input.nombre.trim()) {
       throw new BadRequestException('El nombre del documento es obligatorio');
@@ -131,12 +179,41 @@ export class TiposDocumentosService {
       );
     }
 
-    if (input.aplicaFechaEmision) {
-      if (!input.vigenciaDias || input.vigenciaDias <= 0) {
+    if (input.aplicaFechaEmision && input.reglaVigencia) {
+      const tipoVigencia = await this.tiposVigenciaService.findByCodigo(
+        input.reglaVigencia,
+      );
+      if (!tipoVigencia || !tipoVigencia.estado) {
         throw new BadRequestException(
-          'El tiempo de validez (días) es obligatorio cuando aplica fecha de emisión',
+          `El tipo de vigencia "${input.reglaVigencia}" no existe o está inactivo`,
         );
       }
+    }
+
+    if (input.aplicaFechaEmision && input.reglaVigencia === 'DIAS') {
+      if (!input.vigenciaDias || input.vigenciaDias <= 0) {
+        throw new BadRequestException(
+          'El tiempo de validez (días) es obligatorio para la regla "Vencimiento por días"',
+        );
+      }
+    }
+
+    if (input.aplicaFechaEmision && input.reglaVigencia === 'ANIO') {
+      if (
+        input.aniosAtrasPermitidos === null ||
+        input.aniosAtrasPermitidos === undefined ||
+        input.aniosAtrasPermitidos < 0
+      ) {
+        throw new BadRequestException(
+          'Los "años hacia atrás permitidos" son obligatorios para la regla "Debe ser de un año específico"',
+        );
+      }
+    }
+
+    if (input.tienePlantilla && !input.plantillaContenido?.trim()) {
+      throw new BadRequestException(
+        'El contenido de la plantilla es obligatorio cuando el documento tiene plantilla descargable',
+      );
     }
   }
 }

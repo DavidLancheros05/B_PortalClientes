@@ -14,6 +14,7 @@ import { FormulariosModule } from './parametrizacion/formularios/formularios.mod
 import { FormularioSeccionesModule } from './parametrizacion/formulario-secciones/formulario-secciones.module';
 import { FormularioTiposPreguntaModule } from './parametrizacion/formulario-tipos-pregunta/formulario-tipos-pregunta.module';
 import { TiposDocumentosModule } from './parametrizacion/tipos-documentos/tipos-documentos.module';
+import { TiposVigenciaModule } from './parametrizacion/tipos-vigencia/tipos-vigencia.module';
 import { EstadosModule } from './parametrizacion/estados/estados.module';
 import { NotificacionesParamModule } from './parametrizacion/notificaciones/notificaciones.module';
 import { CorreosPorRolModule } from './parametrizacion/correos-por-rol/correos-por-rol.module';
@@ -67,6 +68,7 @@ import { AmpliacionCupoModule } from './ampliacion-cupo/ampliacion-cupo.module';
     FormularioSeccionesModule,
     FormularioTiposPreguntaModule,
     TiposDocumentosModule,
+    TiposVigenciaModule,
     EstadosModule,
     NotificacionesParamModule,
     CorreosPorRolModule,

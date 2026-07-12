@@ -1,13 +1,13 @@
 // src/solicitudes/solicitudes.service.ts
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
-import { readFile } from 'fs/promises';
+import axios from 'axios';
 import { addBusinessDays } from '../common/utils/business-days.util';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { HistorialWorkflowService } from '../workflow/historial/historial-workflow.service';
 import { FormularioRenderizableService } from './formulario-renderizable.service';
 import { MailService } from '../mail/mail.service';
-import { PDFDocument, rgb } from 'pdf-lib';
+import { PDFDocument, PDFFont, PDFPage, rgb } from 'pdf-lib';
 import { WorkflowEtapaResponseDto } from './dto/workflow-etapa.response.dto';
 import { WorkflowResultadoResponseDto } from './dto/workflow-resultado.response.dto';
 import { ParamDiasRespuestaResponseDto } from './dto/param-dias-respuesta.response.dto';
@@ -50,7 +50,7 @@ export class SolicitudesService {
   private async resolveHistorialColumns() {
     const result = await this.dataSource.query(`
       SELECT
-        CASE WHEN COL_LENGTH('Solicitudes_estados_hist','seh_sol_id') IS NOT NULL THEN 'seh_sol_id' ELSE 'solicitud_id' END AS solicitud_col,
+        CASE WHEN COL_LENGTH('Solicitudes_estados_hist','seh_sol_id') IS NOT NULL THEN 'seh_sol_id' ELSE 'sa_sol_id' END AS solicitud_col,
         CASE WHEN COL_LENGTH('Solicitudes_estados_hist','seh_estado_id') IS NOT NULL THEN 'seh_estado_id' ELSE 'estado_id' END AS estado_col,
         CASE WHEN COL_LENGTH('Solicitudes_estados_hist','seh_usr_id') IS NOT NULL THEN 'seh_usr_id' ELSE 'usr_id' END AS usuario_col,
         CASE WHEN COL_LENGTH('Solicitudes_estados_hist','seh_fecha_hora') IS NOT NULL THEN 'seh_fecha_hora' ELSE 'fecha_hora' END AS fecha_col
@@ -415,7 +415,7 @@ export class SolicitudesService {
 
       return {
         ok: true,
-        solicitud_id: solicitudId,
+        sa_sol_id: solicitudId,
         numero_solicitud: numeroSolicitud,
         mensaje: 'Solicitud creada exitosamente con SQL directo',
       };
@@ -540,22 +540,67 @@ export class SolicitudesService {
       text: string,
       maxWidth: number,
       fontSize: number,
+      font: PDFFont = helvetica,
     ): string[] => {
-      const charsPerLine = Math.floor(maxWidth / (fontSize * 0.5));
+      const words = String(text).split(/\s+/).filter(Boolean);
       const lines: string[] = [];
-      const words = String(text).split(' ');
       let currentLine = '';
 
       for (const word of words) {
-        if ((currentLine + word).length > charsPerLine) {
-          if (currentLine) lines.push(currentLine.trim());
+        const tentativa = currentLine ? `${currentLine} ${word}` : word;
+        if (
+          currentLine &&
+          font.widthOfTextAtSize(tentativa, fontSize) > maxWidth
+        ) {
+          lines.push(currentLine);
           currentLine = word;
         } else {
-          currentLine += (currentLine ? ' ' : '') + word;
+          currentLine = tentativa;
         }
       }
-      if (currentLine) lines.push(currentLine.trim());
+      if (currentLine) lines.push(currentLine);
       return lines;
+    };
+
+    // Dibuja una línea de texto justificada (repartiendo el espacio extra
+    // entre palabras para que llegue exacto a maxWidth). La última línea de
+    // un párrafo no se justifica (queda alineada a la izquierda, como es
+    // convención tipográfica estándar).
+    const drawJustifiedLine = (
+      page: PDFPage,
+      line: string,
+      x: number,
+      y: number,
+      maxWidth: number,
+      fontSize: number,
+      font: PDFFont,
+      color: ReturnType<typeof rgb>,
+      justificar: boolean,
+    ) => {
+      const palabras = line.split(' ').filter(Boolean);
+
+      if (!justificar || palabras.length <= 1) {
+        page.drawText(line, { x, y, size: fontSize, font, color });
+        return;
+      }
+
+      const spaceWidth = font.widthOfTextAtSize(' ', fontSize);
+      const palabrasWidth = palabras.reduce(
+        (suma, palabra) => suma + font.widthOfTextAtSize(palabra, fontSize),
+        0,
+      );
+      const anchoNatural = palabrasWidth + spaceWidth * (palabras.length - 1);
+      const espacioExtra = Math.max(0, maxWidth - anchoNatural);
+      const espacioPorHueco = espacioExtra / (palabras.length - 1);
+
+      let cursorX = x;
+      palabras.forEach((palabra) => {
+        page.drawText(palabra, { x: cursorX, y, size: fontSize, font, color });
+        cursorX +=
+          font.widthOfTextAtSize(palabra, fontSize) +
+          spaceWidth +
+          espacioPorHueco;
+      });
     };
 
     // ===== HEADER MEJORADO (incluye la info de la solicitud) =====
@@ -638,7 +683,15 @@ export class SolicitudesService {
     const infoValueColor = rgb(1, 1, 1);
 
     // Columna 1
-    drawCentered('N° Solicitud', col1X, col1Width, yPos - 60, 8, helvetica, infoLabelColor);
+    drawCentered(
+      'N° Solicitud',
+      col1X,
+      col1Width,
+      yPos - 60,
+      8,
+      helvetica,
+      infoLabelColor,
+    );
     drawCentered(
       formulario.sol_numero_solicitud || 'N/A',
       col1X,
@@ -650,11 +703,20 @@ export class SolicitudesService {
     );
 
     // Columna 2
-    drawCentered('Cliente', col2X, col2Width, yPos - 60, 8, helvetica, infoLabelColor);
+    drawCentered(
+      'Cliente',
+      col2X,
+      col2Width,
+      yPos - 60,
+      8,
+      helvetica,
+      infoLabelColor,
+    );
     const clientLines = wrapText(
       formulario.cliente_nombre || 'N/A',
       col2Width - 16,
       9,
+      helveticaBold,
     );
     drawCentered(
       clientLines[0] || '',
@@ -737,12 +799,75 @@ export class SolicitudesService {
         }
       }
 
-      // Renderizar NOTAS a ancho completo primero
+      // Renderizar NOTAS a ancho completo primero. Igual que en pantalla
+      // (getNotaDisplay en el frontend): fp_descripcion + fp_descripcion_adicional
+      // se combinan y se parten por línea en título / subtítulo / cuerpo — el
+      // cuerpo es lo único que se justifica (el título/subtítulo son
+      // encabezados cortos, no párrafos).
+      const notaTextWidth = contentWidth - 16;
       for (const notaPregunta of notaPreguntas) {
-        const notaText = String(notaPregunta.fp_descripcion);
-        const notaLines = wrapText(notaText, contentWidth - 12, 8);
+        const bloquesNota: string[] = [];
+        if (String(notaPregunta.fp_descripcion || '').trim()) {
+          bloquesNota.push(String(notaPregunta.fp_descripcion).trim());
+        }
+        if (String(notaPregunta.fp_descripcion_adicional || '').trim()) {
+          bloquesNota.push(
+            String(notaPregunta.fp_descripcion_adicional).trim(),
+          );
+        }
+        const lineasNota = bloquesNota
+          .join('\n')
+          .split('\n')
+          .map((linea) => linea.trim())
+          .filter(Boolean);
 
-        const notaBoxHeight = notaLines.length * 9 + 10;
+        // La mayoría de las notas reales son un solo párrafo largo, sin
+        // saltos de línea. Si se tratara esa única línea como "título" (en
+        // negrita, sin justificar), el texto completo nunca se vería
+        // justificado. Solo se separa título/subtítulo cuando el autor de
+        // la pregunta realmente escribió varias líneas (mismo criterio que
+        // getNotaDisplay en el frontend).
+        let notaTitulo = '';
+        let notaSubtitulo = '';
+        let notaCuerpo = '';
+
+        if (lineasNota.length === 1) {
+          notaCuerpo = lineasNota[0];
+        } else if (lineasNota.length === 2) {
+          notaTitulo = lineasNota[0];
+          notaCuerpo = lineasNota[1];
+        } else if (lineasNota.length > 2) {
+          notaTitulo = lineasNota[0];
+          notaSubtitulo = lineasNota[1];
+          notaCuerpo = lineasNota.slice(2).join('\n');
+        }
+
+        const tituloLinesNota = wrapText(
+          notaTitulo,
+          notaTextWidth,
+          9,
+          helveticaBold,
+        );
+        const subtituloLinesNota = notaSubtitulo
+          ? wrapText(notaSubtitulo, notaTextWidth, 8, helveticaBold)
+          : [];
+        const parrafosCuerpo = notaCuerpo
+          .split('\n')
+          .map((parrafo) => parrafo.trim())
+          .filter(Boolean)
+          .map((parrafo) => wrapText(parrafo, notaTextWidth, 8, helvetica));
+        const cuerpoLineCount = parrafosCuerpo.reduce(
+          (suma, parrafo) => suma + parrafo.length,
+          0,
+        );
+        const espacioEntreParrafos = Math.max(0, parrafosCuerpo.length - 1) * 3;
+
+        const notaBoxHeight =
+          tituloLinesNota.length * 10 +
+          (subtituloLinesNota.length ? subtituloLinesNota.length * 9 + 2 : 0) +
+          (cuerpoLineCount ? cuerpoLineCount * 9 + 4 : 0) +
+          espacioEntreParrafos +
+          10;
 
         // Caja para la nota
         drawBox(
@@ -754,16 +879,53 @@ export class SolicitudesService {
           rgb(0.75, 0.83, 0.92),
         );
 
-        let currentY = yPos - 8;
-        for (const line of notaLines) {
+        let currentY = yPos - 10;
+
+        for (const line of tituloLinesNota) {
           currentPage.drawText(line, {
             x: marginLeft + 8,
             y: currentY,
-            size: 8,
-            font: helvetica,
-            color: rgb(0.3, 0.3, 0.3),
+            size: 9,
+            font: helveticaBold,
+            color: rgb(0, 0.16, 0.45),
           });
-          currentY -= 9;
+          currentY -= 10;
+        }
+
+        if (subtituloLinesNota.length) {
+          currentY -= 2;
+          for (const line of subtituloLinesNota) {
+            currentPage.drawText(line, {
+              x: marginLeft + 8,
+              y: currentY,
+              size: 8,
+              font: helveticaBold,
+              color: rgb(0, 0.239, 0.6),
+            });
+            currentY -= 9;
+          }
+        }
+
+        if (cuerpoLineCount) {
+          currentY -= 4;
+          parrafosCuerpo.forEach((lineasParrafo, parrafoIdx) => {
+            lineasParrafo.forEach((line, idx) => {
+              const esUltimaLineaParrafo = idx === lineasParrafo.length - 1;
+              drawJustifiedLine(
+                currentPage,
+                line,
+                marginLeft + 8,
+                currentY,
+                notaTextWidth,
+                8,
+                helvetica,
+                rgb(0.3, 0.3, 0.3),
+                !esUltimaLineaParrafo,
+              );
+              currentY -= 9;
+            });
+            if (parrafoIdx < parrafosCuerpo.length - 1) currentY -= 3;
+          });
         }
 
         yPos -= notaBoxHeight + 8;
@@ -798,6 +960,7 @@ export class SolicitudesService {
           String(tablaPregunta.fp_descripcion),
           contentWidth,
           9,
+          helveticaBold,
         );
         for (const line of tituloLines) {
           if (yPos < 100) {
@@ -819,7 +982,11 @@ export class SolicitudesService {
         // Pre-calcular líneas envueltas por celda para saber la altura de cada fila
         const filasConLineas = filas.map((fila) =>
           columnas.map((columna) =>
-            wrapText(String(fila[columna] ?? ''), colWidth - cellPaddingX * 2, fontSize),
+            wrapText(
+              String(fila[columna] ?? ''),
+              colWidth - cellPaddingX * 2,
+              fontSize,
+            ),
           ),
         );
 
@@ -921,12 +1088,15 @@ export class SolicitudesService {
               String(imagenPregunta.fp_descripcion),
               imagenMaxWidth,
               9,
+              helveticaBold,
             );
             try {
-              const bytes = await readFile(imagenPregunta.imagen_ruta);
-              const esPng = /png/i.test(
-                imagenPregunta.imagen_tipo_mime || '',
+              const respuestaImagen = await axios.get(
+                imagenPregunta.imagen_ruta,
+                { responseType: 'arraybuffer' },
               );
+              const bytes = Buffer.from(respuestaImagen.data);
+              const esPng = /png/i.test(imagenPregunta.imagen_tipo_mime || '');
               const embeddedImage = esPng
                 ? await pdfDoc.embedPng(bytes)
                 : await pdfDoc.embedJpg(bytes);
@@ -1045,7 +1215,12 @@ export class SolicitudesService {
           const respuestaText = String(
             pregunta.valor_resuelto || 'Sin respuesta',
           );
-          const preguntaLines = wrapText(preguntaText + ':', maxColWidth, 8);
+          const preguntaLines = wrapText(
+            preguntaText + ':',
+            maxColWidth,
+            8,
+            helveticaBold,
+          );
           const respuestaLines = wrapText(respuestaText, maxColWidth, 8);
 
           // Si pregunta cabe en 1 línea y respuesta también, revisar si caben juntas
@@ -1078,7 +1253,12 @@ export class SolicitudesService {
           const respuestaText = String(
             pregunta.valor_resuelto || 'Sin respuesta',
           );
-          const preguntaLines = wrapText(preguntaText + ':', maxColWidth, 8);
+          const preguntaLines = wrapText(
+            preguntaText + ':',
+            maxColWidth,
+            8,
+            helveticaBold,
+          );
           const respuestaLines = wrapText(respuestaText, maxColWidth, 8);
 
           // Si pregunta cabe en 1 línea y respuesta es corta, intentar poner juntas
@@ -1257,5 +1437,4 @@ export class SolicitudesService {
       }
     }
   }
-
 }

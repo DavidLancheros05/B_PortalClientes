@@ -5,6 +5,7 @@ export interface PreguntaRenderizable {
   fp_id: number;
   fp_tipo: string;
   fp_descripcion: string;
+  fp_descripcion_adicional?: string | null;
   seccion_id: number;
   fp_orden: number;
   fp_requerida: boolean;
@@ -101,6 +102,7 @@ export class FormularioRenderizableService {
         fp.fp_id,
         fp.seccion_id,
         fp.fp_descripcion,
+        fp.fp_descripcion_adicional,
         fp.fp_tipo,
         fp.fp_orden,
         fp.fp_requerida,
@@ -151,12 +153,12 @@ export class FormularioRenderizableService {
     // 5.5 Obtener imágenes cargadas (para fp_tipo === 'IMAGEN')
     const imagenesResult = await this.dataSource.query(
       `
-      SELECT sa.fp_id, sa.ruta_almacenamiento, sa.tipo_mime
+      SELECT sa.sa_fp_id, sa.sa_ruta_almacenamiento, sa.sa_tipo_mime
       FROM (
-        SELECT fp_id, ruta_almacenamiento, tipo_mime,
-          ROW_NUMBER() OVER (PARTITION BY fp_id ORDER BY created_at DESC) AS rn
+        SELECT sa_fp_id, sa_ruta_almacenamiento, sa_tipo_mime,
+          ROW_NUMBER() OVER (PARTITION BY sa_fp_id ORDER BY sa_created_at DESC) AS rn
         FROM Solicitud_archivo
-        WHERE solicitud_id = @0 AND estado = 'activo'
+        WHERE sa_sol_id = @0 AND sa_estado = 'activo'
       ) sa
       WHERE sa.rn = 1
       `,
@@ -164,12 +166,12 @@ export class FormularioRenderizableService {
     );
     const imagenesMap = new Map<
       number,
-      { ruta_almacenamiento: string; tipo_mime: string }
+      { sa_ruta_almacenamiento: string; sa_tipo_mime: string }
     >();
     for (const img of imagenesResult) {
-      imagenesMap.set(img.fp_id, {
-        ruta_almacenamiento: img.ruta_almacenamiento,
-        tipo_mime: img.tipo_mime,
+      imagenesMap.set(img.sa_fp_id, {
+        sa_ruta_almacenamiento: img.sa_ruta_almacenamiento,
+        sa_tipo_mime: img.sa_tipo_mime,
       });
     }
 
@@ -209,6 +211,7 @@ export class FormularioRenderizableService {
         fp_id: p.fp_id,
         fp_tipo: p.fp_tipo,
         fp_descripcion: p.fp_descripcion,
+        fp_descripcion_adicional: p.fp_descripcion_adicional,
         seccion_id: p.seccion_id,
         fp_orden: p.fp_orden,
         fp_requerida: p.fp_requerida,
@@ -221,15 +224,18 @@ export class FormularioRenderizableService {
         fp_catalogo_columna: p.fp_catalogo_columna,
         fp_catalogo_pk_column: p.fp_catalogo_pk_column,
         tabla_columnas:
-          p.fp_tipo === 'TABLA' ? this.parseTablaColumnas(p.fp_tabla_columnas) : undefined,
-        tabla_filas: p.fp_tipo === 'TABLA' ? tablaFilasMap.get(p.fp_id) : undefined,
+          p.fp_tipo === 'TABLA'
+            ? this.parseTablaColumnas(p.fp_tabla_columnas)
+            : undefined,
+        tabla_filas:
+          p.fp_tipo === 'TABLA' ? tablaFilasMap.get(p.fp_id) : undefined,
         imagen_ruta:
           p.fp_tipo === 'IMAGEN'
-            ? (imagenesMap.get(p.fp_id)?.ruta_almacenamiento ?? null)
+            ? (imagenesMap.get(p.fp_id)?.sa_ruta_almacenamiento ?? null)
             : undefined,
         imagen_tipo_mime:
           p.fp_tipo === 'IMAGEN'
-            ? (imagenesMap.get(p.fp_id)?.tipo_mime ?? null)
+            ? (imagenesMap.get(p.fp_id)?.sa_tipo_mime ?? null)
             : undefined,
       }),
     );
@@ -249,7 +255,9 @@ export class FormularioRenderizableService {
     if (!fpTablaColumnas) return [];
     try {
       const parsed = JSON.parse(fpTablaColumnas);
-      return Array.isArray(parsed) ? parsed.filter((c) => typeof c === 'string') : [];
+      return Array.isArray(parsed)
+        ? parsed.filter((c) => typeof c === 'string')
+        : [];
     } catch {
       return [];
     }
@@ -321,10 +329,10 @@ export class FormularioRenderizableService {
     if (respuesta.fr_valor_archivo_id) {
       try {
         const archivo = await this.dataSource.query(
-          `SELECT nombre_original FROM Solicitud_archivo WHERE sa_id = @0`,
+          `SELECT sa_nombre_original FROM Solicitud_archivo WHERE sa_id = @0`,
           [respuesta.fr_valor_archivo_id],
         );
-        return archivo?.[0]?.nombre_original || 'Sin respuesta';
+        return archivo?.[0]?.sa_nombre_original || 'Sin respuesta';
       } catch {
         return 'Sin respuesta';
       }

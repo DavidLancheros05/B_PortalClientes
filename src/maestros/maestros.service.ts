@@ -90,7 +90,12 @@ export class MaestrosService {
 
   private async getCatalogoGeografico(config: {
     tabla: string;
-    columnas: { id: string; nombre: string; parentId?: string; estado: string };
+    columnas: {
+      id: string;
+      nombre: string;
+      parentId?: string;
+      estado: string;
+    };
     idAlias: string;
     nombreAlias: string;
     parentIdAlias?: string;
@@ -168,6 +173,8 @@ export class MaestrosService {
     baseDatos?: string,
     columnaDescripcion?: string,
     columnaId?: string,
+    columnaFiltro?: string,
+    valorFiltro?: string,
   ) {
     if (!tabla) {
       throw new BadRequestException('El parámetro tabla es requerido');
@@ -189,6 +196,20 @@ export class MaestrosService {
       throw new BadRequestException('Nombre de columna llave inválido');
     }
 
+    if (columnaFiltro && !this.isSafeIdentifier(columnaFiltro)) {
+      throw new BadRequestException('Nombre de columna de filtro inválido');
+    }
+
+    let valorFiltroNum: number | null = null;
+    if (columnaFiltro) {
+      valorFiltroNum = valorFiltro ? parseInt(valorFiltro, 10) : NaN;
+      if (Number.isNaN(valorFiltroNum)) {
+        throw new BadRequestException(
+          'valor_filtro debe ser un número cuando se indica columna_filtro',
+        );
+      }
+    }
+
     const currentDbResult = await this.dataSource.query(
       `SELECT DB_NAME() AS db_name`,
     );
@@ -199,14 +220,21 @@ export class MaestrosService {
     // falta consultar INFORMATION_SCHEMA para adivinarlas (nos ahorramos
     // una ida y vuelta completa a la base de datos remota por cada catálogo).
     if (columnaDescripcion && columnaId) {
+      const whereFiltroDirecto = columnaFiltro
+        ? `WHERE [${columnaFiltro}] = @0`
+        : '';
       const dataQueryDirecta = `
         SELECT
           TRY_CONVERT(INT, [${columnaId}]) AS op_id,
           CAST([${columnaDescripcion}] AS NVARCHAR(255)) AS op_descripcion
         FROM [${targetDb}].[dbo].[${tabla}]
+        ${whereFiltroDirecto}
         ORDER BY [${columnaDescripcion}]
       `;
-      const dataResultDirecto = await this.dataSource.query(dataQueryDirecta);
+      const dataResultDirecto = await this.dataSource.query(
+        dataQueryDirecta,
+        columnaFiltro ? [valorFiltroNum] : [],
+      );
       return dataResultDirecto
         .filter((row: any) => row.op_id !== null && row.op_descripcion !== null)
         .map((row: any) => ({
@@ -279,18 +307,25 @@ export class MaestrosService {
       );
     }
 
-    const whereActive = activeColumn ? `WHERE [${activeColumn}] = 1` : '';
+    const condiciones: string[] = [];
+    if (activeColumn) condiciones.push(`[${activeColumn}] = 1`);
+    if (columnaFiltro) condiciones.push(`[${columnaFiltro}] = @0`);
+    const whereClause =
+      condiciones.length > 0 ? `WHERE ${condiciones.join(' AND ')}` : '';
 
     const dataQuery = `
       SELECT
         TRY_CONVERT(INT, [${effectiveIdColumn}]) AS op_id,
         CAST([${effectiveLabelColumn}] AS NVARCHAR(255)) AS op_descripcion
       FROM [${targetDb}].[dbo].[${tabla}]
-      ${whereActive}
+      ${whereClause}
       ORDER BY [${effectiveLabelColumn}]
     `;
 
-    const dataResult = await this.dataSource.query(dataQuery);
+    const dataResult = await this.dataSource.query(
+      dataQuery,
+      columnaFiltro ? [valorFiltroNum] : [],
+    );
 
     return dataResult
       .filter((row: any) => row.op_id !== null && row.op_descripcion !== null)

@@ -16,6 +16,7 @@ import { FormularioRespuestaEntity } from './entities/solicitud-respuesta.entity
 import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 import { WorkflowModule } from '../workflow/workflow.module';
 import { WorkflowService } from './workflow.service';
+import { StorageModule } from '../common/storage/storage.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { WorkflowService } from './workflow.service';
     MailModule,
     NotificacionesModule,
     WorkflowModule,
+    StorageModule,
   ],
   controllers: [SolicitudesController], // <-- esto es clave
   providers: [

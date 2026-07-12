@@ -16,6 +16,7 @@ import {
   HttpException,
   UploadedFile,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Request, Response } from 'express';
@@ -26,6 +27,8 @@ import { SolicitudesWorkflowService } from './solicitudes-workflow.service';
 import { SolicitudesDocumentosService } from './solicitudes-documentos.service';
 import { FormularioRenderizableService } from './formulario-renderizable.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from '../auth/roles.decorator';
 import { SolicitudRespuestaDto } from './dto/solicitud-respuesta.response.dto';
 import { ParamDiasRespuestaResponseDto } from './dto/param-dias-respuesta.response.dto';
 import { WorkflowEtapaResponseDto } from './dto/workflow-etapa.response.dto';
@@ -351,20 +354,63 @@ export class SolicitudesController {
     }
   }
 
+  @Get('mis-documentos')
+  @UseGuards(JwtAuthGuard)
+  async getMisDocumentos(
+    @Req()
+    req: Request & { user: { cliente_id?: number; cli_id?: number } },
+  ) {
+    try {
+      const clienteId = req.user?.cliente_id ?? req.user?.cli_id;
+      if (!clienteId) {
+        throw new HttpException('Usuario sin cliente asociado', 400);
+      }
+
+      const solicitud =
+        await this.listadosService.obtenerUltimaSolicitud(clienteId);
+
+      if (!solicitud) {
+        return {
+          solicitud: null,
+          documentos: [],
+          puedeCorregir: false,
+          rechazadoPorAuxiliar: false,
+        };
+      }
+
+      const documentos =
+        await this.documentosService.obtenerDocumentosConVigencia(
+          solicitud.sol_id,
+        );
+      const puedeCorregir = [1, 2].includes(Number(solicitud.sol_estado_id));
+
+      // Rechazado por Auxiliar Servicio Cliente: Pendiente(2) + Etapa
+      // ASC(3) + Resultado RECHAZADO(3). Misma condición literal ya usada
+      // en SolicitudesContent.tsx y en solicitudes-workflow.service.ts.
+      const rechazadoPorAuxiliar =
+        Number(solicitud.sol_estado_id) === 2 &&
+        Number(solicitud.sol_etapa_actual_id) === 3 &&
+        Number(solicitud.sol_resultado_etapa_id) === 3;
+
+      return { solicitud, documentos, puedeCorregir, rechazadoPorAuxiliar };
+    } catch (error) {
+      console.error('[getMisDocumentos] Error:', error);
+      throw new HttpException(
+        error instanceof Error ? error.message : 'Error al obtener documentos',
+        500,
+      );
+    }
+  }
+
   @Get('archivo/:sa_id')
   async descargarArchivo(
     @Param('sa_id', ParseIntPipe) sa_id: number,
     @Res() res: Response,
   ) {
     try {
-      const { buffer, nombreOriginal, tipo_mime } =
+      const { downloadUrl } =
         await this.documentosService.descargarArchivoRespuesta(sa_id);
-      res.setHeader('Content-Type', tipo_mime || 'application/octet-stream');
-      res.setHeader(
-        'Content-Disposition',
-        `attachment; filename="${nombreOriginal}"`,
-      );
-      res.send(buffer);
+      res.redirect(302, downloadUrl);
     } catch (error) {
       console.error('[descargarArchivo] Error:', error);
       throw new HttpException(
@@ -603,17 +649,7 @@ export class SolicitudesController {
         saId,
       );
 
-      res.setHeader(
-        'Content-Type',
-        archivo.tipo_mime || 'application/octet-stream',
-      );
-      res.setHeader(
-        'Content-Disposition',
-        `attachment; filename="${encodeURIComponent(archivo.nombre_original)}"`,
-      );
-      res.setHeader('Content-Length', archivo.tamaño_bytes);
-
-      res.send(archivo.buffer);
+      res.redirect(302, archivo.downloadUrl);
     } catch (error) {
       console.error('Error al obtener archivo:', error);
       const statusCode =
@@ -668,16 +704,26 @@ export class SolicitudesController {
   }
 
   @Delete(':id/respuestas/archivo/:saId')
+  @UseGuards(JwtAuthGuard)
   async eliminarRespuestaArchivo(
     @Param('id', ParseIntPipe) solicitudId: number,
     @Param('saId', ParseIntPipe) saId: number,
+    @Req()
+    req: Request & {
+      user: { rol?: string; cliente_id?: number; cli_id?: number };
+    },
   ) {
     try {
+      await this.documentosService.verificarAccesoSolicitud(
+        solicitudId,
+        req.user,
+      );
       return await this.respuestasService.eliminarRespuestaArchivo(
         solicitudId,
         saId,
       );
     } catch (error) {
+      if (error instanceof ForbiddenException) throw error;
       console.error('Error al eliminar archivo:', error);
       throw new HttpException(
         error instanceof Error ? error.message : 'Error al eliminar archivo',
@@ -707,11 +753,20 @@ export class SolicitudesController {
   }
 
   @Post('respuestas/archivo')
+  @UseGuards(JwtAuthGuard)
   @UseInterceptors(FileInterceptor('archivo'))
   async guardarRespuestaArchivo(
     @UploadedFile() file: Express.Multer.File,
     @Body() dto: any,
-    @Req() req: Request & { user: { usr_id: number } },
+    @Req()
+    req: Request & {
+      user: {
+        usr_id: number;
+        rol?: string;
+        cliente_id?: number;
+        cli_id?: number;
+      };
+    },
   ) {
     try {
       console.log(
@@ -732,6 +787,11 @@ export class SolicitudesController {
         throw new BadRequestException('No se proporcionó ningún archivo');
       }
 
+      await this.documentosService.verificarAccesoSolicitud(
+        Number(dto?.sa_sol_id),
+        req.user,
+      );
+
       const resultado = await this.respuestasService.guardarRespuestaArchivo(
         dto,
         file,
@@ -739,6 +799,7 @@ export class SolicitudesController {
       );
       return resultado;
     } catch (error) {
+      if (error instanceof ForbiddenException) throw error;
       console.error('❌ Error al guardar archivo:', error);
       return {
         ok: false,
@@ -749,10 +810,19 @@ export class SolicitudesController {
   }
 
   @Patch(':id/respuestas/documento/fecha')
+  @UseGuards(JwtAuthGuard)
   async actualizarFechaDocumento(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { fp_id: number; fechaEmision: string },
-    @Req() req: Request & { user: { usr_id: number } },
+    @Req()
+    req: Request & {
+      user: {
+        usr_id: number;
+        rol?: string;
+        cliente_id?: number;
+        cli_id?: number;
+      };
+    },
   ) {
     try {
       console.log('📅 PATCH /solicitudes/:id/respuestas/documento/fecha:', {
@@ -760,6 +830,7 @@ export class SolicitudesController {
         fp_id: body.fp_id,
         fechaEmision: body.fechaEmision,
       });
+      await this.documentosService.verificarAccesoSolicitud(id, req.user);
       return await this.respuestasService.actualizarFechaDocumento(
         id,
         body.fp_id,
@@ -767,6 +838,7 @@ export class SolicitudesController {
         req.user?.usr_id,
       );
     } catch (error) {
+      if (error instanceof ForbiddenException) throw error;
       console.error('❌ Error al actualizar fecha:', error);
       return {
         ok: false,
@@ -777,6 +849,7 @@ export class SolicitudesController {
   }
 
   @Patch(':id/estado')
+  @UseGuards(JwtAuthGuard)
   async cambiarEstado(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { estadoId: number },
@@ -830,6 +903,7 @@ export class SolicitudesController {
         motivo_rechazo_id,
         modo_solucion,
         fecha_estimada_respuesta_comercial,
+        documentos_faltantes,
       } = body;
 
       if (aprobado === undefined) {
@@ -850,6 +924,7 @@ export class SolicitudesController {
         modo_solucion,
         fechaEstimada,
         usuario_modifica,
+        Array.isArray(documentos_faltantes) ? documentos_faltantes : undefined,
       );
       console.log('[aprobarRechazarSolicitud] Resultado:', result);
       return result;
@@ -864,7 +939,8 @@ export class SolicitudesController {
   }
 
   @Put(':id/concepto-ejecutivo')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('EJECUTIVO', 'ADMIN')
   async guardarGestionEjecutivo(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: any,
@@ -887,7 +963,9 @@ export class SolicitudesController {
 
       const usuario_modifica = req.user.usr_id;
 
-      // 1️⃣ Guardar concepto del ejecutivo
+      // Guardar concepto del ejecutivo. El propio servicio ya deja la
+      // solicitud en estado REVISIÓN, etapa ASC, resultado PENDIENTE
+      // (cambiarEtapa + UPDATE), no hace falta repetirlo aparte.
       const result = await this.workflowService.guardarGestionEjecutivo(
         id,
         consumo_mensual_proyectado,
@@ -896,21 +974,6 @@ export class SolicitudesController {
         fecha_real_ejecutivo,
       );
       console.log(`✅ [CONTROLLER] Concepto guardado exitosamente`);
-
-      // 2️⃣ Actualizar flujo automáticamente (estado REVISIÓN, etapa ASC, resultado PENDIENTE)
-      try {
-        await this.workflowService.actualizarEstadoFlujoAutomatico(
-          id,
-          'REVISION',
-          'ASC',
-          'PENDIENTE',
-          usuario_modifica,
-        );
-        console.log(`✅ [CONTROLLER] Flujo actualizado automáticamente`);
-      } catch (flujoError) {
-        console.warn(`⚠️ [CONTROLLER] Aviso al actualizar flujo:`, flujoError);
-        // No lanzar error, solo advertir
-      }
 
       return result;
     } catch (error: any) {

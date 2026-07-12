@@ -75,7 +75,7 @@ CREATE TABLE Formulario_pregunta_opcion (
 
 -- Crear tabla solicitudes
 CREATE TABLE solicitudes (
-    solicitud_id INT PRIMARY KEY IDENTITY(1,1),
+    sa_sol_id INT PRIMARY KEY IDENTITY(1,1),
     formulario_version_id INT NOT NULL,
     cliente_id INT,
     sol_codigo NVARCHAR(100),
@@ -90,7 +90,7 @@ CREATE TABLE solicitudes (
 -- Crear tabla Solicitud_documento
 CREATE TABLE Solicitud_documento (
     documento_id INT PRIMARY KEY IDENTITY(1,1),
-    solicitud_id INT NOT NULL,
+    sa_sol_id INT NOT NULL,
     tipo_id INT NOT NULL,
     documento_nombre NVARCHAR(255) NOT NULL,
     documento_ruta NVARCHAR(MAX),
@@ -100,21 +100,21 @@ CREATE TABLE Solicitud_documento (
     documento_activo BIT DEFAULT 1,
     documento_created_at DATETIME DEFAULT GETDATE(),
     documento_updated_at DATETIME DEFAULT GETDATE(),
-    FOREIGN KEY (solicitud_id) REFERENCES solicitudes(solicitud_id),
+    FOREIGN KEY (sa_sol_id) REFERENCES solicitudes(sa_sol_id),
     FOREIGN KEY (tipo_id) REFERENCES Tipos_documentos(tipo_id)
 );
 
 -- Crear tabla Formulario_respuesta
 CREATE TABLE Formulario_respuesta (
     respuesta_id INT PRIMARY KEY IDENTITY(1,1),
-    solicitud_id INT NOT NULL,
+    sa_sol_id INT NOT NULL,
     pregunta_id INT NOT NULL,
     respuesta_valor NVARCHAR(MAX),
     respuesta_archivo_ruta NVARCHAR(MAX),
     respuesta_activo BIT DEFAULT 1,
     respuesta_created_at DATETIME DEFAULT GETDATE(),
     respuesta_updated_at DATETIME DEFAULT GETDATE(),
-    FOREIGN KEY (solicitud_id) REFERENCES solicitudes(solicitud_id),
+    FOREIGN KEY (sa_sol_id) REFERENCES solicitudes(sa_sol_id),
     FOREIGN KEY (pregunta_id) REFERENCES Formulario_pregunta(pregunta_id)
 );
 
@@ -125,7 +125,7 @@ CREATE INDEX idx_Formulario_pregunta_tipo ON Formulario_pregunta(tipo_input_id);
 CREATE INDEX idx_Formulario_pregunta_opcion_pregunta ON Formulario_pregunta_opcion(pregunta_id);
 CREATE INDEX idx_solicitudes_version ON solicitudes(formulario_version_id);
 CREATE INDEX idx_solicitudes_cliente ON solicitudes(cliente_id);
-CREATE INDEX idx_Solicitud_documento_solicitud ON Solicitud_documento(solicitud_id);
+CREATE INDEX idx_Solicitud_documento_solicitud ON Solicitud_documento(sa_sol_id);
 CREATE INDEX idx_Solicitud_documento_tipo ON Solicitud_documento(tipo_id);
-CREATE INDEX idx_Formulario_respuesta_solicitud ON Formulario_respuesta(solicitud_id);
+CREATE INDEX idx_Formulario_respuesta_solicitud ON Formulario_respuesta(sa_sol_id);
 CREATE INDEX idx_Formulario_respuesta_pregunta ON Formulario_respuesta(pregunta_id);

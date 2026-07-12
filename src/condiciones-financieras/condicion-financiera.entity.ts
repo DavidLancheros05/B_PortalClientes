@@ -7,7 +7,7 @@ export class CondicionFinanciera {
   condicion_id: number;
 
   @Column({ type: 'int' })
-  solicitud_id: number;
+  sa_sol_id: number;
 
   @Column({ type: 'decimal', precision: 18, scale: 2 })
   cupo: number;

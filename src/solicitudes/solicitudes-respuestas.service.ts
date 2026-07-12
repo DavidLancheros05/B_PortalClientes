@@ -1,15 +1,20 @@
 // src/solicitudes/solicitudes-respuestas.service.ts
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Inject, Injectable, BadRequestException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { createHash } from 'crypto';
-import { mkdir, writeFile, readFile, unlink } from 'fs/promises';
-import { join } from 'path';
 import { TABLAS, COLUMNAS } from '../common/constants/tablas.constants';
 import { SolicitudRespuestaDto } from './dto/solicitud-respuesta.response.dto';
+import {
+  IStorageService,
+  STORAGE_SERVICE,
+} from '../common/storage/storage.interface';
 
 @Injectable()
 export class SolicitudesRespuestasService {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    @Inject(STORAGE_SERVICE) private readonly storageService: IStorageService,
+  ) {}
 
   async obtenerRespuestas(
     solicitudId: number,
@@ -44,7 +49,7 @@ export class SolicitudesRespuestasService {
     console.log('Guardando respuesta:', dto);
 
     const {
-      solicitud_id,
+      sa_sol_id,
       fp_id,
       valor_texto,
       valor_numero,
@@ -54,8 +59,8 @@ export class SolicitudesRespuestasService {
     } = dto;
 
     // Validar que los datos no sean undefined
-    if (!solicitud_id || !fp_id) {
-      throw new Error('solicitud_id y fp_id son obligatorios');
+    if (!sa_sol_id || !fp_id) {
+      throw new Error('sa_sol_id y fp_id son obligatorios');
     }
 
     // Obtener el tipo de pregunta para determinar cómo guardar la respuesta
@@ -137,7 +142,7 @@ export class SolicitudesRespuestasService {
     try {
       await queryRunner.query(
         `DELETE FROM Formulario_respuesta WHERE fr_solicitud_id = @0 AND fr_fp_id = @1`,
-        [solicitud_id, fp_id],
+        [sa_sol_id, fp_id],
       );
 
       // Para SELECT_TABLA, guardar el ID en valor_numero (no tiene opciones predefinidas)
@@ -154,7 +159,7 @@ export class SolicitudesRespuestasService {
 
         for (const opcionId of opcionesIds) {
           const params = [
-            solicitud_id,
+            sa_sol_id,
             fp_id,
             opcionId,
             opcionesIds.length > 1 ? 1 : 0,
@@ -172,7 +177,7 @@ export class SolicitudesRespuestasService {
 
         for (const opcionId of opcionesIds) {
           const params = [
-            solicitud_id,
+            sa_sol_id,
             fp_id,
             opcionId,
             opcionesIds.length > 1 ? 1 : 0, // es_multiselect = 1 si hay múltiples
@@ -188,7 +193,7 @@ export class SolicitudesRespuestasService {
           VALUES (@0, @1, @2, @3, @4, GETDATE())
         `;
 
-        const params = [solicitud_id, fp_id, valorTexto, valorNumero, valorFecha];
+        const params = [sa_sol_id, fp_id, valorTexto, valorNumero, valorFecha];
 
         console.log('🔹 SQL Params (valor):', params);
         await queryRunner.query(sql, params);
@@ -221,14 +226,14 @@ export class SolicitudesRespuestasService {
       throw new Error('No se proporcionó ningún archivo');
     }
 
-    const { solicitud_id, fp_id, fechaEmision } = dto;
+    const { sa_sol_id, fp_id, fechaEmision } = dto;
 
-    if (!solicitud_id || !fp_id) {
+    if (!sa_sol_id || !fp_id) {
       console.error('🔴 [guardarRespuestaArchivo] Parámetros faltantes:', {
-        solicitud_id,
+        sa_sol_id,
         fp_id,
       });
-      throw new Error('solicitud_id y fp_id son obligatorios');
+      throw new Error('sa_sol_id y fp_id son obligatorios');
     }
 
     const preguntaTipoResult = await this.dataSource.query(
@@ -258,10 +263,10 @@ export class SolicitudesRespuestasService {
         WHERE sol_id = @0
       `;
       const solicitudResult = await queryRunner.query(solicitudSQL, [
-        solicitud_id,
+        sa_sol_id,
       ]);
       if (!solicitudResult || solicitudResult.length === 0) {
-        throw new Error(`Solicitud con id ${solicitud_id} no encontrada`);
+        throw new Error(`Solicitud con id ${sa_sol_id} no encontrada`);
       }
 
       const { sol_nit_documento, sol_numero_solicitud, sol_co_id } =
@@ -282,57 +287,23 @@ export class SolicitudesRespuestasService {
 
       const { cop_nombre } = centroResult[0];
 
-      // Construir ruta: Documentos-Solicitudes/{centro}/formularios/{numero_solicitud}
-      const uploadDir = join(
-        process.cwd(),
-        'Documentos-Solicitudes',
-        cop_nombre,
-        'formularios',
-        sol_numero_solicitud,
-      );
-      const rutaAlmacenamiento = join(uploadDir, nombreGuardado);
+      // Subir al almacenamiento configurado, espejando la estructura de
+      // carpetas que se usaba en disco: documentos-solicitudes/{centro}/formularios/{numero_solicitud}
+      const carpetaAlmacenamiento = `documentos-solicitudes/${cop_nombre}/formularios/${sol_numero_solicitud}`;
+      const subida = await this.storageService.upload(file.buffer, {
+        folder: carpetaAlmacenamiento,
+        filename: nombreGuardado,
+        mimetype: file.mimetype,
+      });
+      const rutaAlmacenamiento = subida.url;
+      console.log(`☁️ Archivo subido al almacenamiento: ${rutaAlmacenamiento}`);
 
-      // Crear directorio si no existe
-      await mkdir(uploadDir, { recursive: true });
+      // Si hay fechaEmision, calcular la fecha de vencimiento según el tipo
+      // de documento antes de insertar, para guardarla en la misma fila.
+      let fechaEmisionValue: string | null = null;
+      let fechaVencimientoValue: string | null = null;
 
-      // Guardar archivo en disco
-      await writeFile(rutaAlmacenamiento, file.buffer);
-      console.log(`📁 Archivo guardado en disco: ${rutaAlmacenamiento}`);
-
-      const sqlArchivo = `
-        INSERT INTO Solicitud_archivo
-        (solicitud_id, fp_id, nombre_original, nombre_guardado, tamaño_bytes, tipo_mime, ruta_almacenamiento, cargado_por, estado, checksum_archivo, created_at)
-        VALUES (@0, @1, @2, @3, @4, @5, @6, @7, @8, @9, GETDATE())
-      `;
-
-      const paramsArchivo = [
-        solicitud_id,
-        fp_id,
-        file.originalname,
-        nombreGuardado,
-        file.size || file.buffer?.length || 0,
-        file.mimetype || 'application/octet-stream',
-        rutaAlmacenamiento,
-        usuarioId || 0,
-        'activo',
-        checksum,
-      ];
-
-      console.log('🔹 SQL Params (archivo):', paramsArchivo);
-      console.log('🔹 Ejecutando INSERT en Solicitud_archivo...');
-      const resultInsert = await queryRunner.query(sqlArchivo, paramsArchivo);
-      console.log(
-        '✅ [guardarRespuestaArchivo] INSERT completado:',
-        resultInsert,
-      );
-
-      // Si hay fechaEmision, guardar metadatos en Solicitud_documento
       if (fechaEmision) {
-        console.log(
-          '📅 [guardarRespuestaArchivo] Guardando fecha de emisión:',
-          fechaEmision,
-        );
-        // 1. Obtener tdo_tipo_documento_id y tdo_vigencia_dias de la pregunta
         const getPreguntaSQL = `
           SELECT fp_tipo_documento_id
           FROM Formulario_pregunta
@@ -340,13 +311,8 @@ export class SolicitudesRespuestasService {
         `;
         const preguntaResult = await queryRunner.query(getPreguntaSQL, [fp_id]);
         const tdo_tipo_documento_id = preguntaResult?.[0]?.fp_tipo_documento_id;
-        console.log(
-          '📋 fp_tipo_documento_id encontrado:',
-          tdo_tipo_documento_id,
-        );
 
         if (tdo_tipo_documento_id) {
-          // 2. Obtener tdo_vigencia_dias
           const getDocumentoSQL = `
             SELECT ${COLUMNAS.TIPOS_DOCUMENTOS.vigencia}
             FROM ${TABLAS.TIPOS_DOCUMENTOS}
@@ -357,92 +323,73 @@ export class SolicitudesRespuestasService {
           ]);
           const tdo_vigencia_dias =
             docResult?.[0]?.[COLUMNAS.TIPOS_DOCUMENTOS.vigencia];
-          console.log('📋 tdo_vigencia_dias encontrado:', tdo_vigencia_dias);
 
-          // 3. Calcular fecha de vencimiento
-          let fechaVencimiento = null;
+          fechaEmisionValue = fechaEmision;
           if (tdo_vigencia_dias) {
             const [year, month, day] = fechaEmision.split('-').map(Number);
             const fechaBase = new Date(year, month - 1, day);
-            fechaVencimiento = new Date(fechaBase);
+            const fechaVencimiento = new Date(fechaBase);
             fechaVencimiento.setDate(
               fechaVencimiento.getDate() + tdo_vigencia_dias,
             );
+            fechaVencimientoValue = fechaVencimiento
+              .toISOString()
+              .split('T')[0];
           }
-          console.log(
-            '📋 fechaVencimiento calculada:',
-            fechaVencimiento?.toISOString().split('T')[0] || null,
-          );
-
-          // 4. Eliminar documento existente para este tipo (mantener solo el actual)
-          const deleteSQL = `
-            DELETE FROM Solicitud_documento
-            WHERE sd_solicitud_id = @0 AND sd_tipo_documento_id = @1
-          `;
-          console.log('🗑️  Eliminando documento anterior:', {
-            solicitud_id,
-            tdo_tipo_documento_id,
-          });
-          await queryRunner.query(deleteSQL, [
-            solicitud_id,
-            tdo_tipo_documento_id,
-          ]);
-
-          // 5. Insertar nuevo documento con metadatos
-          const insertDocSQL = `
-            INSERT INTO Solicitud_documento
-            (sd_solicitud_id, sd_tipo_documento_id, sd_ruta_archivo, sd_fecha_emision, sd_fecha_vencimiento, sd_usuario, sd_estado, sd_created_at)
-            VALUES (@0, @1, @2, @3, @4, @5, 1, GETDATE())
-          `;
-          const paramsDoc = [
-            solicitud_id,
-            tdo_tipo_documento_id,
-            rutaAlmacenamiento,
-            fechaEmision,
-            fechaVencimiento
-              ? fechaVencimiento.toISOString().split('T')[0]
-              : null,
-            usuarioId || 0,
-          ];
-          console.log(
-            '✅ [guardarRespuestaArchivo] Insertando documento con metadatos:',
-            {
-              solicitud_id,
-              tdo_tipo_documento_id,
-              sd_fecha_emision: fechaEmision,
-              sd_fecha_vencimiento: fechaVencimiento
-                ? fechaVencimiento.toISOString().split('T')[0]
-                : null,
-            },
-          );
-          await queryRunner.query(insertDocSQL, paramsDoc);
         } else {
           console.warn(
             '⚠️  [guardarRespuestaArchivo] No se encontró fp_tipo_documento_id para fp_id:',
             fp_id,
           );
         }
-      } else {
-        console.warn(
-          '⚠️  [guardarRespuestaArchivo] NO hay fechaEmision, no se guardarán metadatos del documento',
-        );
       }
+
+      const sqlArchivo = `
+        INSERT INTO Solicitud_archivo
+        (sa_sol_id, sa_fp_id, sa_nombre_original, sa_nombre_guardado, sa_tamaño_bytes, sa_tipo_mime, sa_ruta_almacenamiento, sa_cargado_por, sa_estado, sa_checksum_archivo, sa_cloudinary_public_id, sa_resource_type, sa_created_at, sa_fecha_emision, sa_fecha_vencimiento)
+        VALUES (@0, @1, @2, @3, @4, @5, @6, @7, @8, @9, @10, @11, GETDATE(), @12, @13)
+      `;
+
+      const paramsArchivo = [
+        sa_sol_id,
+        fp_id,
+        file.originalname,
+        nombreGuardado,
+        file.size || file.buffer?.length || 0,
+        file.mimetype || 'application/octet-stream',
+        rutaAlmacenamiento,
+        usuarioId || 0,
+        'activo',
+        checksum,
+        subida.providerId,
+        subida.resourceType,
+        fechaEmisionValue,
+        fechaVencimientoValue,
+      ];
+
+      console.log('🔹 SQL Params (archivo):', paramsArchivo);
+      console.log('🔹 Ejecutando INSERT en Solicitud_archivo...');
+      const resultInsert = await queryRunner.query(sqlArchivo, paramsArchivo);
+      console.log(
+        '✅ [guardarRespuestaArchivo] INSERT completado:',
+        resultInsert,
+      );
 
       await queryRunner.commitTransaction();
 
       console.log(
-        `✅ Archivo ${file.originalname} guardado para solicitud ${solicitud_id}, pregunta ${fp_id}`,
+        `✅ Archivo ${file.originalname} guardado para solicitud ${sa_sol_id}, pregunta ${fp_id}`,
       );
 
       return {
         ok: true,
         mensaje: 'Archivo guardado exitosamente',
         data: {
-          solicitud_id,
+          sa_sol_id,
           fp_id,
-          nombre_original: file.originalname,
-          nombre_guardado: nombreGuardado,
-          tamaño_bytes: file.size || file.buffer?.length || 0,
+          sa_nombre_original: file.originalname,
+          sa_nombre_guardado: nombreGuardado,
+          sa_tamaño_bytes: file.size || file.buffer?.length || 0,
         },
       };
     } catch (error) {
@@ -509,27 +456,25 @@ export class SolicitudesRespuestasService {
         );
       }
 
-      // 4. Actualizar la fecha en Solicitud_documento
+      // 4. Actualizar la fecha en Solicitud_archivo (por archivo, no por tipo)
       const updateSQL = `
-        UPDATE Solicitud_documento
-        SET sd_fecha_emision = @0, sd_fecha_vencimiento = @1, sd_usuario = @2
-        WHERE sd_solicitud_id = @3 AND sd_tipo_documento_id = @4
+        UPDATE Solicitud_archivo
+        SET sa_fecha_emision = @0, sa_fecha_vencimiento = @1, sa_requiere_cambio = 0
+        WHERE sa_sol_id = @2 AND sa_fp_id = @3 AND sa_estado = 'activo'
       `;
 
       console.log('✅ [actualizarFechaDocumento] Actualizando fecha:', {
-        sd_fecha_emision: fechaEmision,
-        sd_fecha_vencimiento: fechaVencimiento
+        sa_fecha_emision: fechaEmision,
+        sa_fecha_vencimiento: fechaVencimiento
           ? fechaVencimiento.toISOString().split('T')[0]
           : null,
-        sd_usuario: usuarioId,
       });
 
       await queryRunner.query(updateSQL, [
         fechaEmision,
         fechaVencimiento ? fechaVencimiento.toISOString().split('T')[0] : null,
-        usuarioId || 0,
         solicitudId,
-        tdo_tipo_documento_id,
+        fpId,
       ]);
 
       await queryRunner.commitTransaction();
@@ -538,7 +483,7 @@ export class SolicitudesRespuestasService {
         ok: true,
         mensaje: 'Fecha de documento actualizada exitosamente',
         data: {
-          solicitud_id: solicitudId,
+          sa_sol_id: solicitudId,
           fp_id: fpId,
           sd_fecha_emision: fechaEmision,
           sd_fecha_vencimiento: fechaVencimiento
@@ -558,16 +503,15 @@ export class SolicitudesRespuestasService {
   }
 
   async obtenerRespuestaArchivo(solicitudId: number, saId: number) {
-    console.log(
-      `Obteniendo archivo: solicitud_id=${solicitudId}, sa_id=${saId}`,
-    );
+    console.log(`Obteniendo archivo: sa_sol_id=${solicitudId}, sa_id=${saId}`);
 
     const sql = `
-      SELECT sa_id, solicitud_id, fp_id, nombre_original, nombre_guardado,
-             tamaño_bytes, tipo_mime, ruta_almacenamiento, cargado_por,
-             estado, created_at as fecha_carga
+      SELECT sa_id, sa_sol_id, sa_fp_id, sa_nombre_original, sa_nombre_guardado,
+             sa_tamaño_bytes, sa_tipo_mime, sa_ruta_almacenamiento, sa_cargado_por,
+             sa_estado, sa_created_at as fecha_carga, sa_cloudinary_public_id,
+             sa_resource_type
       FROM Solicitud_archivo
-      WHERE sa_id = @0 AND solicitud_id = @1 AND estado = 'activo'
+      WHERE sa_id = @0 AND sa_sol_id = @1 AND sa_estado = 'activo'
     `;
 
     const result = await this.dataSource.query(sql, [saId, solicitudId]);
@@ -579,28 +523,20 @@ export class SolicitudesRespuestasService {
     }
 
     const archivo = result[0];
+    const downloadUrl = archivo.sa_cloudinary_public_id
+      ? this.storageService.buildDownloadUrl(
+          archivo.sa_cloudinary_public_id,
+          archivo.sa_resource_type,
+          archivo.sa_nombre_original,
+          true, // inline: se abre en el navegador, no fuerza descarga
+        )
+      : archivo.sa_ruta_almacenamiento;
 
-    try {
-      // Leer archivo del disco
-      const buffer = await readFile(archivo.ruta_almacenamiento);
-      console.log(`✅ Archivo leído del disco: ${archivo.ruta_almacenamiento}`);
-
-      return {
-        ...archivo,
-        buffer,
-      };
-    } catch (error) {
-      console.error('❌ Error al leer archivo del disco:', error);
-      throw new Error(
-        `Error al leer archivo: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+    return { ...archivo, downloadUrl };
   }
 
   async eliminarRespuestaArchivo(solicitudId: number, saId: number) {
-    console.log(
-      `Eliminando archivo: solicitud_id=${solicitudId}, sa_id=${saId}`,
-    );
+    console.log(`Eliminando archivo: sa_sol_id=${solicitudId}, sa_id=${saId}`);
 
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -609,8 +545,9 @@ export class SolicitudesRespuestasService {
     try {
       // Verificar que el archivo existe y pertenece a la solicitud
       const archivoResult = await queryRunner.query(
-        `SELECT sa_id, nombre_guardado, ruta_almacenamiento FROM Solicitud_archivo
-         WHERE sa_id = @0 AND solicitud_id = @1`,
+        `SELECT sa_id, sa_nombre_guardado, sa_ruta_almacenamiento, sa_cloudinary_public_id, sa_resource_type
+         FROM Solicitud_archivo
+         WHERE sa_id = @0 AND sa_sol_id = @1`,
         [saId, solicitudId],
       );
 
@@ -625,24 +562,19 @@ export class SolicitudesRespuestasService {
       // Marcar como inactivo en la base de datos
       const updateSql = `
         UPDATE Solicitud_archivo
-        SET estado = 'inactivo', updated_at = GETDATE()
+        SET sa_estado = 'inactivo', sa_updated_at = GETDATE()
         WHERE sa_id = @0
       `;
 
       await queryRunner.query(updateSql, [saId]);
       await queryRunner.commitTransaction();
 
-      // Intentar eliminar el archivo del disco (no fallar si no existe)
-      try {
-        await unlink(archivo.ruta_almacenamiento);
-        console.log(
-          `📁 Archivo eliminado del disco: ${archivo.ruta_almacenamiento}`,
+      // Intentar eliminar el archivo del almacenamiento (no fallar si no existe)
+      if (archivo.sa_cloudinary_public_id) {
+        await this.storageService.destroy(
+          archivo.sa_cloudinary_public_id,
+          archivo.sa_resource_type,
         );
-      } catch (diskError) {
-        console.warn(
-          `⚠️ No se pudo eliminar el archivo del disco: ${diskError}`,
-        );
-        // No fallar si el archivo del disco no existe
       }
 
       console.log(`✅ Archivo ${saId} marcado como inactivo`);

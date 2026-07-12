@@ -466,6 +466,8 @@ export class SolicitudesListadosService {
         sol_id AS [sol_id],
         sol_numero_solicitud AS [sol_numero_solicitud],
         sol_estado_id AS [sol_estado_id],
+        sol_etapa_actual_id AS [sol_etapa_actual_id],
+        sol_resultado_etapa_id AS [sol_resultado_etapa_id],
         sol_fecha_creacion AS [sol_fecha_creacion],
         sol_fecha_envio AS [sol_fecha_envio]
       FROM solicitudes

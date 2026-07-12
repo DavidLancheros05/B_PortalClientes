@@ -221,13 +221,13 @@ export class AmpliacionCupoService {
       // Query para obtener documentos vencidos de la última solicitud del cliente
       const result = await this.dataSource.query(
         `
-        SELECT TOP 1 sd.sd_id
-        FROM Solicitud_documento sd
-        INNER JOIN solicitudes s ON sd.sd_solicitud_id = s.sol_id
+        SELECT TOP 1 sa.sa_id
+        FROM Solicitud_archivo sa
+        INNER JOIN solicitudes s ON sa.sa_sol_id = s.sol_id
         WHERE s.sol_cliente_id = @0
-          AND sd.sd_fecha_vencimiento IS NOT NULL
-          AND sd.sd_fecha_vencimiento < @1
-          AND sd.sd_estado = 1
+          AND sa.sa_fecha_vencimiento IS NOT NULL
+          AND sa.sa_fecha_vencimiento < @1
+          AND sa.sa_estado = 'activo'
         ORDER BY s.sol_id DESC
         `,
         [clienteId, hoy],

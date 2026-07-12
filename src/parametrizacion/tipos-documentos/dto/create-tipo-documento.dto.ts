@@ -29,11 +29,25 @@ export class CreateTipoDocumentoDto {
   @Type(() => Boolean)
   aplicaFechaEmision: boolean;
 
-  @ValidateIf((o) => o.aplicaFechaEmision === true)
+  @ValidateIf(
+    (o) => o.aplicaFechaEmision === true && o.reglaVigencia === 'DIAS',
+  )
   @IsInt()
   @Min(1)
   @Type(() => Number)
   vigenciaDias?: number;
+
+  @IsOptional()
+  @IsString()
+  reglaVigencia?: string;
+
+  @ValidateIf(
+    (o) => o.aplicaFechaEmision === true && o.reglaVigencia === 'ANIO',
+  )
+  @IsInt()
+  @Min(0)
+  @Type(() => Number)
+  aniosAtrasPermitidos?: number;
 
   @IsBoolean()
   @Type(() => Boolean)
@@ -43,4 +57,14 @@ export class CreateTipoDocumentoDto {
   @Type(() => Boolean)
   @IsOptional()
   estado?: boolean;
+
+  @IsBoolean()
+  @Type(() => Boolean)
+  @IsOptional()
+  tienePlantilla?: boolean;
+
+  @ValidateIf((o) => o.tienePlantilla === true)
+  @IsString()
+  @IsNotEmpty()
+  plantillaContenido?: string;
 }

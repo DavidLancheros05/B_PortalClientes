@@ -43,7 +43,9 @@ export class DiasRespuestaService {
     }
 
     if (filters.estado !== undefined) {
-      query.andWhere('pdr.pdr_estado = :estado', { estado: filters.estado });
+      query.andWhere('pdr.pdr_estado = :estado', {
+        estado: filters.estado,
+      });
     }
 
     if (filters.dias !== undefined) {

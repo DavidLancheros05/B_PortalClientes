@@ -15,7 +15,7 @@ export class CondicionesFinancierasService {
   }
 
   findBySolicitud(solicitudId: number): Promise<CondicionFinanciera[]> {
-    return this.repo.find({ where: { solicitud_id: solicitudId } });
+    return this.repo.find({ where: { sa_sol_id: solicitudId } });
   }
 
   async findOne(id: number): Promise<CondicionFinanciera> {

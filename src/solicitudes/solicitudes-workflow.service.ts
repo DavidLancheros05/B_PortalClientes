@@ -1,8 +1,6 @@
 // src/solicitudes/solicitudes-workflow.service.ts
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
-import { cp } from 'fs/promises';
-import { join } from 'path';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { MailService } from '../mail/mail.service';
 import { WorkflowService } from './workflow.service';
@@ -36,7 +34,7 @@ export class SolicitudesWorkflowService {
   private async resolveHistorialColumns() {
     const result = await this.dataSource.query(`
       SELECT
-        CASE WHEN COL_LENGTH('Solicitudes_estados_hist','seh_sol_id') IS NOT NULL THEN 'seh_sol_id' ELSE 'solicitud_id' END AS solicitud_col,
+        CASE WHEN COL_LENGTH('Solicitudes_estados_hist','seh_sol_id') IS NOT NULL THEN 'seh_sol_id' ELSE 'sa_sol_id' END AS solicitud_col,
         CASE WHEN COL_LENGTH('Solicitudes_estados_hist','seh_estado_id') IS NOT NULL THEN 'seh_estado_id' ELSE 'estado_id' END AS estado_col,
         CASE WHEN COL_LENGTH('Solicitudes_estados_hist','seh_usr_id') IS NOT NULL THEN 'seh_usr_id' ELSE 'usr_id' END AS usuario_col,
         CASE WHEN COL_LENGTH('Solicitudes_estados_hist','seh_fecha_hora') IS NOT NULL THEN 'seh_fecha_hora' ELSE 'fecha_hora' END AS fecha_col
@@ -57,45 +55,38 @@ export class SolicitudesWorkflowService {
     await queryRunner.startTransaction();
 
     try {
-      // Capturar el estado previo para saber si esta es una transición real
-      // hacia PENDIENTE (evita notificar dos veces cuando una solicitud nueva
-      // se crea directamente con estado PENDIENTE y luego se llama a este
-      // método de forma redundante con el mismo estado).
-      const estadoPrevioResult = await queryRunner.query(
-        `SELECT sol_estado_id FROM solicitudes WHERE sol_id = @0`,
+      // Capturar el estado/etapa/resultado previos: sirve para saber si esta
+      // es una transición real (evita notificar dos veces cuando una
+      // solicitud nueva se crea directamente con estado PENDIENTE y luego se
+      // llama a este método de forma redundante con el mismo estado) y para
+      // no duplicar filas de historial cuando no hubo cambio de etapa/resultado.
+      const solicitudPrevioResult = await queryRunner.query(
+        `SELECT sol_estado_id, sol_etapa_actual_id, sol_resultado_etapa_id
+         FROM solicitudes
+         WHERE sol_id = @0`,
         [solicitudId],
       );
-      const estadoPrevio = estadoPrevioResult?.[0]?.sol_estado_id ?? null;
+      const solicitudPrevio = solicitudPrevioResult?.[0] ?? null;
+      const estadoPrevio = solicitudPrevio?.sol_estado_id ?? null;
+      const etapaPrevia = solicitudPrevio?.sol_etapa_actual_id ?? null;
+      const resultadoPrevio = solicitudPrevio?.sol_resultado_etapa_id ?? null;
 
       // Verificar si la solicitud está en estado PENDIENTE + etapa ASC + resultado RECHAZADO
       // Si se está cambiando a REVISIÓN, cambiar también el resultado a PENDIENTE
       let resultadoIdActualizar: number | null = null;
 
-      if (estadoId === 3) {
-        // Cambio a REVISIÓN - verificar caso especial
-        const solicitudActual = await queryRunner.query(
-          `SELECT sol_estado_id, sol_etapa_actual_id, sol_resultado_etapa_id
-           FROM solicitudes
-           WHERE sol_id = @0`,
-          [solicitudId],
-        );
+      if (estadoId === 3 && solicitudPrevio) {
+        // ASC = 3, RECHAZADO = 3, PENDIENTE = 1
+        const estaPendiente = estadoPrevio === 2;
+        const estaEnASC = etapaPrevia === 3;
+        const estaRechazado = resultadoPrevio === 3;
 
-        if (solicitudActual.length > 0) {
-          const { sol_estado_id, sol_etapa_actual_id, sol_resultado_etapa_id } =
-            solicitudActual[0];
-
-          // ASC = 3, RECHAZADO = 3, PENDIENTE = 1
-          const estaPendiente = sol_estado_id === 2;
-          const estaEnASC = sol_etapa_actual_id === 3;
-          const estaRechazado = sol_resultado_etapa_id === 3;
-
-          if (estaPendiente && estaEnASC && estaRechazado) {
-            // Cambiar resultado a PENDIENTE cuando el cliente edita después de rechazo
-            resultadoIdActualizar = 1;
-            console.log(
-              `✅ Caso especial detectado: Solicitud ${solicitudId} de Pendiente+ASC+Rechazado → Revisión. Resultado: PENDIENTE`,
-            );
-          }
+        if (estaPendiente && estaEnASC && estaRechazado) {
+          // Cambiar resultado a PENDIENTE cuando el cliente edita después de rechazo
+          resultadoIdActualizar = 1;
+          console.log(
+            `✅ Caso especial detectado: Solicitud ${solicitudId} de Pendiente+ASC+Rechazado → Revisión. Resultado: PENDIENTE`,
+          );
         }
       }
 
@@ -161,7 +152,13 @@ export class SolicitudesWorkflowService {
         );
         const resultadoId = resultadoPdResult?.[0]?.wee_id;
 
-        if (resultadoId) {
+        // Evitar filas duplicadas en el historial cuando se reenvía/guarda
+        // la solicitud sin que haya una transición real de etapa/resultado
+        // (p.ej. el cliente guarda varias veces el mismo formulario).
+        const esTransicionReal =
+          etapaId !== etapaPrevia || resultadoId !== resultadoPrevio;
+
+        if (resultadoId && esTransicionReal) {
           const workflowHistorialSQL = `
             INSERT INTO solicitud_workflow_historial
             (swh_sol_id, swh_etapa_id, swh_resultado_id, swh_usuario_id, swh_comentario, swh_fecha)
@@ -239,6 +236,7 @@ export class SolicitudesWorkflowService {
     modo_solucion?: string,
     fecha_estimada_respuesta_comercial?: Date,
     usuario_modifica?: number,
+    documentosFaltantes?: number[],
   ) {
     const histCols = await this.resolveHistorialColumns();
     const queryRunner = this.dataSource.createQueryRunner();
@@ -380,37 +378,70 @@ export class SolicitudesWorkflowService {
         ],
       );
 
-      await queryRunner.commitTransaction();
+      // Persistir el flag "requiere cambio" por documento cuando el
+      // auxiliar rechaza por fecha de emisión incorrecta. Se resetea
+      // primero para no arrastrar marcas de un rechazo anterior, y luego
+      // se marcan solo los tipos de documento indicados en el checklist.
+      if (!aprobado) {
+        await queryRunner.query(
+          `UPDATE Solicitud_archivo SET sa_requiere_cambio = 0 WHERE sa_sol_id = @0 AND sa_estado = 'activo'`,
+          [solicitudId],
+        );
 
-      // Copiar archivos a directorio de cliente si se aprobó
-      if (aprobado) {
-        try {
-          const [solicitudData] = await this.dataSource.query(
-            `SELECT sol_nit_documento, sol_numero_solicitud, sol_co_id FROM solicitudes WHERE sol_id = @0`,
-            [solicitudId],
+        if (documentosFaltantes && documentosFaltantes.length > 0) {
+          const placeholders = documentosFaltantes
+            .map((_, idx) => `@${idx + 1}`)
+            .join(',');
+          await queryRunner.query(
+            `UPDATE sa
+             SET sa_requiere_cambio = 1
+             FROM Solicitud_archivo sa
+             JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
+             WHERE sa.sa_sol_id = @0 AND sa.sa_estado = 'activo'
+               AND fp.fp_tipo_documento_id IN (${placeholders})`,
+            [solicitudId, ...documentosFaltantes],
           );
-          if (solicitudData) {
-            const { sol_nit_documento, sol_numero_solicitud, sol_co_id } =
-              solicitudData;
-            await this.copiarArchivosAlClienteDirectorio(
-              solicitudId,
-              sol_co_id,
-              sol_nit_documento,
-              sol_numero_solicitud,
-            );
-          }
-        } catch (copyError) {
-          console.warn(
-            `⚠️ [aprobarRechazarSolicitud] Error copiando archivos:`,
-            copyError,
-          );
-          // No lanzar error si la copia falla
         }
       }
+
+      await queryRunner.commitTransaction();
 
       // Enviar correo al cliente si la solicitud fue rechazada
       if (!aprobado && clienteEmail) {
         try {
+          let motivoDescripcion: string | null = null;
+          if (motivo_rechazo_id) {
+            const [motivoData] = await this.dataSource.query(
+              `SELECT mrs_descripcion FROM Motivos_rechazo_solicitud WHERE mrs_id = @0`,
+              [motivo_rechazo_id],
+            );
+            motivoDescripcion = motivoData?.mrs_descripcion || null;
+          }
+
+          let documentosFaltantesNombres: string[] = [];
+          if (documentosFaltantes && documentosFaltantes.length > 0) {
+            const placeholders = documentosFaltantes
+              .map((_, idx) => `@${idx}`)
+              .join(',');
+            const documentosData = await this.dataSource.query(
+              `SELECT tdo_nombre FROM Tipos_documentos WHERE tdo_id IN (${placeholders})`,
+              documentosFaltantes,
+            );
+            documentosFaltantesNombres = documentosData.map(
+              (d: any) => d.tdo_nombre,
+            );
+          }
+
+          const accionHtml = motivoDescripcion
+            ? `<p><strong>Motivo:</strong> ${motivoDescripcion}</p>`
+            : `<p><strong>Acción requerida:</strong> Corrija los documentos</p>`;
+
+          const documentosHtml =
+            documentosFaltantesNombres.length > 0
+              ? `<p><strong>Documentos a corregir:</strong></p>
+                 <ul>${documentosFaltantesNombres.map((n) => `<li>${n}</li>`).join('')}</ul>`
+              : `<p>Por favor, revise los documentos e intente nuevamente.</p>`;
+
           await this.mailService.enviarCorreo({
             to: clienteEmail,
             subject: `Solicitud ${numeroSolicitud} - Requiere corrección de documentos`,
@@ -418,8 +449,8 @@ export class SolicitudesWorkflowService {
               <h2>Solicitud Rechazada</h2>
               <p>Estimado ${nombreCliente},</p>
               <p>Su solicitud <strong>${numeroSolicitud}</strong> ha sido rechazada.</p>
-              <p><strong>Acción requerida:</strong> Corrija los documentos</p>
-              <p>Por favor, revise los documentos e intente nuevamente.</p>
+              ${accionHtml}
+              ${documentosHtml}
               <br/>
               <p>Si tiene alguna pregunta, contáctenos.</p>
             `,
@@ -442,7 +473,7 @@ export class SolicitudesWorkflowService {
         message: aprobado
           ? 'Solicitud aprobada exitosamente'
           : 'Solicitud rechazada exitosamente',
-        solicitud_id: solicitudId,
+        sa_sol_id: solicitudId,
         estado: aprobado ? 'APROBADO' : 'RECHAZADO',
       };
     } catch (error) {
@@ -454,17 +485,31 @@ export class SolicitudesWorkflowService {
   }
 
   async guardarGestionEjecutivo(
-    solicitud_id: number,
+    sa_sol_id: number,
     consumo_mensual_proyectado: number | null,
     observacionesComercial?: string,
     usuario_modifica?: number,
     fecha_real_ejecutivo?: string,
   ) {
     console.log(
-      `💾 [guardarGestionEjecutivo] Guardando concepto para solicitud ${solicitud_id}`,
+      `💾 [guardarGestionEjecutivo] Guardando concepto para solicitud ${sa_sol_id}`,
     );
 
     try {
+      const [solicitudActual] = await this.dataSource.query(
+        `SELECT we.wet_codigo
+         FROM solicitudes s
+         LEFT JOIN workflow_etapas we ON we.wet_id = s.sol_etapa_actual_id
+         WHERE s.sol_id = @0`,
+        [sa_sol_id],
+      );
+
+      if (solicitudActual?.wet_codigo !== 'EJN') {
+        throw new Error(
+          `La solicitud no está en la etapa Ejecutivo de Negocios (etapa actual: ${solicitudActual?.wet_codigo ?? 'desconocida'})`,
+        );
+      }
+
       const etapaSAC = await this.workflowService.obtenerEtapaPorCodigo('ASC');
       const resultadoPD =
         await this.workflowService.obtenerResultadoPorCodigo('PENDIENTE');
@@ -481,7 +526,7 @@ export class SolicitudesWorkflowService {
       const estadoRevisionId = estadoRevision?.[0]?.ses_id;
 
       const resultado = await this.workflowService.cambiarEtapa(
-        solicitud_id,
+        sa_sol_id,
         etapaSAC.wet_id,
         resultadoPD.wee_id,
         usuario_modifica,
@@ -493,7 +538,7 @@ export class SolicitudesWorkflowService {
         observacionesComercial,
         estadoRevisionId,
         usuario_modifica,
-        solicitud_id,
+        sa_sol_id,
       ];
       let updateSQL = `UPDATE solicitudes SET sol_consumo_mensual_proyectado = @0, sol_observacion_ejn = @1, sol_estado_id = @2, sol_usuario_modifica = @3, sol_updated_at = GETDATE()`;
 
@@ -510,7 +555,7 @@ export class SolicitudesWorkflowService {
 
       return {
         success: true,
-        solicitud_id,
+        sa_sol_id,
         mensaje: 'Concepto ejecutivo registrado exitosamente',
         workflow: resultado,
       };
@@ -521,7 +566,7 @@ export class SolicitudesWorkflowService {
   }
 
   async guardarConceptoGenerico(
-    solicitud_id: number,
+    sa_sol_id: number,
     etapa_codigo_siguiente: string | null,
     comentario: string,
     usuario_modifica: number,
@@ -534,7 +579,7 @@ export class SolicitudesWorkflowService {
     },
   ) {
     console.log(
-      `💾 [guardarConceptoGenerico] Solicitud ${solicitud_id}, siguiente: ${etapa_codigo_siguiente}, aprobado: ${aprobado}`,
+      `💾 [guardarConceptoGenerico] Solicitud ${sa_sol_id}, siguiente: ${etapa_codigo_siguiente}, aprobado: ${aprobado}`,
     );
 
     const queryRunner = this.dataSource.createQueryRunner();
@@ -547,7 +592,7 @@ export class SolicitudesWorkflowService {
          FROM solicitudes s
          LEFT JOIN workflow_etapas we ON we.wet_id = s.sol_etapa_actual_id
          WHERE s.sol_id = @0`,
-        [solicitud_id],
+        [sa_sol_id],
       );
       const etapaActualId = solicitudActual?.sol_etapa_actual_id;
       const etapaActualCodigo = solicitudActual?.wet_codigo;
@@ -606,7 +651,7 @@ export class SolicitudesWorkflowService {
         etapaDestId,
         resultadoWorkflow.wee_id,
         usuario_modifica,
-        solicitud_id,
+        sa_sol_id,
       ];
       let updateSQL = `UPDATE solicitudes SET
         sol_estado_id = @0,
@@ -667,7 +712,7 @@ export class SolicitudesWorkflowService {
               etapaDestId,
               resultadoWorkflow.wee_id,
               usuario_modifica,
-              solicitud_id,
+              sa_sol_id,
               motivo_rechazo_id,
             ];
             await queryRunner.query(
@@ -680,7 +725,7 @@ export class SolicitudesWorkflowService {
               etapaDestId,
               resultadoWorkflow.wee_id,
               usuario_modifica,
-              solicitud_id,
+              sa_sol_id,
             ];
             await queryRunner.query(
               basicUpdateSQL + ` WHERE sol_id = @4`,
@@ -701,7 +746,7 @@ export class SolicitudesWorkflowService {
          (swh_sol_id, swh_etapa_id, swh_resultado_id, swh_usuario_id, swh_comentario)
          VALUES (@0, @1, @2, @3, @4)`,
         [
-          solicitud_id,
+          sa_sol_id,
           etapaActualId,
           resultadoWorkflow.wee_id,
           usuario_modifica,
@@ -711,33 +756,9 @@ export class SolicitudesWorkflowService {
 
       await queryRunner.commitTransaction();
 
-      if (aprobado && etapaActualCodigo === 'ASC') {
-        try {
-          const solicitudData = await this.dataSource.query(
-            `SELECT sol_nit_documento, sol_numero_solicitud, sol_co_id FROM solicitudes WHERE sol_id = @0`,
-            [solicitud_id],
-          );
-          if (solicitudData && solicitudData.length > 0) {
-            const { sol_nit_documento, sol_numero_solicitud, sol_co_id } =
-              solicitudData[0];
-            await this.copiarArchivosAlClienteDirectorio(
-              solicitud_id,
-              sol_co_id,
-              sol_nit_documento,
-              sol_numero_solicitud,
-            );
-          }
-        } catch (copyError) {
-          console.error(
-            `⚠️ [guardarConceptoGenerico] Error copiando archivos:`,
-            copyError,
-          );
-        }
-      }
-
       if (aprobado && etapaActualCodigo === 'CC2') {
         try {
-          await this.enviarCartaVinculacionPorCorreo(solicitud_id, condiciones);
+          await this.enviarCartaVinculacionPorCorreo(sa_sol_id, condiciones);
         } catch (emailError) {
           console.error(
             `⚠️ [guardarConceptoGenerico] Error enviando correo:`,
@@ -748,7 +769,7 @@ export class SolicitudesWorkflowService {
 
       return {
         success: true,
-        solicitud_id,
+        sa_sol_id,
         mensaje: 'Concepto registrado exitosamente',
       };
     } catch (error) {
@@ -761,7 +782,7 @@ export class SolicitudesWorkflowService {
   }
 
   async actualizarEstadoFlujoAutomatico(
-    solicitud_id: number,
+    sa_sol_id: number,
     estadoCodigo: string,
     etapaCodigo: string,
     resultadoCodigo: string,
@@ -788,7 +809,7 @@ export class SolicitudesWorkflowService {
       }
 
       return this.actualizarEstadoFlujo(
-        solicitud_id,
+        sa_sol_id,
         estadoResult.ses_id,
         etapaResult.wet_id,
         resultadoResult.wee_id,
@@ -801,7 +822,7 @@ export class SolicitudesWorkflowService {
   }
 
   async actualizarEstadoFlujo(
-    solicitud_id: number,
+    sa_sol_id: number,
     estado_id: number,
     etapa_actual_id: number,
     resultado_etapa_id: number,
@@ -821,13 +842,13 @@ export class SolicitudesWorkflowService {
           etapa_actual_id,
           resultado_etapa_id,
           usuario_modifica,
-          solicitud_id,
+          sa_sol_id,
         ],
       );
 
       return {
         success: true,
-        solicitud_id,
+        sa_sol_id,
         mensaje: 'Estado de flujo actualizado exitosamente',
       };
     } catch (error) {
@@ -842,7 +863,7 @@ export class SolicitudesWorkflowService {
         await this.historialWorkflowService.obtenerHistorial(solicitudId);
       return {
         ok: true,
-        solicitud_id: solicitudId,
+        sa_sol_id: solicitudId,
         historial: historial.map((h) => ({
           historial_id: h.historialId,
           etapa_codigo: h.etapaCodigo,
@@ -908,7 +929,7 @@ export class SolicitudesWorkflowService {
   }
 
   private async enviarCartaVinculacionPorCorreo(
-    solicitud_id: number,
+    sa_sol_id: number,
     condiciones?: {
       cupo?: number;
       plazoPago?: number;
@@ -930,12 +951,12 @@ export class SolicitudesWorkflowService {
         FROM solicitudes s
         LEFT JOIN clientes c ON c.${lookup.cliId} = s.sol_cliente_id
         WHERE s.sol_id = @0`,
-        [solicitud_id],
+        [sa_sol_id],
       );
 
       if (!solicitud || !solicitud.cliente_email) {
         console.warn(
-          `⚠️ [enviarCartaVinculacionPorCorreo] No se encontró cliente o email para solicitud ${solicitud_id}`,
+          `⚠️ [enviarCartaVinculacionPorCorreo] No se encontró cliente o email para solicitud ${sa_sol_id}`,
         );
         return;
       }
@@ -1092,57 +1113,5 @@ export class SolicitudesWorkflowService {
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     }).format(value);
-  }
-
-  private async copiarArchivosAlClienteDirectorio(
-    solicitudId: number,
-    coId: number,
-    nitDocumento: string,
-    numeroSolicitud: string,
-  ) {
-    console.log(
-      `[copiarArchivosAlClienteDirectorio] Copiando archivos: sol=${solicitudId}, co=${coId}, nit=${nitDocumento}, numero=${numeroSolicitud}`,
-    );
-
-    try {
-      // Obtener ruta del centro
-      const [centroData] = await this.dataSource.query(
-        `SELECT cop_nombre FROM Centro_operacion WHERE cop_id = @0`,
-        [coId],
-      );
-      if (!centroData) {
-        throw new Error(`Centro ${coId} no encontrado`);
-      }
-
-      const centroNombre = centroData.cop_nombre;
-
-      // Directorios fuente y destino
-      const sourceDir = join(
-        process.cwd(),
-        'Documentos-Solicitudes',
-        centroNombre,
-        'formularios',
-        numeroSolicitud,
-      );
-      const destDir = join(
-        process.cwd(),
-        'Documentos-Solicitudes',
-        centroNombre,
-        'clientes',
-        nitDocumento,
-      );
-
-      console.log(`📁 Copiando de: ${sourceDir} → ${destDir}`);
-
-      // Copiar archivos (crea destino si no existe)
-      await cp(sourceDir, destDir, { recursive: true, force: true });
-      console.log(`✅ Archivos copiados exitosamente`);
-    } catch (error) {
-      console.warn(
-        `⚠️ Error copiando archivos para solicitud ${solicitudId}:`,
-        error,
-      );
-      // No fallar la aprobación si falla la copia
-    }
   }
 }

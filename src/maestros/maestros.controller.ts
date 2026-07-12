@@ -34,12 +34,16 @@ export class MaestrosController {
     @Query('base_datos') baseDatos?: string,
     @Query('columna_descripcion') columnaDescripcion?: string,
     @Query('columna_id') columnaId?: string,
+    @Query('columna_filtro') columnaFiltro?: string,
+    @Query('valor_filtro') valorFiltro?: string,
   ) {
     return this.maestrosService.getCatalogo(
       tabla,
       baseDatos,
       columnaDescripcion,
       columnaId,
+      columnaFiltro,
+      valorFiltro,
     );
   }
 

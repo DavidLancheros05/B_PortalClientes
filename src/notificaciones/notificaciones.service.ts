@@ -511,22 +511,22 @@ export class NotificacionesService {
       SELECT
         s.sol_numero_solicitud,
         COALESCE(c.cli_razon_social, '-') AS cliente_nombre,
-        sa.nombre_original,
-        sa.fecha_vencimiento,
+        sa.sa_nombre_original,
+        sa.sa_fecha_vencimiento,
         CASE
-          WHEN sa.fecha_vencimiento < CAST(GETDATE() AS date) THEN 'VENCIDO'
+          WHEN sa.sa_fecha_vencimiento < CAST(GETDATE() AS date) THEN 'VENCIDO'
           ELSE 'POR_VENCER'
         END AS estado
       FROM Solicitud_archivo sa
-      INNER JOIN solicitudes s ON s.sol_id = sa.solicitud_id
+      INNER JOIN solicitudes s ON s.sol_id = sa.sa_sol_id
       LEFT JOIN clientes c ON c.cli_id = s.sol_cliente_id
-      WHERE sa.fecha_vencimiento IS NOT NULL
-        AND sa.estado = 'activo'
+      WHERE sa.sa_fecha_vencimiento IS NOT NULL
+        AND sa.sa_estado = 'activo'
         AND (
-          sa.fecha_vencimiento < CAST(GETDATE() AS date)
-          OR sa.fecha_vencimiento <= DATEADD(day, 7, CAST(GETDATE() AS date))
+          sa.sa_fecha_vencimiento < CAST(GETDATE() AS date)
+          OR sa.sa_fecha_vencimiento <= DATEADD(day, 7, CAST(GETDATE() AS date))
         )
-      ORDER BY sa.fecha_vencimiento ASC
+      ORDER BY sa.sa_fecha_vencimiento ASC
     `);
 
     const vencidos = rows.filter((r: any) => String(r.estado) === 'VENCIDO');
@@ -538,7 +538,7 @@ export class NotificacionesService {
       .slice(0, 100)
       .map(
         (r: any) =>
-          `<tr><td>${r.numero_solicitud}</td><td>${r.cliente_nombre}</td><td>${r.nombre_original}</td><td>${r.fecha_vencimiento}</td><td>${r.estado}</td></tr>`,
+          `<tr><td>${r.numero_solicitud}</td><td>${r.cliente_nombre}</td><td>${r.sa_nombre_original}</td><td>${r.sa_fecha_vencimiento}</td><td>${r.estado}</td></tr>`,
       )
       .join('');
 

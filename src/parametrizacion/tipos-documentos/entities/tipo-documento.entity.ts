@@ -29,6 +29,28 @@ export class TipoDocumento {
   @Column({ name: 'tdo_vigencia_dias', type: 'int', nullable: true })
   vigenciaDias: number | null;
 
+  @Column({
+    name: 'tdo_regla_vigencia',
+    type: 'varchar',
+    length: 20,
+    nullable: true,
+  })
+  reglaVigencia: string | null;
+
+  @Column({ name: 'tdo_anios_atras_permitidos', type: 'int', nullable: true })
+  aniosAtrasPermitidos: number | null;
+
+  @Column({ name: 'tdo_tiene_plantilla', type: 'bit', default: false })
+  tienePlantilla: boolean;
+
+  @Column({
+    name: 'tdo_plantilla_contenido',
+    type: 'nvarchar',
+    length: 'MAX',
+    nullable: true,
+  })
+  plantillaContenido: string | null;
+
   @Column({ name: 'tdo_permite_vencimiento', type: 'bit', default: false })
   aplicaFechaEmision: boolean;
 
