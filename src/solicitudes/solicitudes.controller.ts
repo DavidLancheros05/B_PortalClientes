@@ -1264,20 +1264,13 @@ export class SolicitudesController {
       console.log(
         `💾 [CONTROLLER] PUT /solicitudes/${id}/concepto-comite-credito-1`,
       );
-      const { comentario, recomendacion } = body;
+      const { comentario } = body;
       const usuario_modifica = req.user.usr_id;
-      const aprobado = recomendacion === 'aprobado';
 
-      console.log(
-        `[CONTROLLER] Recomendación: ${recomendacion}, Aprobado: ${aprobado}`,
-      );
-
-      const result = await this.workflowService.guardarConceptoGenerico(
+      const result = await this.workflowService.guardarRevisionComiteCredito1(
         id,
-        'CC2',
         comentario,
         usuario_modifica,
-        aprobado,
       );
       return result;
     } catch (error: any) {

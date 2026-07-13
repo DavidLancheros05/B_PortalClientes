@@ -46,8 +46,7 @@ tres columnas de la tabla `solicitudes`:
 | 3 REVISION | 3 ASC | 3 RECHAZADO | Auxiliar Servicio Cliente | El auxiliar rechazó pero pidió corregirlo **él mismo** (`modo_solucion=auxiliar_actualiza`). |
 | 3 REVISION | 4 OFC | 1 PENDIENTE | Oficial de Cumplimiento | Debe revisar. `PUT :id/concepto-oficial-cumplimiento`. |
 | 6 RECHAZADA | 4 OFC | 3 RECHAZADO | — (fin) | Oficial de Cumplimiento rechazó definitivamente. Proceso terminado. |
-| 3 REVISION | 5 CC1 | 1 PENDIENTE | Comité de Crédito 1 | Debe revisar. `PUT :id/concepto-comite-credito-1`. |
-| 6 RECHAZADA | 5 CC1 | 3 RECHAZADO | — (fin) | Comité de Crédito 1 rechazó definitivamente. |
+| 3 REVISION | 5 CC1 | 1 PENDIENTE | Comité de Crédito 1 | Solo deja su revisión (evaluación de riesgo, límite/plazo recomendado, observaciones) y la envía — no aprueba ni rechaza, siempre avanza a Comité de Crédito 2. `PUT :id/concepto-comite-credito-1`. |
 | 3 REVISION | 6 CC2 | 1 PENDIENTE | Comité de Crédito 2 | Debe revisar y definir condiciones (cupo, plazo de pago, forma de pago). `PUT :id/concepto-comite-credito-2`. |
 | 6 RECHAZADA | 6 CC2 | 3 RECHAZADO | — (fin) | Comité de Crédito 2 rechazó definitivamente. |
 | 5 APROBADA | 6 CC2 | 2 APROBADO | — (fin) | Aprobado. Se envía la carta de vinculación por correo con las condiciones pactadas. Proceso completado. |
@@ -64,8 +63,9 @@ tres columnas de la tabla `solicitudes`:
   → 5/6/2 (Aprobada, fin)
 ```
 
-Cualquier rechazo de Oficial de Cumplimiento, Comité 1 o Comité 2 termina el
-proceso en `6/etapa-actual/3` (Rechazada, fin). El único rechazo que **no**
+Cualquier rechazo de Oficial de Cumplimiento o Comité 2 termina el proceso en
+`6/etapa-actual/3` (Rechazada, fin). Comité de Crédito 1 no puede rechazar —
+solo deja su revisión y siempre avanza a Comité 2. El único rechazo que **no**
 termina el proceso es el del Auxiliar Servicio Cliente (etapa 3/ASC): ese
 vuelve al cliente o al mismo auxiliar para corregir y reintentar.
 
@@ -76,4 +76,5 @@ vuelve al cliente o al mismo auxiliar para corregir y reintentar.
 - Verificación/avance tras subir documentos diferidos: `solicitudes-workflow.service.ts::verificarYAvanzarDocumentosPlantilla`
 - Ejecutivo de Negocios → Auxiliar: `solicitudes-workflow.service.ts::guardarGestionEjecutivo`
 - Auxiliar Servicio Cliente (aprobar/rechazar con checklist): `solicitudes-workflow.service.ts::aprobarRechazarSolicitud`
-- Oficial de Cumplimiento / Comité 1 / Comité 2 (aprobar/rechazar genérico): `solicitudes-workflow.service.ts::guardarConceptoGenerico`
+- Oficial de Cumplimiento / Comité 2 (aprobar/rechazar genérico): `solicitudes-workflow.service.ts::guardarConceptoGenerico`
+- Comité de Crédito 1 (solo revisión, sin aprobar/rechazar, siempre avanza a CC2): `solicitudes-workflow.service.ts::guardarRevisionComiteCredito1`

@@ -1111,6 +1111,99 @@ export class SolicitudesWorkflowService {
     }
   }
 
+  // Comité de Crédito 1 no aprueba ni rechaza: solo deja su revisión
+  // (evaluación de riesgo, límite/plazo recomendado, observaciones) y la
+  // solicitud siempre avanza a Comité de Crédito 2, que es quien decide.
+  async guardarRevisionComiteCredito1(
+    sa_sol_id: number,
+    comentario: string,
+    usuario_modifica: number,
+  ) {
+    console.log(
+      `💾 [guardarRevisionComiteCredito1] Solicitud ${sa_sol_id}`,
+    );
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const [solicitudActual] = await queryRunner.query(
+        `SELECT sol_etapa_actual_id FROM solicitudes WHERE sol_id = @0`,
+        [sa_sol_id],
+      );
+      const etapaActualId = solicitudActual?.sol_etapa_actual_id;
+
+      const [etapaSiguiente] = await queryRunner.query(
+        `SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'CC2'`,
+      );
+      const [estadoRevision] = await queryRunner.query(
+        `SELECT ses_id FROM solicitud_estados WHERE ses_codigo = 'REVISION'`,
+      );
+      const [resultadoPendiente] = await queryRunner.query(
+        `SELECT wee_id FROM workflow_estado_etapa WHERE wee_codigo = 'PENDIENTE'`,
+      );
+
+      await queryRunner.query(
+        `UPDATE solicitudes SET
+          sol_estado_id = @0,
+          sol_etapa_actual_id = @1,
+          sol_resultado_etapa_id = @2,
+          sol_usuario_modifica = @3,
+          sol_updated_at = GETDATE(),
+          sol_fecha_real_comite_credito_1 = GETDATE()
+        WHERE sol_id = @4`,
+        [
+          estadoRevision.ses_id,
+          etapaSiguiente.wet_id,
+          resultadoPendiente.wee_id,
+          usuario_modifica,
+          sa_sol_id,
+        ],
+      );
+
+      await queryRunner.query(
+        `INSERT INTO solicitud_workflow_historial
+         (swh_sol_id, swh_etapa_id, swh_resultado_id, swh_usuario_id, swh_comentario)
+         VALUES (@0, @1, @2, @3, @4)`,
+        [
+          sa_sol_id,
+          etapaActualId,
+          resultadoPendiente.wee_id,
+          usuario_modifica,
+          comentario || 'Revisión de Comité de Crédito 1',
+        ],
+      );
+
+      await queryRunner.commitTransaction();
+
+      try {
+        await this.notificacionesService.notificarSolicitudPendienteAlRol(
+          sa_sol_id,
+          'CC2',
+          'SOLICITUD_PENDIENTE_CC2',
+        );
+      } catch (emailError) {
+        console.error(
+          `⚠️ [guardarRevisionComiteCredito1] Error enviando correo:`,
+          emailError,
+        );
+      }
+
+      return {
+        success: true,
+        sa_sol_id,
+        mensaje: 'Revisión registrada exitosamente',
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      console.error(`❌ [guardarRevisionComiteCredito1] Error:`, error);
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
   async actualizarEstadoFlujoAutomatico(
     sa_sol_id: number,
     estadoCodigo: string,
