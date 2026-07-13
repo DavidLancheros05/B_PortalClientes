@@ -817,10 +817,12 @@ export class SolicitudesService {
 
       yPos -= 15;
 
-      // Separar preguntas NOTA, TABLA (con filas), IMAGEN (con archivo) y preguntas normales
+      // Separar preguntas NOTA, TABLA (con filas), IMAGEN (con archivo),
+      // ESPACIO_FIRMA (espacio en blanco para firma manual) y preguntas normales
       const notaPreguntas: any[] = [];
       const tablaPreguntas: any[] = [];
       const imagenPreguntas: any[] = [];
+      const espacioFirmaPreguntas: any[] = [];
       const normalPreguntas: any[] = [];
       for (const preg of seccion.preguntas) {
         if (preg.fp_tipo === 'NOTA') {
@@ -835,6 +837,8 @@ export class SolicitudesService {
           tablaPreguntas.push(preg);
         } else if (preg.fp_tipo === 'IMAGEN' && preg.imagen_ruta) {
           imagenPreguntas.push(preg);
+        } else if (preg.fp_tipo === 'ESPACIO_FIRMA') {
+          espacioFirmaPreguntas.push(preg);
         } else {
           normalPreguntas.push(preg);
         }
@@ -1215,6 +1219,70 @@ export class SolicitudesService {
           }
 
           let leyendaY = rowTopY - maxImgHeight - 12;
+          for (const line of item.tituloLines) {
+            currentPage.drawText(line, {
+              x: colX,
+              y: leyendaY,
+              size: 9,
+              font: helveticaBold,
+              color: rgb(0, 0.239, 0.6),
+            });
+            leyendaY -= 11;
+          }
+        });
+
+        yPos -= rowHeight + 12;
+      }
+
+      // Renderizar preguntas ESPACIO_FIRMA como un área en blanco con leyenda
+      // debajo (mismo layout de 2 por fila que las imágenes), para que el
+      // cliente la firme a mano tras imprimir/descargar el PDF
+      const espacioLineHeight = 14;
+      for (let i = 0; i < espacioFirmaPreguntas.length; i += 2) {
+        const par = [
+          espacioFirmaPreguntas[i],
+          espacioFirmaPreguntas[i + 1],
+        ].filter(Boolean);
+
+        const items = par.map((espacioPregunta) => {
+          const tituloLines = wrapText(
+            String(espacioPregunta.fp_descripcion),
+            imagenMaxWidth,
+            9,
+            helveticaBold,
+          );
+          const boxHeight =
+            (espacioPregunta.espacio_lineas || 5) * espacioLineHeight;
+          return { tituloLines, boxHeight };
+        });
+
+        const rowHeight =
+          Math.max(...items.map((it) => it.tituloLines.length * 11 + 3)) +
+          Math.max(...items.map((it) => it.boxHeight));
+
+        if (yPos - rowHeight < 100) {
+          currentPage.drawText(`Página ${pageNumber}`, {
+            x: pageWidth / 2 - 20,
+            y: 20,
+            size: 8,
+            font: helvetica,
+            color: rgb(0.6, 0.6, 0.6),
+          });
+          currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
+          pageNumber++;
+          yPos = pageHeight - 40;
+        }
+
+        const rowTopY = yPos;
+        const maxBoxHeight = Math.max(...items.map((it) => it.boxHeight));
+
+        items.forEach((item, idx) => {
+          const colX = marginLeft + idx * imagenColWidth;
+          const colY = rowTopY - (maxBoxHeight - item.boxHeight);
+
+          drawBox(colX, colY, imagenMaxWidth, item.boxHeight);
+
+          let leyendaY = rowTopY - maxBoxHeight - 12;
           for (const line of item.tituloLines) {
             currentPage.drawText(line, {
               x: colX,

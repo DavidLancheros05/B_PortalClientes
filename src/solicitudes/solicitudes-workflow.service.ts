@@ -43,15 +43,34 @@ export class SolicitudesWorkflowService {
     solicitudId: number,
     runner: DataSource | any = this.dataSource,
   ) {
-    const [solicitud] = await runner.query(
-      `SELECT sol_formulario_version FROM solicitudes WHERE sol_id = @0`,
-      [solicitudId],
-    );
+    // La versión del formulario y los archivos ya subidos son consultas
+    // independientes entre sí (ninguna necesita el resultado de la otra) —
+    // se piden en paralelo en vez de en serie para no sumar dos idas y
+    // vueltas a la BD remota una detrás de la otra.
+    const [[solicitud], subidos] = await Promise.all([
+      runner.query(
+        `SELECT sol_formulario_version FROM solicitudes WHERE sol_id = @0`,
+        [solicitudId],
+      ),
+      runner.query(
+        `
+        SELECT sa.sa_id, fp.fp_tipo_documento_id AS tdo_id
+        FROM Solicitud_archivo sa
+        JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
+        WHERE sa.sa_sol_id = @0 AND sa.sa_estado = 'activo'
+          AND fp.fp_tipo_documento_id IS NOT NULL
+        ORDER BY sa.sa_id ASC
+        `,
+        [solicitudId],
+      ),
+    ]);
     const version = solicitud?.sol_formulario_version ?? 1;
 
     const diferidos = await runner.query(
       `
-      SELECT DISTINCT td.tdo_id, td.tdo_nombre, td.tdo_plantilla_contenido, td.tdo_tipo_plantilla, fp.fp_id
+      SELECT DISTINCT td.tdo_id, td.tdo_nombre, td.tdo_plantilla_contenido, td.tdo_tipo_plantilla,
+        td.tdo_formato_codigo, td.tdo_formato_codigo_secundario, td.tdo_revision, td.tdo_paginas_total,
+        fp.fp_id
       FROM Formulario_pregunta fp
       JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tipo_documento_id
       LEFT JOIN Formulario_secciones fs ON fs.fs_id = fp.seccion_id
@@ -66,18 +85,6 @@ export class SolicitudesWorkflowService {
     if (diferidos.length === 0) {
       return { diferidos: [] as any[], subidosSet: new Set<number>() };
     }
-
-    const subidos = await runner.query(
-      `
-      SELECT sa.sa_id, fp.fp_tipo_documento_id AS tdo_id
-      FROM Solicitud_archivo sa
-      JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
-      WHERE sa.sa_sol_id = @0 AND sa.sa_estado = 'activo'
-        AND fp.fp_tipo_documento_id IS NOT NULL
-      ORDER BY sa.sa_id ASC
-      `,
-      [solicitudId],
-    );
 
     // Si un tdo_id llegara a tener más de un archivo activo, se usa el más
     // reciente (sa_id más alto, por el ORDER BY + sobrescritura en el Map).
@@ -102,6 +109,10 @@ export class SolicitudesWorkflowService {
       tdo_nombre: string;
       tdo_plantilla_contenido: string | null;
       tdo_tipo_plantilla: 'TEXTO' | 'PDF_SOLICITUD';
+      tdo_formato_codigo: string | null;
+      tdo_formato_codigo_secundario: string | null;
+      tdo_revision: string | null;
+      tdo_paginas_total: number | null;
       fp_id: number;
     }[]
   > {
@@ -123,6 +134,10 @@ export class SolicitudesWorkflowService {
       tdo_nombre: string;
       tdo_plantilla_contenido: string | null;
       tdo_tipo_plantilla: 'TEXTO' | 'PDF_SOLICITUD';
+      tdo_formato_codigo: string | null;
+      tdo_formato_codigo_secundario: string | null;
+      tdo_revision: string | null;
+      tdo_paginas_total: number | null;
       fp_id: number;
       yaSubido: boolean;
       sa_id: number | null;
@@ -573,24 +588,18 @@ export class SolicitudesWorkflowService {
         );
       }
 
-      // Obtener datos del cliente para enviar correo ANTES de hacer el commit
+      // Obtener correo del cliente ANTES de hacer el commit, para decidir si notificar
       let clienteEmail: string | null = null;
-      let numeroSolicitud: string | null = null;
-      let nombreCliente: string | null = null;
 
       if (!aprobado) {
         const [solicitudData] = await queryRunner.query(
-          `SELECT s.sol_numero_solicitud, c.cli_correo, c.cli_razon_social
+          `SELECT c.cli_correo
            FROM solicitudes s
            LEFT JOIN clientes c ON s.sol_cliente_id = c.cli_id
            WHERE s.sol_id = @0`,
           [solicitudId],
         );
-        if (solicitudData) {
-          clienteEmail = solicitudData.cli_correo;
-          numeroSolicitud = solicitudData.sol_numero_solicitud;
-          nombreCliente = solicitudData.cli_razon_social;
-        }
+        clienteEmail = solicitudData?.cli_correo || null;
       }
 
       const motivoValue = aprobado ? 'NULL' : motivo_rechazo_id;
@@ -687,29 +696,11 @@ export class SolicitudesWorkflowService {
             );
           }
 
-          const accionHtml = motivoDescripcion
-            ? `<p><strong>Motivo:</strong> ${motivoDescripcion}</p>`
-            : `<p><strong>Acción requerida:</strong> Corrija los documentos</p>`;
-
-          const documentosHtml =
-            documentosFaltantesNombres.length > 0
-              ? `<p><strong>Documentos a corregir:</strong></p>
-                 <ul>${documentosFaltantesNombres.map((n) => `<li>${n}</li>`).join('')}</ul>`
-              : `<p>Por favor, revise los documentos e intente nuevamente.</p>`;
-
-          await this.mailService.enviarCorreo({
-            to: clienteEmail,
-            subject: `Solicitud ${numeroSolicitud} - Requiere corrección de documentos`,
-            html: `
-              <h2>Solicitud Rechazada</h2>
-              <p>Estimado ${nombreCliente},</p>
-              <p>Su solicitud <strong>${numeroSolicitud}</strong> ha sido rechazada.</p>
-              ${accionHtml}
-              ${documentosHtml}
-              <br/>
-              <p>Si tiene alguna pregunta, contáctenos.</p>
-            `,
-          });
+          await this.notificacionesService.notificarRechazoSolicitud(
+            solicitudId,
+            motivoDescripcion,
+            documentosFaltantesNombres,
+          );
           console.log(
             '[aprobarRechazarSolicitud] Correo enviado a:',
             clienteEmail,
@@ -720,6 +711,23 @@ export class SolicitudesWorkflowService {
             emailError,
           );
           // No lanzar error si falla el correo, solo registrar el aviso
+        }
+      }
+
+      // ASC aprobó → la solicitud queda pendiente en la bandeja del
+      // Oficial de Cumplimiento. Avisar a cada usuario activo con ese rol.
+      if (aprobado) {
+        try {
+          await this.notificacionesService.notificarSolicitudPendienteAlRol(
+            solicitudId,
+            'OC',
+            'SOLICITUD_PENDIENTE_OC',
+          );
+        } catch (emailError) {
+          console.warn(
+            '[aprobarRechazarSolicitud] Error enviando correo a Oficial de Cumplimiento:',
+            emailError,
+          );
         }
       }
 
@@ -807,6 +815,22 @@ export class SolicitudesWorkflowService {
       updateSQL += ` WHERE sol_id = @4`;
 
       await this.dataSource.query(updateSQL, updateParams);
+
+      // EJN aprobó → la solicitud queda pendiente en la bandeja del
+      // Auxiliar de Servicio al Cliente. Avisar a cada usuario activo con
+      // ese rol (correo propio, no bloquea la respuesta si falla).
+      try {
+        await this.notificacionesService.notificarSolicitudPendienteAlRol(
+          sa_sol_id,
+          'ASC',
+          'SOLICITUD_PENDIENTE_ASC',
+        );
+      } catch (notificationError) {
+        console.error(
+          '⚠️ [guardarGestionEjecutivo] Error enviando correo a Auxiliar Servicio Cliente:',
+          notificationError,
+        );
+      }
 
       return {
         success: true,
@@ -1017,6 +1041,57 @@ export class SolicitudesWorkflowService {
         } catch (emailError) {
           console.error(
             `⚠️ [guardarConceptoGenerico] Error enviando correo:`,
+            emailError,
+          );
+        }
+      }
+
+      // Aprobado con etapa siguiente definida (OFC→CC1, CC1→CC2): avisar a
+      // cada usuario activo del rol destino. El código de la etapa de
+      // workflow (wet_codigo) coincide con el código de rol excepto OFC,
+      // cuyo rol es 'OC' (Oficial de Cumplimiento).
+      if (aprobado && etapa_codigo_siguiente) {
+        const rolPorEtapaSiguiente: Record<string, string> = {
+          ASC: 'ASC',
+          OFC: 'OC',
+          CC1: 'CC1',
+          CC2: 'CC2',
+        };
+        const plantillaPorRol: Record<string, string> = {
+          ASC: 'SOLICITUD_PENDIENTE_ASC',
+          OC: 'SOLICITUD_PENDIENTE_OC',
+          CC1: 'SOLICITUD_PENDIENTE_CC1',
+          CC2: 'SOLICITUD_PENDIENTE_CC2',
+        };
+        const rolDestino = rolPorEtapaSiguiente[etapa_codigo_siguiente];
+        if (rolDestino) {
+          try {
+            await this.notificacionesService.notificarSolicitudPendienteAlRol(
+              sa_sol_id,
+              rolDestino,
+              plantillaPorRol[rolDestino],
+            );
+          } catch (emailError) {
+            console.error(
+              `⚠️ [guardarConceptoGenerico] Error enviando correo a ${rolDestino}:`,
+              emailError,
+            );
+          }
+        }
+      }
+
+      // Rechazo del Oficial de Cumplimiento: es definitivo (no vuelve al
+      // cliente para corregir, a diferencia del rechazo de ASC), así que el
+      // cliente solo se entera si se le avisa por correo aquí.
+      if (!aprobado && etapaActualCodigo === 'OFC') {
+        try {
+          await this.notificacionesService.notificarRechazoDefinitivoSolicitud(
+            sa_sol_id,
+            comentario || null,
+          );
+        } catch (emailError) {
+          console.error(
+            `⚠️ [guardarConceptoGenerico] Error enviando correo de rechazo:`,
             emailError,
           );
         }
@@ -1263,6 +1338,7 @@ export class SolicitudesWorkflowService {
       const pdfBuffer = await this.generarPDFCarta(
         contenidoCarta,
         solicitud.sol_numero_solicitud,
+        solicitud.cliente_nombre,
       );
 
       let asunto = plantilla.asunto;
@@ -1301,9 +1377,75 @@ export class SolicitudesWorkflowService {
     }
   }
 
+  // Clasifica el contenido de la carta (con placeholders ya reemplazados)
+  // en bloques de subtítulo/párrafo/lista, igual que construirCuerpoHtml en
+  // FRONTEND/src/lib/carta-pdf.util.ts — necesario porque pdfkit justifica
+  // TODAS las líneas de un mismo `.text()` salvo la última del bloque
+  // completo, no por párrafo: pasar toda la carta de un solo tirón con
+  // align:'justify' (como hacía la versión anterior) estira también las
+  // líneas cortas de la lista de términos, viéndose rarísimo.
+  private clasificarBloquesCarta(
+    contenido: string,
+  ): (
+    | { tipo: 'subtitulo'; texto: string }
+    | { tipo: 'parrafo'; texto: string }
+    | { tipo: 'lista'; lineas: string[] }
+  )[] {
+    const bloques = contenido
+      .split(/\n\s*\n/)
+      .map((bloque) =>
+        bloque
+          .split('\n')
+          .map((linea) => linea.trim())
+          .filter(Boolean),
+      )
+      .filter((lineas) => lineas.length > 0);
+
+    return bloques.map((lineas) => {
+      if (lineas.length === 1) {
+        const esSubtitulo = lineas[0].length <= 60 && lineas[0].endsWith(':');
+        return esSubtitulo
+          ? ({ tipo: 'subtitulo', texto: lineas[0] } as const)
+          : ({ tipo: 'parrafo', texto: lineas[0] } as const);
+      }
+      return { tipo: 'lista' as const, lineas };
+    });
+  }
+
+  private dibujarBloqueCarta(
+    doc: any,
+    bloque:
+      | { tipo: 'subtitulo'; texto: string }
+      | { tipo: 'parrafo'; texto: string }
+      | { tipo: 'lista'; lineas: string[] },
+  ) {
+    if (bloque.tipo === 'subtitulo') {
+      doc
+        .fontSize(12)
+        .font('Helvetica-Bold')
+        .fillColor('#1a1a1a')
+        .text(bloque.texto, { align: 'left' });
+      doc.moveDown(0.4);
+    } else if (bloque.tipo === 'parrafo') {
+      doc
+        .fontSize(11)
+        .font('Helvetica')
+        .fillColor('#1a1a1a')
+        .text(bloque.texto, { align: 'justify', lineGap: 4 });
+      doc.moveDown(0.7);
+    } else {
+      doc.fontSize(11).font('Helvetica').fillColor('#1a1a1a');
+      for (const linea of bloque.lineas) {
+        doc.text(linea, { align: 'left', lineGap: 3 });
+      }
+      doc.moveDown(0.7);
+    }
+  }
+
   private async generarPDFCarta(
     contenidoCarta: string,
     numeroSolicitud: string,
+    clienteNombre?: string,
   ): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       try {
@@ -1311,7 +1453,7 @@ export class SolicitudesWorkflowService {
         const chunks: Buffer[] = [];
         const doc = new PDFDocument({
           size: 'A4',
-          margin: 40,
+          margin: 50,
           bufferPages: true,
         });
 
@@ -1319,39 +1461,80 @@ export class SolicitudesWorkflowService {
         doc.on('end', () => resolve(Buffer.concat(chunks)));
         doc.on('error', reject);
 
+        const fecha = new Date().toLocaleDateString('es-CO', {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        });
+
+        // Membrete
         doc
-          .fontSize(20)
+          .fontSize(15)
           .font('Helvetica-Bold')
-          .text('Carta de Vinculación Comercial', { align: 'center' });
+          .fillColor('#1a1a1a')
+          .text('CARTONERA NACIONAL S.A.', { align: 'center' });
+        doc
+          .fontSize(9)
+          .font('Helvetica-Oblique')
+          .fillColor('#555555')
+          .text('Vinculación Comercial', { align: 'center' });
+        doc.moveDown(0.6);
+        doc
+          .strokeColor('#999999')
+          .lineWidth(1)
+          .moveTo(50, doc.y)
+          .lineTo(545, doc.y)
+          .stroke();
+        doc.moveDown(1.4);
+
+        // Fecha
         doc
           .fontSize(11)
           .font('Helvetica')
-          .text(`Solicitud: ${numeroSolicitud}`, { align: 'center' });
-        doc.text(`Fecha: ${new Date().toLocaleDateString('es-CO')}`, {
-          align: 'center',
-        });
-        doc.moveTo(40, doc.y).lineTo(555, doc.y).stroke();
-        doc.moveDown();
+          .fillColor('#1a1a1a')
+          .text(`Bogotá D.C., ${fecha}`, { align: 'right' });
+        doc.moveDown(1);
 
-        doc.fontSize(12).font('Helvetica').text(contenidoCarta, {
-          align: 'justify',
-          lineGap: 5,
-        });
+        // Destinatario
+        doc.fontSize(12).font('Helvetica').text('Señor(a)');
+        doc.font('Helvetica-Bold').text(clienteNombre || '-');
+        doc.font('Helvetica').text('Ciudad');
+        doc.moveDown(1);
 
-        doc.moveDown();
-        doc.moveTo(40, doc.y).lineTo(555, doc.y).stroke();
-        doc.moveDown();
-
+        // Asunto
         doc
-          .fontSize(10)
+          .fontSize(12)
+          .font('Helvetica-Bold')
+          .text('Asunto: ', { continued: true })
           .font('Helvetica')
           .text(
-            `Documento generado automáticamente el ${new Date().toLocaleDateString('es-CO')}`,
+            `Aprobación de solicitud de vinculación comercial No. ${numeroSolicitud}`,
+          );
+        doc.moveDown(1.2);
+
+        // Cuerpo, clasificado en subtítulo/párrafo/lista
+        const bloques = this.clasificarBloquesCarta(contenidoCarta);
+        for (const bloque of bloques) {
+          this.dibujarBloqueCarta(doc, bloque);
+        }
+
+        // Cierre
+        doc.moveDown(0.5);
+        doc
+          .strokeColor('#dddddd')
+          .lineWidth(1)
+          .moveTo(50, doc.y)
+          .lineTo(545, doc.y)
+          .stroke();
+        doc.moveDown(0.5);
+        doc
+          .fontSize(8)
+          .font('Helvetica')
+          .fillColor('#888888')
+          .text(
+            `Documento generado electrónicamente el ${fecha} · Sistema de Vinculación Comercial`,
             { align: 'center' },
           );
-        doc.text('Sistema de Vinculación Comercial - CARTONERA', {
-          align: 'center',
-        });
 
         doc.end();
       } catch (error) {

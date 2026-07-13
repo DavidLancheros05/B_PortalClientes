@@ -67,6 +67,10 @@ export class TiposDocumentosService {
         createDto.tienePlantilla && createDto.tipoPlantilla !== 'PDF_SOLICITUD'
           ? (createDto.plantillaContenido ?? null)
           : null,
+      formatoCodigo: createDto.formatoCodigo ?? null,
+      formatoCodigoSecundario: createDto.formatoCodigoSecundario ?? null,
+      revision: createDto.revision ?? null,
+      paginasTotal: createDto.paginasTotal ?? null,
       createdBy: null,
       updatedBy: null,
     });
@@ -115,6 +119,18 @@ export class TiposDocumentosService {
         : {}),
       ...(updateDto.plantillaContenido !== undefined
         ? { plantillaContenido: updateDto.plantillaContenido }
+        : {}),
+      ...(updateDto.formatoCodigo !== undefined
+        ? { formatoCodigo: updateDto.formatoCodigo }
+        : {}),
+      ...(updateDto.formatoCodigoSecundario !== undefined
+        ? { formatoCodigoSecundario: updateDto.formatoCodigoSecundario }
+        : {}),
+      ...(updateDto.revision !== undefined
+        ? { revision: updateDto.revision }
+        : {}),
+      ...(updateDto.paginasTotal !== undefined
+        ? { paginasTotal: updateDto.paginasTotal }
         : {}),
     };
 

@@ -71,6 +71,33 @@ export class TipoDocumento {
   @Column({ name: 'tdo_estado', type: 'bit', default: true })
   estado: boolean;
 
+  @Column({
+    name: 'tdo_formato_codigo',
+    type: 'nvarchar',
+    length: 30,
+    nullable: true,
+  })
+  formatoCodigo: string | null;
+
+  @Column({
+    name: 'tdo_formato_codigo_secundario',
+    type: 'nvarchar',
+    length: 30,
+    nullable: true,
+  })
+  formatoCodigoSecundario: string | null;
+
+  @Column({
+    name: 'tdo_revision',
+    type: 'nvarchar',
+    length: 10,
+    nullable: true,
+  })
+  revision: string | null;
+
+  @Column({ name: 'tdo_paginas_total', type: 'int', nullable: true })
+  paginasTotal: number | null;
+
   @CreateDateColumn({ name: 'tdo_created_at', type: 'datetime2' })
   createdAt: Date;
 

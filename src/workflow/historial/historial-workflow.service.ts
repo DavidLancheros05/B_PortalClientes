@@ -41,9 +41,12 @@ export class HistorialWorkflowService {
   }
 
   async obtenerHistorial(solicitudId: number): Promise<any[]> {
-    // Obtener la fecha de creación y nombre del cliente de la solicitud
-    const solicitud = await this.dataSource.query(
-      `
+    // Las dos queries son independientes entre sí (ambas solo filtran por
+    // solicitudId) — se lanzan en paralelo para no pagar dos veces la
+    // latencia de red hacia la BD remota.
+    const [solicitud, resultado] = await Promise.all([
+      this.dataSource.query(
+        `
       SELECT
         sol_fecha_creacion,
         COALESCE(c.cli_razon_social COLLATE SQL_Latin1_General_CP1_CI_AS, s.sol_razon_social, 'Cliente') as cliente_nombre
@@ -51,12 +54,10 @@ export class HistorialWorkflowService {
       LEFT JOIN Clientes c ON s.sol_cliente_id = c.cli_id
       WHERE s.sol_id = @0
     `,
-      [solicitudId],
-    );
-
-    // Obtener el historial de transiciones
-    const resultado = await this.dataSource.query(
-      `
+        [solicitudId],
+      ),
+      this.dataSource.query(
+        `
       SELECT
         swh.swh_id as historialId,
         swh.swh_sol_id as solicitudId,
@@ -78,8 +79,9 @@ export class HistorialWorkflowService {
       WHERE swh.swh_sol_id = @0
       ORDER BY swh.swh_fecha ASC
     `,
-      [solicitudId],
-    );
+        [solicitudId],
+      ),
+    ]);
 
     // Agregar etapa de creación como primera entrada
     if (solicitud?.[0]?.sol_fecha_creacion) {

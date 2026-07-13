@@ -31,6 +31,9 @@ export interface PreguntaRenderizable {
   // Imagen cargada (para fp_tipo === 'IMAGEN')
   imagen_ruta?: string | null;
   imagen_tipo_mime?: string | null;
+
+  // Número de líneas del espacio en blanco (para fp_tipo === 'ESPACIO_FIRMA')
+  espacio_lineas?: number;
 }
 
 export interface FormularioRenderable {
@@ -111,7 +114,8 @@ export class FormularioRenderizableService {
         fp.fp_catalogo_tabla,
         fp.fp_catalogo_columna,
         fp.fp_catalogo_pk_column,
-        fp.fp_tabla_columnas
+        fp.fp_tabla_columnas,
+        fp.fp_maximo
       FROM Formulario_pregunta fp
       WHERE fp.formulario_id = @0
         AND fp.fp_estado = 1
@@ -237,6 +241,8 @@ export class FormularioRenderizableService {
           p.fp_tipo === 'IMAGEN'
             ? (imagenesMap.get(p.fp_id)?.sa_tipo_mime ?? null)
             : undefined,
+        espacio_lineas:
+          p.fp_tipo === 'ESPACIO_FIRMA' ? p.fp_maximo || 5 : undefined,
       }),
     );
 

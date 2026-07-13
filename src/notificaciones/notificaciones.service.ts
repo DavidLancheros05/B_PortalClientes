@@ -49,14 +49,6 @@ export class NotificacionesService {
         activa: true,
       },
       {
-        codigo: 'SOLICITUD_REGISTRADA_COMERCIAL',
-        nombre: 'Solicitud registrada - Comercial',
-        asunto: 'Nueva solicitud registrada: {{numero_solicitud}}',
-        cuerpo_html:
-          '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6fb;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;"><tr><td align="center"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;"><tr><td style="background-color:#003d99;padding:28px 32px;text-align:center;"><p style="margin:0;color:#ffffff;font-size:19px;font-weight:bold;letter-spacing:0.5px;">CARTONERA NACIONAL S.A.</p><p style="margin:6px 0 0;color:#a9c2f0;font-size:13px;">Portal de Clientes</p></td></tr><tr><td style="padding:32px;"><p style="margin:0 0 20px;color:#1f2937;font-size:15px;">Se registro una nueva solicitud.</p><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef4ff;border-radius:8px;border:1px solid #d6e4ff;margin-bottom:24px;"><tr><td style="padding:18px 20px;"><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">No. Solicitud</p><p style="margin:0 0 14px;color:#003d99;font-size:15px;font-weight:bold;">{{numero_solicitud}}</p><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Cliente</p><p style="margin:0 0 14px;color:#003d99;font-size:15px;font-weight:bold;">{{cliente_nombre}}</p><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Centro de Operacion</p><p style="margin:0 0 14px;color:#003d99;font-size:15px;font-weight:bold;">{{centro_operacion_nombre}}</p><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Fecha</p><p style="margin:0 0 0;color:#003d99;font-size:15px;font-weight:bold;">{{fecha_creacion}}</p></td></tr></table><table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 4px;"><tr><td style="border-radius:8px;background-color:#0052cc;"><a href="{{portal_url}}" style="display:inline-block;padding:12px 36px;color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;">Acceder al portal</a></td></tr></table><p style="margin:16px 0 0;color:#8a94a6;font-size:12px;line-height:1.5;">{{mensaje_cambios}}</p></td></tr><tr><td style="background-color:#f9fafc;padding:16px 32px;text-align:center;border-top:1px solid #eef1f6;"><p style="margin:0;color:#9aa4b5;font-size:11px;">Este es un mensaje automatico, por favor no respondas a este correo.</p></td></tr></table></td></tr></table>',
-        activa: true,
-      },
-      {
         codigo: 'SOLICITUD_REGISTRADA_EJECUTIVO',
         nombre: 'Solicitud registrada - Ejecutivo de Negocios',
         asunto:
@@ -74,11 +66,27 @@ export class NotificacionesService {
         activa: true,
       },
       {
+        codigo: 'SOLICITUD_RECHAZADA_CLIENTE',
+        nombre: 'Solicitud rechazada - Cliente',
+        asunto: 'Solicitud {{numero_solicitud}} - Requiere corrección de documentos',
+        cuerpo_html:
+          '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6fb;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;"><tr><td align="center"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;"><tr><td style="background-color:#003d99;padding:28px 32px;text-align:center;"><p style="margin:0;color:#ffffff;font-size:19px;font-weight:bold;letter-spacing:0.5px;">CARTONERA NACIONAL S.A.</p><p style="margin:6px 0 0;color:#a9c2f0;font-size:13px;">Portal de Clientes</p></td></tr><tr><td style="padding:32px;"><p style="margin:0 0 16px;color:#1f2937;font-size:15px;">Hola <b>{{cliente_nombre}}</b>,</p><p style="margin:0 0 20px;color:#374151;font-size:14px;line-height:1.6;">Tu solicitud <b>{{numero_solicitud}}</b> fue rechazada y requiere corrección de documentos.</p><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef4ff;border-radius:8px;border:1px solid #d6e4ff;margin-bottom:20px;"><tr><td style="padding:18px 20px;"><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Motivo</p><p style="margin:0;color:#003d99;font-size:15px;font-weight:bold;">{{motivo_rechazo}}</p></td></tr></table><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#fff7ed;border-radius:8px;border:1px solid #fed7aa;margin-bottom:24px;"><tr><td style="padding:18px 20px;"><p style="margin:0 0 8px;color:#9a5b1e;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Documentos a corregir</p>{{documentos_html}}</td></tr></table><table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 4px;"><tr><td style="border-radius:8px;background-color:#0052cc;"><a href="{{portal_url}}" style="display:inline-block;padding:12px 36px;color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;">Corregir solicitud</a></td></tr></table></td></tr><tr><td style="background-color:#f9fafc;padding:16px 32px;text-align:center;border-top:1px solid #eef1f6;"><p style="margin:0;color:#9aa4b5;font-size:11px;">Este es un mensaje automatico, por favor no respondas a este correo.</p></td></tr></table></td></tr></table>',
+        activa: true,
+      },
+      {
+        codigo: 'SOLICITUD_RECHAZADA_DEFINITIVA_CLIENTE',
+        nombre: 'Solicitud rechazada definitivamente - Cliente',
+        asunto: 'Solicitud {{numero_solicitud}} - Rechazada',
+        cuerpo_html:
+          '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6fb;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;"><tr><td align="center"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;"><tr><td style="background-color:#003d99;padding:28px 32px;text-align:center;"><p style="margin:0;color:#ffffff;font-size:19px;font-weight:bold;letter-spacing:0.5px;">CARTONERA NACIONAL S.A.</p><p style="margin:6px 0 0;color:#a9c2f0;font-size:13px;">Portal de Clientes</p></td></tr><tr><td style="padding:32px;"><p style="margin:0 0 16px;color:#1f2937;font-size:15px;">Hola <b>{{cliente_nombre}}</b>,</p><p style="margin:0 0 20px;color:#374151;font-size:14px;line-height:1.6;">Tu solicitud <b>{{numero_solicitud}}</b> fue rechazada. Este proceso queda cerrado.</p><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef4ff;border-radius:8px;border:1px solid #d6e4ff;margin-bottom:24px;"><tr><td style="padding:18px 20px;"><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Motivo</p><p style="margin:0;color:#003d99;font-size:15px;font-weight:bold;">{{motivo_rechazo}}</p></td></tr></table><table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 4px;"><tr><td style="border-radius:8px;background-color:#0052cc;"><a href="{{portal_url}}" style="display:inline-block;padding:12px 36px;color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;">Ver mi solicitud</a></td></tr></table></td></tr><tr><td style="background-color:#f9fafc;padding:16px 32px;text-align:center;border-top:1px solid #eef1f6;"><p style="margin:0;color:#9aa4b5;font-size:11px;">Este es un mensaje automatico, por favor no respondas a este correo.</p></td></tr></table></td></tr></table>',
+        activa: true,
+      },
+      {
         codigo: 'DOCUMENTOS_VENCIDOS_SEMANAL',
         nombre: 'Alerta semanal documentos vencidos',
         asunto: 'Alerta semanal de documentos - {{fecha_reporte}}',
         cuerpo_html:
-          '<p>Resumen semanal de documentos:</p><p><b>Vencidos:</b> {{total_vencidos}}</p><p><b>Por vencer esta semana:</b> {{total_por_vencer}}</p><div>{{tabla_resumen}}</div>',
+          '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6fb;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;"><tr><td align="center"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;"><tr><td style="background-color:#003d99;padding:28px 32px;text-align:center;"><p style="margin:0;color:#ffffff;font-size:19px;font-weight:bold;letter-spacing:0.5px;">CARTONERA NACIONAL S.A.</p><p style="margin:6px 0 0;color:#a9c2f0;font-size:13px;">Alerta semanal de documentos</p></td></tr><tr><td style="padding:32px;"><p style="margin:0 0 20px;color:#374151;font-size:14px;line-height:1.6;">Resumen de documentos vencidos y por vencer al <b>{{fecha_reporte}}</b>.</p><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;"><tr><td width="48%" style="padding:16px 18px;background-color:#fef2f2;border-radius:8px;border:1px solid #fecaca;"><p style="margin:0 0 4px;color:#9f1239;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Vencidos</p><p style="margin:0;color:#b91c1c;font-size:24px;font-weight:bold;">{{total_vencidos}}</p></td><td width="4%">&nbsp;</td><td width="48%" style="padding:16px 18px;background-color:#fff7ed;border-radius:8px;border:1px solid #fed7aa;"><p style="margin:0 0 4px;color:#9a5b1e;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Por vencer (7 dias)</p><p style="margin:0;color:#c2620a;font-size:24px;font-weight:bold;">{{total_por_vencer}}</p></td></tr></table><div style="overflow-x:auto;">{{tabla_resumen}}</div></td></tr><tr><td style="background-color:#f9fafc;padding:16px 32px;text-align:center;border-top:1px solid #eef1f6;"><p style="margin:0;color:#9aa4b5;font-size:11px;">Este es un mensaje automatico, por favor no respondas a este correo.</p></td></tr></table></td></tr></table>',
         activa: true,
       },
       {
@@ -86,15 +94,55 @@ export class NotificacionesService {
         nombre: 'Condiciones financieras al cliente',
         asunto: 'Condiciones financieras aprobadas - {{numero_solicitud}}',
         cuerpo_html:
-          '<p>Hola {{cliente_nombre}},</p><p>Adjuntamos PDF con las condiciones financieras aprobadas para la solicitud <b>{{numero_solicitud}}</b>.</p>',
+          '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6fb;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;"><tr><td align="center"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;"><tr><td style="background-color:#003d99;padding:28px 32px;text-align:center;"><p style="margin:0;color:#ffffff;font-size:19px;font-weight:bold;letter-spacing:0.5px;">CARTONERA NACIONAL S.A.</p><p style="margin:6px 0 0;color:#a9c2f0;font-size:13px;">Portal de Clientes</p></td></tr><tr><td style="padding:32px;"><p style="margin:0 0 16px;color:#1f2937;font-size:15px;">Hola <b>{{cliente_nombre}}</b>,</p><p style="margin:0 0 20px;color:#374151;font-size:14px;line-height:1.6;">Te adjuntamos en PDF las condiciones financieras aprobadas para tu solicitud.</p><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef4ff;border-radius:8px;border:1px solid #d6e4ff;margin-bottom:24px;"><tr><td style="padding:18px 20px;"><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">No. Solicitud</p><p style="margin:0;color:#003d99;font-size:15px;font-weight:bold;">{{numero_solicitud}}</p></td></tr></table><table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 4px;"><tr><td style="border-radius:8px;background-color:#0052cc;"><a href="{{portal_url}}" style="display:inline-block;padding:12px 36px;color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;">Ver mi solicitud</a></td></tr></table></td></tr><tr><td style="background-color:#f9fafc;padding:16px 32px;text-align:center;border-top:1px solid #eef1f6;"><p style="margin:0;color:#9aa4b5;font-size:11px;">Este es un mensaje automatico, por favor no respondas a este correo.</p></td></tr></table></td></tr></table>',
         activa: true,
       },
       {
         codigo: 'USUARIO_CREADO_CREDENCIALES',
         nombre: 'Usuario creado - Credenciales de acceso',
-        asunto: 'Acceso al portal de clientes',
+        asunto: 'Bienvenido al Portal de Clientes - Cartonera Nacional S.A.',
         cuerpo_html:
-          "<p>Hola {{nombre}},</p><p>Tu cuenta fue creada correctamente.</p><p><b>Portal:</b> <a href='{{portal_url}}'>{{portal_url}}</a></p><p><b>Usuario:</b> {{usuario_email}}</p><p><b>Contrasena:</b> {{usuario_password}}</p><p>Te recomendamos cambiar tu contrasena al iniciar sesion.</p>",
+          '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6fb;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;"><tr><td align="center"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;"><tr><td style="background-color:#003d99;padding:28px 32px;text-align:center;"><p style="margin:0;color:#ffffff;font-size:19px;font-weight:bold;letter-spacing:0.5px;">CARTONERA NACIONAL S.A.</p><p style="margin:6px 0 0;color:#a9c2f0;font-size:13px;">Portal de Clientes</p></td></tr><tr><td style="padding:32px;"><p style="margin:0 0 16px;color:#1f2937;font-size:15px;">Hola <b>{{usuario_nombre}}</b>,</p><p style="margin:0 0 20px;color:#374151;font-size:14px;line-height:1.6;">Tu cuenta en el Portal de Clientes fue creada correctamente. Ya podes ingresar con las siguientes credenciales:</p><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef4ff;border-radius:8px;border:1px solid #d6e4ff;margin-bottom:24px;"><tr><td style="padding:18px 20px;"><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Usuario</p><p style="margin:0 0 14px;color:#003d99;font-size:16px;font-weight:bold;">{{usuario_login}}</p><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Contrasena</p><p style="margin:0 0 14px;color:#003d99;font-size:16px;font-weight:bold;">{{usuario_password}}</p><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Correo</p><p style="margin:0;color:#374151;font-size:13px;">{{usuario_email}}</p></td></tr></table><table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 24px;"><tr><td style="border-radius:8px;background-color:#0052cc;"><a href="{{portal_url}}" style="display:inline-block;padding:12px 36px;color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;">Ingresar al portal</a></td></tr></table><p style="margin:0;color:#8a94a6;font-size:12px;line-height:1.5;">Por seguridad, te recomendamos cambiar tu contrasena despues de tu primer ingreso.</p></td></tr><tr><td style="background-color:#f9fafc;padding:16px 32px;text-align:center;border-top:1px solid #eef1f6;"><p style="margin:0;color:#9aa4b5;font-size:11px;">Este es un mensaje automatico, por favor no respondas a este correo.</p></td></tr></table></td></tr></table>',
+        activa: true,
+      },
+      {
+        codigo: 'SOLICITUD_PENDIENTE_ASC',
+        nombre: 'Solicitud pendiente - Auxiliar Servicio Cliente',
+        asunto: 'Solicitud {{numero_solicitud}} pendiente de tu revisión',
+        cuerpo_html:
+          '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6fb;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;"><tr><td align="center"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;"><tr><td style="background-color:#003d99;padding:28px 32px;text-align:center;"><p style="margin:0;color:#ffffff;font-size:19px;font-weight:bold;letter-spacing:0.5px;">CARTONERA NACIONAL S.A.</p><p style="margin:6px 0 0;color:#a9c2f0;font-size:13px;">Portal de Clientes</p></td></tr><tr><td style="padding:32px;"><p style="margin:0 0 16px;color:#1f2937;font-size:15px;">Hola <b>{{usuario_nombre}}</b>,</p><p style="margin:0 0 20px;color:#374151;font-size:14px;line-height:1.6;">Tienes una nueva solicitud pendiente de revisar como Auxiliar de Servicio al Cliente:</p><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef4ff;border-radius:8px;border:1px solid #d6e4ff;margin-bottom:24px;"><tr><td style="padding:18px 20px;"><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">No. Solicitud</p><p style="margin:0 0 14px;color:#003d99;font-size:15px;font-weight:bold;">{{numero_solicitud}}</p><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Cliente</p><p style="margin:0 0 14px;color:#003d99;font-size:15px;font-weight:bold;">{{cliente_nombre}}</p><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Centro de Operacion</p><p style="margin:0;color:#003d99;font-size:15px;font-weight:bold;">{{centro_operacion_nombre}}</p></td></tr></table><table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 4px;"><tr><td style="border-radius:8px;background-color:#0052cc;"><a href="{{portal_url}}" style="display:inline-block;padding:12px 36px;color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;">Revisar solicitud</a></td></tr></table></td></tr><tr><td style="background-color:#f9fafc;padding:16px 32px;text-align:center;border-top:1px solid #eef1f6;"><p style="margin:0;color:#9aa4b5;font-size:11px;">Este es un mensaje automatico, por favor no respondas a este correo.</p></td></tr></table></td></tr></table>',
+        activa: true,
+      },
+      {
+        codigo: 'SOLICITUD_PENDIENTE_OC',
+        nombre: 'Solicitud pendiente - Oficial de Cumplimiento',
+        asunto: 'Solicitud {{numero_solicitud}} pendiente de tu revisión',
+        cuerpo_html:
+          '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6fb;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;"><tr><td align="center"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;"><tr><td style="background-color:#003d99;padding:28px 32px;text-align:center;"><p style="margin:0;color:#ffffff;font-size:19px;font-weight:bold;letter-spacing:0.5px;">CARTONERA NACIONAL S.A.</p><p style="margin:6px 0 0;color:#a9c2f0;font-size:13px;">Portal de Clientes</p></td></tr><tr><td style="padding:32px;"><p style="margin:0 0 16px;color:#1f2937;font-size:15px;">Hola <b>{{usuario_nombre}}</b>,</p><p style="margin:0 0 20px;color:#374151;font-size:14px;line-height:1.6;">Tienes una nueva solicitud pendiente de revisar como Oficial de Cumplimiento:</p><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef4ff;border-radius:8px;border:1px solid #d6e4ff;margin-bottom:24px;"><tr><td style="padding:18px 20px;"><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">No. Solicitud</p><p style="margin:0 0 14px;color:#003d99;font-size:15px;font-weight:bold;">{{numero_solicitud}}</p><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Cliente</p><p style="margin:0 0 14px;color:#003d99;font-size:15px;font-weight:bold;">{{cliente_nombre}}</p><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Centro de Operacion</p><p style="margin:0;color:#003d99;font-size:15px;font-weight:bold;">{{centro_operacion_nombre}}</p></td></tr></table><table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 4px;"><tr><td style="border-radius:8px;background-color:#0052cc;"><a href="{{portal_url}}" style="display:inline-block;padding:12px 36px;color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;">Revisar solicitud</a></td></tr></table></td></tr><tr><td style="background-color:#f9fafc;padding:16px 32px;text-align:center;border-top:1px solid #eef1f6;"><p style="margin:0;color:#9aa4b5;font-size:11px;">Este es un mensaje automatico, por favor no respondas a este correo.</p></td></tr></table></td></tr></table>',
+        activa: true,
+      },
+      {
+        codigo: 'SOLICITUD_PENDIENTE_CC1',
+        nombre: 'Solicitud pendiente - Comité de Crédito 1',
+        asunto: 'Solicitud {{numero_solicitud}} pendiente de tu revisión',
+        cuerpo_html:
+          '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6fb;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;"><tr><td align="center"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;"><tr><td style="background-color:#003d99;padding:28px 32px;text-align:center;"><p style="margin:0;color:#ffffff;font-size:19px;font-weight:bold;letter-spacing:0.5px;">CARTONERA NACIONAL S.A.</p><p style="margin:6px 0 0;color:#a9c2f0;font-size:13px;">Portal de Clientes</p></td></tr><tr><td style="padding:32px;"><p style="margin:0 0 16px;color:#1f2937;font-size:15px;">Hola <b>{{usuario_nombre}}</b>,</p><p style="margin:0 0 20px;color:#374151;font-size:14px;line-height:1.6;">Tienes una nueva solicitud pendiente de revisar en el Comité de Crédito 1:</p><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef4ff;border-radius:8px;border:1px solid #d6e4ff;margin-bottom:24px;"><tr><td style="padding:18px 20px;"><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">No. Solicitud</p><p style="margin:0 0 14px;color:#003d99;font-size:15px;font-weight:bold;">{{numero_solicitud}}</p><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Cliente</p><p style="margin:0 0 14px;color:#003d99;font-size:15px;font-weight:bold;">{{cliente_nombre}}</p><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Centro de Operacion</p><p style="margin:0;color:#003d99;font-size:15px;font-weight:bold;">{{centro_operacion_nombre}}</p></td></tr></table><table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 4px;"><tr><td style="border-radius:8px;background-color:#0052cc;"><a href="{{portal_url}}" style="display:inline-block;padding:12px 36px;color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;">Revisar solicitud</a></td></tr></table></td></tr><tr><td style="background-color:#f9fafc;padding:16px 32px;text-align:center;border-top:1px solid #eef1f6;"><p style="margin:0;color:#9aa4b5;font-size:11px;">Este es un mensaje automatico, por favor no respondas a este correo.</p></td></tr></table></td></tr></table>',
+        activa: true,
+      },
+      {
+        codigo: 'SOLICITUD_PENDIENTE_CC2',
+        nombre: 'Solicitud pendiente - Comité de Crédito 2',
+        asunto: 'Solicitud {{numero_solicitud}} pendiente de tu revisión',
+        cuerpo_html:
+          '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6fb;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;"><tr><td align="center"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;"><tr><td style="background-color:#003d99;padding:28px 32px;text-align:center;"><p style="margin:0;color:#ffffff;font-size:19px;font-weight:bold;letter-spacing:0.5px;">CARTONERA NACIONAL S.A.</p><p style="margin:6px 0 0;color:#a9c2f0;font-size:13px;">Portal de Clientes</p></td></tr><tr><td style="padding:32px;"><p style="margin:0 0 16px;color:#1f2937;font-size:15px;">Hola <b>{{usuario_nombre}}</b>,</p><p style="margin:0 0 20px;color:#374151;font-size:14px;line-height:1.6;">Tienes una nueva solicitud pendiente de revisar en el Comité de Crédito 2:</p><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef4ff;border-radius:8px;border:1px solid #d6e4ff;margin-bottom:24px;"><tr><td style="padding:18px 20px;"><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">No. Solicitud</p><p style="margin:0 0 14px;color:#003d99;font-size:15px;font-weight:bold;">{{numero_solicitud}}</p><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Cliente</p><p style="margin:0 0 14px;color:#003d99;font-size:15px;font-weight:bold;">{{cliente_nombre}}</p><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Centro de Operacion</p><p style="margin:0;color:#003d99;font-size:15px;font-weight:bold;">{{centro_operacion_nombre}}</p></td></tr></table><table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 4px;"><tr><td style="border-radius:8px;background-color:#0052cc;"><a href="{{portal_url}}" style="display:inline-block;padding:12px 36px;color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;">Revisar solicitud</a></td></tr></table></td></tr><tr><td style="background-color:#f9fafc;padding:16px 32px;text-align:center;border-top:1px solid #eef1f6;"><p style="margin:0;color:#9aa4b5;font-size:11px;">Este es un mensaje automatico, por favor no respondas a este correo.</p></td></tr></table></td></tr></table>',
+        activa: true,
+      },
+      {
+        codigo: 'CARTA_VINCULACION_APROBADA_CLIENTE',
+        nombre: 'Carta de Vinculación Aprobada - Cliente',
+        asunto: 'Carta de Vinculación Comercial - Solicitud {{numero_solicitud}}',
+        cuerpo_html:
+          '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6fb;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;"><tr><td align="center"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;"><tr><td style="background-color:#003d99;padding:28px 32px;text-align:center;"><p style="margin:0;color:#ffffff;font-size:19px;font-weight:bold;letter-spacing:0.5px;">CARTONERA NACIONAL S.A.</p><p style="margin:6px 0 0;color:#a9c2f0;font-size:13px;">Vinculación Comercial</p></td></tr><tr><td style="padding:32px;"><p style="margin:0 0 16px;color:#1f2937;font-size:15px;">Estimado <b>{{cliente_nombre}}</b>,</p><p style="margin:0 0 20px;color:#374151;font-size:14px;line-height:1.6;">Adjuntamos la <b>Carta de Vinculación Comercial</b> correspondiente a tu solicitud <b>{{numero_solicitud}}</b>, que fue aprobada.</p><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef4ff;border-radius:8px;border:1px solid #d6e4ff;margin-bottom:24px;"><tr><td style="padding:18px 20px;"><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Cupo aprobado</p><p style="margin:0 0 14px;color:#003d99;font-size:15px;font-weight:bold;">{{cupo_aprobado}}</p><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Plazo de pago</p><p style="margin:0 0 14px;color:#003d99;font-size:15px;font-weight:bold;">{{plazo_pago}}</p><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Forma de pago</p><p style="margin:0;color:#003d99;font-size:15px;font-weight:bold;">{{forma_pago}}</p></td></tr></table><p style="margin:0;color:#8a94a6;font-size:12px;line-height:1.5;">Cordialmente,<br/>Equipo de Vinculación Comercial</p></td></tr><tr><td style="background-color:#f9fafc;padding:16px 32px;text-align:center;border-top:1px solid #eef1f6;"><p style="margin:0;color:#9aa4b5;font-size:11px;">Este es un mensaje automatico, por favor no respondas a este correo.</p></td></tr></table></td></tr></table>',
         activa: true,
       },
     ];
@@ -328,8 +376,6 @@ export class NotificacionesService {
       ]);
     }
 
-    await this.enviarConPlantilla('SOLICITUD_REGISTRADA_COMERCIAL', variables);
-
     // Notificar al ejecutivo de negocios del cliente
     try {
       await this.notificarSolicitudPendienteAlEjecutivo(solicitudId);
@@ -341,6 +387,73 @@ export class NotificacionesService {
     }
 
     return { ok: true };
+  }
+
+  // Usuarios activos (usr_estado = 'A') con correo, para un rol dado
+  // (rol_codigo en pc_roles: ASC, OC, CC1, CC2, COMERCIAL, etc). A diferencia
+  // del Ejecutivo de Negocios (asignado 1 a 1 por solicitud vía
+  // sol_ejecutivo_id), estos roles funcionan como bandeja compartida: puede
+  // haber 0, 1 o varios usuarios activos con el mismo rol, y cada uno recibe
+  // su propio correo personalizado (no un solo correo con varios "to").
+  private async obtenerUsuariosActivosPorRol(
+    rolCodigo: string,
+  ): Promise<Array<{ email: string; nombre: string }>> {
+    const rows = await this.dataSource.query(
+      `
+      SELECT DISTINCT u.usr_correo AS email, u.usr_nombre AS nombre
+      FROM Usuarios u
+      JOIN pc_usuario_rol ur ON ur.ur_usuario_id = u.usr_id AND ur.ur_activo = 1
+      JOIN pc_roles r ON r.rol_id = ur.ur_rol_id
+      WHERE r.rol_codigo = @0
+        AND u.usr_estado = 'A'
+        AND u.usr_correo IS NOT NULL AND u.usr_correo <> ''
+      `,
+      [rolCodigo],
+    );
+
+    return rows.map((r: any) => ({
+      email: String(r.email),
+      nombre: r.nombre ? String(r.nombre) : 'Usuario',
+    }));
+  }
+
+  // Notifica a TODOS los usuarios activos de un rol (ASC, OC, CC1, CC2) que
+  // una solicitud quedó pendiente de su revisión, un correo individual por
+  // usuario (cada uno a su propia dirección). Se llama justo después de que
+  // la etapa anterior aprueba y la solicitud pasa a la bandeja de este rol.
+  async notificarSolicitudPendienteAlRol(
+    solicitudId: number,
+    rolCodigo: string,
+    codigoEvento: string,
+  ) {
+    const solicitud = await this.getSolicitudData(solicitudId);
+    if (!solicitud) return { ok: false, mensaje: 'Solicitud no encontrada' };
+
+    const destinatarios = await this.obtenerUsuariosActivosPorRol(rolCodigo);
+    if (destinatarios.length === 0) {
+      this.logger.warn(
+        `Sin usuarios activos con correo para el rol ${rolCodigo} (solicitud ${solicitudId})`,
+      );
+      return { ok: true, enviados: 0, total: 0 };
+    }
+
+    let enviados = 0;
+    for (const destinatario of destinatarios) {
+      const variables = {
+        usuario_nombre: destinatario.nombre,
+        numero_solicitud: solicitud.numero_solicitud,
+        cliente_nombre: solicitud.cliente_nombre || 'Cliente',
+        centro_operacion_nombre: solicitud.centro_operacion_nombre || '-',
+        portal_url: process.env.PORTAL_CLIENTES_URL || '',
+      };
+
+      const resultado = await this.enviarConPlantilla(codigoEvento, variables, [
+        destinatario.email,
+      ]);
+      if (resultado.sent) enviados++;
+    }
+
+    return { ok: true, enviados, total: destinatarios.length };
   }
 
   async notificarSolicitudPendienteAlEjecutivo(solicitudId: number) {
@@ -414,6 +527,60 @@ export class NotificacionesService {
     ]);
   }
 
+  async notificarRechazoSolicitud(
+    solicitudId: number,
+    motivoDescripcion: string | null,
+    documentosFaltantesNombres: string[],
+  ) {
+    const solicitud = await this.getSolicitudData(solicitudId);
+    if (!solicitud || !solicitud.cliente_email) {
+      return { ok: false, mensaje: 'Solicitud o correo cliente no encontrado' };
+    }
+
+    const documentosHtml =
+      documentosFaltantesNombres.length > 0
+        ? `<ul style="margin:0;padding-left:18px;color:#7c4a12;font-size:13px;line-height:1.6;">${documentosFaltantesNombres.map((n) => `<li>${n}</li>`).join('')}</ul>`
+        : '<p style="margin:0;color:#7c4a12;font-size:13px;">Revise los documentos e intente nuevamente.</p>';
+
+    const variables = {
+      numero_solicitud: solicitud.numero_solicitud,
+      cliente_nombre: solicitud.cliente_nombre || 'Cliente',
+      motivo_rechazo: motivoDescripcion || 'Corrija los documentos indicados',
+      documentos_html: documentosHtml,
+      portal_url: process.env.PORTAL_CLIENTES_URL || '',
+    };
+
+    return this.enviarConPlantilla('SOLICITUD_RECHAZADA_CLIENTE', variables, [
+      String(solicitud.cliente_email),
+    ]);
+  }
+
+  // Rechazo definitivo (OFC, CC1, CC2): a diferencia del rechazo de ASC, no
+  // hay ruta de corrección ni reintento — plantilla distinta, sin la caja
+  // de "documentos a corregir" ni el botón "Corregir solicitud".
+  async notificarRechazoDefinitivoSolicitud(
+    solicitudId: number,
+    motivoDescripcion: string | null,
+  ) {
+    const solicitud = await this.getSolicitudData(solicitudId);
+    if (!solicitud || !solicitud.cliente_email) {
+      return { ok: false, mensaje: 'Solicitud o correo cliente no encontrado' };
+    }
+
+    const variables = {
+      numero_solicitud: solicitud.numero_solicitud,
+      cliente_nombre: solicitud.cliente_nombre || 'Cliente',
+      motivo_rechazo: motivoDescripcion || 'No se indicó un motivo adicional',
+      portal_url: process.env.PORTAL_CLIENTES_URL || '',
+    };
+
+    return this.enviarConPlantilla(
+      'SOLICITUD_RECHAZADA_DEFINITIVA_CLIENTE',
+      variables,
+      [String(solicitud.cliente_email)],
+    );
+  }
+
   private buildSimplePdf(content: string): Buffer {
     // Genera un PDF mínimo de una página con texto plano.
     const escapePdfText = (text: string) =>
@@ -479,6 +646,7 @@ export class NotificacionesService {
     const variables = {
       numero_solicitud: solicitud.numero_solicitud,
       cliente_nombre: solicitud.cliente_nombre || 'Cliente',
+      portal_url: process.env.PORTAL_CLIENTES_URL || '',
     };
 
     await this.enviarConPlantilla(
@@ -509,7 +677,7 @@ export class NotificacionesService {
 
     const rows = await this.dataSource.query(`
       SELECT
-        s.sol_numero_solicitud,
+        s.sol_numero_solicitud AS numero_solicitud,
         COALESCE(c.cli_razon_social, '-') AS cliente_nombre,
         sa.sa_nombre_original,
         sa.sa_fecha_vencimiento,
@@ -534,19 +702,24 @@ export class NotificacionesService {
       (r: any) => String(r.estado) === 'POR_VENCER',
     );
 
+    const celda =
+      'padding:8px 10px;border-bottom:1px solid #eef1f6;color:#374151;font-size:12px;';
+    const cabecera =
+      'padding:8px 10px;text-align:left;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;';
+
     const tabla = rows
       .slice(0, 100)
-      .map(
-        (r: any) =>
-          `<tr><td>${r.numero_solicitud}</td><td>${r.cliente_nombre}</td><td>${r.sa_nombre_original}</td><td>${r.sa_fecha_vencimiento}</td><td>${r.estado}</td></tr>`,
-      )
+      .map((r: any) => {
+        const colorEstado = r.estado === 'VENCIDO' ? '#b91c1c' : '#c2620a';
+        return `<tr><td style="${celda}">${r.numero_solicitud}</td><td style="${celda}">${r.cliente_nombre}</td><td style="${celda}">${r.sa_nombre_original}</td><td style="${celda}">${r.sa_fecha_vencimiento}</td><td style="${celda}font-weight:bold;color:${colorEstado};">${r.estado}</td></tr>`;
+      })
       .join('');
 
     await this.enviarConPlantilla('DOCUMENTOS_VENCIDOS_SEMANAL', {
       fecha_reporte: new Date().toISOString().slice(0, 10),
       total_vencidos: vencidos.length,
       total_por_vencer: porVencer.length,
-      tabla_resumen: `<table border="1" cellpadding="6" cellspacing="0"><thead><tr><th>Solicitud</th><th>Cliente</th><th>Documento</th><th>Vence</th><th>Estado</th></tr></thead><tbody>${tabla}</tbody></table>`,
+      tabla_resumen: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><thead><tr style="background-color:#eef4ff;"><th style="${cabecera}">Solicitud</th><th style="${cabecera}">Cliente</th><th style="${cabecera}">Documento</th><th style="${cabecera}">Vence</th><th style="${cabecera}">Estado</th></tr></thead><tbody>${tabla}</tbody></table>`,
     });
 
     return {

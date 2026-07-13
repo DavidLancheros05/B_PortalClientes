@@ -85,7 +85,9 @@ export class SolicitudesDocumentosService {
              sa.sa_requiere_cambio AS sd_requiere_cambio,
              td.tdo_id, td.tdo_nombre, td.tdo_vigencia_dias,
              td.tdo_regla_vigencia, td.tdo_anios_atras_permitidos,
-             td.tdo_tiene_plantilla, td.tdo_plantilla_contenido, td.tdo_tipo_plantilla
+             td.tdo_tiene_plantilla, td.tdo_plantilla_contenido, td.tdo_tipo_plantilla,
+             td.tdo_formato_codigo, td.tdo_formato_codigo_secundario,
+             td.tdo_revision, td.tdo_paginas_total
       FROM Solicitud_archivo sa
       LEFT JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
       LEFT JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tipo_documento_id
@@ -99,6 +101,77 @@ export class SolicitudesDocumentosService {
       console.error('Error obteniendo documentos con vigencia:', error);
       throw error;
     }
+  }
+
+  // Soportes de análisis: archivos que sube el personal interno (Oficial de
+  // Cumplimiento, etc.) para respaldar su revisión — no son documentos del
+  // cliente, no están ligados a ninguna pregunta del formulario, por eso no
+  // viven en Solicitud_archivo. Reusa storageService.upload igual que
+  // guardarRespuestaArchivo.
+  async subirSoporteAnalisis(
+    solicitudId: number,
+    wetId: number,
+    file: { buffer: Buffer; originalname: string; mimetype: string },
+    usuarioId: number,
+  ) {
+    const [solicitud] = await this.dataSource.query(
+      `SELECT s.sol_numero_solicitud, co.cop_nombre
+       FROM solicitudes s
+       LEFT JOIN Centro_operacion co ON co.cop_id = s.sol_co_id
+       WHERE s.sol_id = @0`,
+      [solicitudId],
+    );
+    if (!solicitud) {
+      throw new Error(`Solicitud ${solicitudId} no encontrada`);
+    }
+
+    const carpeta = `documentos-solicitudes/${solicitud.cop_nombre}/soportes/${solicitud.sol_numero_solicitud}`;
+    const nombreGuardado = `${Date.now()}_${file.originalname}`;
+    const subida = await this.storageService.upload(file.buffer, {
+      folder: carpeta,
+      filename: nombreGuardado,
+      mimetype: file.mimetype,
+    });
+
+    const [fila] = await this.dataSource.query(
+      `INSERT INTO Solicitud_soporte_analisis
+        (ssa_sol_id, ssa_wet_id, ssa_nombre_original, ssa_ruta_almacenamiento, ssa_tipo_mime, ssa_tamano_bytes, ssa_usuario_id)
+       OUTPUT INSERTED.*
+       VALUES (@0, @1, @2, @3, @4, @5, @6)`,
+      [
+        solicitudId,
+        wetId,
+        file.originalname,
+        subida.url,
+        file.mimetype,
+        file.buffer.length,
+        usuarioId,
+      ],
+    );
+    return fila;
+  }
+
+  async obtenerSoportesAnalisis(solicitudId: number, wetId?: number) {
+    const condicionEtapa = wetId ? 'AND ssa.ssa_wet_id = @1' : '';
+    const params = wetId ? [solicitudId, wetId] : [solicitudId];
+    return this.dataSource.query(
+      `SELECT ssa.ssa_id, ssa.ssa_sol_id, ssa.ssa_wet_id, ssa.ssa_nombre_original,
+              ssa.ssa_ruta_almacenamiento, ssa.ssa_tipo_mime, ssa.ssa_tamano_bytes,
+              ssa.ssa_usuario_id, ssa.ssa_created_at
+       FROM Solicitud_soporte_analisis ssa
+       WHERE ssa.ssa_sol_id = @0 AND ssa.ssa_estado = 'activo' ${condicionEtapa}
+       ORDER BY ssa.ssa_created_at DESC`,
+      params,
+    );
+  }
+
+  async eliminarSoporteAnalisis(solicitudId: number, ssaId: number) {
+    await this.dataSource.query(
+      `UPDATE Solicitud_soporte_analisis
+       SET ssa_estado = 'inactivo'
+       WHERE ssa_id = @0 AND ssa_sol_id = @1`,
+      [ssaId, solicitudId],
+    );
   }
 
   /**

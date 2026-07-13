@@ -379,10 +379,29 @@ export class SolicitudesController {
         };
       }
 
-      const documentos =
-        await this.documentosService.obtenerDocumentosConVigencia(
-          solicitud.sol_id,
-        );
+      // Estas tres consultas son independientes entre sí (todas parten solo
+      // de `solicitud`, ya resuelta arriba) — antes se esperaban una por una
+      // en serie, sumando la latencia de red de cada ida y vuelta a la BD
+      // remota. Corriéndolas en paralelo, el tiempo total es el de la más
+      // lenta de las tres, no la suma de las tres.
+      const [documentos, todosLosDiferidos, enEsperaDiferidos] =
+        await Promise.all([
+          this.documentosService.obtenerDocumentosConVigencia(
+            solicitud.sol_id,
+          ),
+          // Documentos "diferidos" (plantillas que se generan después de
+          // guardar la solicitud): mientras la solicitud siga en
+          // CLI+PEND_DOCS sin pasar a Ejecutivo de Negocios (ver
+          // solicitudes-workflow.service.ts), se muestra la sección completa
+          // — incluso si ya se subieron todos — porque el cliente aún debe
+          // pulsar "Enviar e informar a Cartonera" para que el estado
+          // avance (los archivos se suben de inmediato al seleccionarlos,
+          // pero eso no avanza el estado por sí solo).
+          this.workflowService.obtenerDocumentosDiferidos(solicitud.sol_id),
+          this.workflowService.solicitudEnEsperaDocumentosDiferidos(
+            solicitud,
+          ),
+        ]);
       const puedeCorregir = [1, 2].includes(Number(solicitud.sol_estado_id));
 
       // Rechazado por Auxiliar Servicio Cliente: Pendiente(2) + Etapa
@@ -393,20 +412,6 @@ export class SolicitudesController {
         Number(solicitud.sol_etapa_actual_id) === 3 &&
         Number(solicitud.sol_resultado_etapa_id) === 3;
 
-      // Documentos "diferidos" (plantillas que se generan después de
-      // guardar la solicitud): mientras la solicitud siga en CLI+PEND_DOCS
-      // sin pasar a Ejecutivo de Negocios (ver solicitudes-workflow.service.ts),
-      // se muestra la sección completa — incluso si ya se subieron todos —
-      // porque el cliente aún debe pulsar "Enviar e informar a Cartonera"
-      // para que el estado avance (los archivos se suben de inmediato al
-      // seleccionarlos, pero eso no avanza el estado por sí solo).
-      const todosLosDiferidos = await this.workflowService.obtenerDocumentosDiferidos(
-        solicitud.sol_id,
-      );
-      const enEsperaDiferidos =
-        await this.workflowService.solicitudEnEsperaDocumentosDiferidos(
-          solicitud,
-        );
       const documentosDiferidos = enEsperaDiferidos ? todosLosDiferidos : [];
 
       return {
@@ -759,6 +764,108 @@ export class SolicitudesController {
       console.error('Error al obtener archivos existentes:', error);
       throw new HttpException(
         error instanceof Error ? error.message : 'Error al obtener archivos',
+        500,
+      );
+    }
+  }
+
+  // Documentos cargados de una solicitud, con nombre del tipo de documento
+  // (Tipos_documentos.tdo_nombre) — para uso del personal interno en las
+  // pantallas de gestión (ASC, Oficial de Cumplimiento, etc.), que necesitan
+  // ver qué se subió sin pasar por el flujo de "nueva solicitud".
+  @Get(':id/documentos')
+  @UseGuards(JwtAuthGuard)
+  async obtenerDocumentosSolicitud(
+    @Param('id', ParseIntPipe) solicitudId: number,
+  ) {
+    try {
+      const documentos =
+        await this.documentosService.obtenerDocumentosConVigencia(
+          solicitudId,
+        );
+      return { ok: true, data: documentos };
+    } catch (error) {
+      console.error('Error al obtener documentos de la solicitud:', error);
+      throw new HttpException(
+        error instanceof Error ? error.message : 'Error al obtener documentos',
+        500,
+      );
+    }
+  }
+
+  // Soportes de análisis: archivos que sube el personal interno (Oficial de
+  // Cumplimiento, etc.) para respaldar su propia revisión — no son
+  // documentos del cliente, ver SolicitudesDocumentosService.
+  @Post(':id/soportes-analisis')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(FileInterceptor('archivo'))
+  async subirSoporteAnalisis(
+    @Param('id', ParseIntPipe) solicitudId: number,
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: { wet_id: string },
+    @Req() req: Request & { user: { usr_id: number } },
+  ) {
+    try {
+      if (!file) {
+        throw new BadRequestException('No se proporcionó ningún archivo');
+      }
+      const wetId = Number(body?.wet_id);
+      if (!wetId) {
+        throw new BadRequestException('wet_id es obligatorio');
+      }
+      const fila = await this.documentosService.subirSoporteAnalisis(
+        solicitudId,
+        wetId,
+        file,
+        req.user.usr_id,
+      );
+      return { ok: true, data: fila };
+    } catch (error) {
+      console.error('Error al subir soporte de análisis:', error);
+      throw new HttpException(
+        error instanceof Error ? error.message : 'Error al subir soporte',
+        500,
+      );
+    }
+  }
+
+  @Get(':id/soportes-analisis')
+  @UseGuards(JwtAuthGuard)
+  async obtenerSoportesAnalisis(
+    @Param('id', ParseIntPipe) solicitudId: number,
+    @Query('wet_id') wetId?: string,
+  ) {
+    try {
+      const soportes = await this.documentosService.obtenerSoportesAnalisis(
+        solicitudId,
+        wetId ? Number(wetId) : undefined,
+      );
+      return { ok: true, data: soportes };
+    } catch (error) {
+      console.error('Error al obtener soportes de análisis:', error);
+      throw new HttpException(
+        error instanceof Error ? error.message : 'Error al obtener soportes',
+        500,
+      );
+    }
+  }
+
+  @Delete(':id/soportes-analisis/:ssaId')
+  @UseGuards(JwtAuthGuard)
+  async eliminarSoporteAnalisis(
+    @Param('id', ParseIntPipe) solicitudId: number,
+    @Param('ssaId', ParseIntPipe) ssaId: number,
+  ) {
+    try {
+      await this.documentosService.eliminarSoporteAnalisis(
+        solicitudId,
+        ssaId,
+      );
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al eliminar soporte de análisis:', error);
+      throw new HttpException(
+        error instanceof Error ? error.message : 'Error al eliminar soporte',
         500,
       );
     }

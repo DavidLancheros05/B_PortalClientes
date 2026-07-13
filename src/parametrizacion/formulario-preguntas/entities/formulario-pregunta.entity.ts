@@ -25,6 +25,7 @@ export enum TipoPregunta {
   ARCHIVO = 'ARCHIVO',
   TABLA = 'TABLA',
   IMAGEN = 'IMAGEN',
+  ESPACIO_FIRMA = 'ESPACIO_FIRMA',
 }
 
 @Entity({ name: 'Formulario_pregunta' })
