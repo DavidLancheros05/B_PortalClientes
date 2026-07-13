@@ -22,20 +22,25 @@ export class SolicitudesDocumentosService {
           s.*,
           c.cli_razon_social as cliente_nombre,
           c.cli_nro_identificacion as cliente_nit,
+          c.cli_direccion as cliente_direccion,
           co.cop_nombre as centro_operacion_nombre,
           u_crea.usr_nombre as usuario_registro,
           u_crea.usr_id as usuario_registro_id,
-          u_ej.usr_nombre as ejecutivo_nombre,
-          u_ej.usr_id as ejecutivo_id_nombre,
+          COALESCE(ejn.ejng_nombre, u_ej.usr_nombre) as ejecutivo_nombre,
           u_rev.usr_nombre as usuario_revision,
-          seh.seh_fecha_hora as fecha_revision
+          seh.seh_fecha_hora as fecha_revision,
+          we.wet_nombre as etapa_nombre,
+          wr.wee_nombre as resultado_nombre
         FROM solicitudes s
         LEFT JOIN clientes c ON s.sol_cliente_id = c.cli_id
         LEFT JOIN Centro_operacion co ON s.sol_co_id = co.cop_id
         LEFT JOIN usuarios u_crea ON s.sol_usuario_crea = u_crea.usr_id
+        LEFT JOIN Ejecutivo_negocio ejn ON ejn.ejng_id = s.sol_ejecutivo_id
         LEFT JOIN usuarios u_ej ON s.sol_ejecutivo_id = u_ej.usr_id
         LEFT JOIN Solicitudes_estados_hist seh ON s.sol_id = seh.seh_sol_id AND seh.seh_estado_id = 2
         LEFT JOIN usuarios u_rev ON seh.seh_usr_id = u_rev.usr_id
+        LEFT JOIN workflow_etapas we ON we.wet_id = s.sol_etapa_actual_id
+        LEFT JOIN workflow_estado_etapa wr ON wr.wee_id = s.sol_resultado_etapa_id
         WHERE s.sol_id = @0
       `;
 
