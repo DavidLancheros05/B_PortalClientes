@@ -32,6 +32,12 @@ export class ClientesController {
     return this.clientesService.getEjecutivosNegocio();
   }
 
+  // Debe ir antes de @Get(':id') para no ser interpretada como un id.
+  @Get('aprobados')
+  async getAllAprobados(): Promise<ClienteListResponseDto[]> {
+    return this.clientesService.findAllAprobados();
+  }
+
   @Post()
   async create(
     @Body() dto: CreateClienteDto,

@@ -1,18 +1,18 @@
 import { Injectable, NotFoundException, Logger } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
-import { AmpliacionCupoEntity } from './entities';
+import { DataSource } from 'typeorm';
 import { CreateAmpliacionCupoDto, UpdateAmpliacionCupoDto } from './dto';
+
+const CAMPOS_SOLICITUD_AMPLIACION = `
+  sol_id, sol_cliente_id, sol_cupo_solicitado, sol_justificacion_ampliacion,
+  sol_estado_id, sol_etapa_actual_id, sol_resultado_etapa_id,
+  sol_numero_solicitud, sol_created_at
+`;
 
 @Injectable()
 export class AmpliacionCupoService {
   private readonly logger = new Logger('AmpliacionCupoService');
 
-  constructor(
-    @InjectRepository(AmpliacionCupoEntity)
-    private readonly repo: Repository<AmpliacionCupoEntity>,
-    private readonly dataSource: DataSource,
-  ) {}
+  constructor(private readonly dataSource: DataSource) {}
 
   private async obtenerSiguienteNumeroSolicitud(
     copId: number,
@@ -32,8 +32,12 @@ export class AmpliacionCupoService {
     throw new Error('No se pudo generar el número de solicitud');
   }
 
-  async create(dto: CreateAmpliacionCupoDto): Promise<AmpliacionCupoEntity> {
+  async create(dto: CreateAmpliacionCupoDto, usuarioId: number) {
     this.logger.log(`Creating ampliacion-cupo for cliente ${dto.clienteId}`);
+
+    // Nota: dto.solicitudAnteriorId se acepta pero no se persiste — no hay
+    // columna dedicada para eso; la solicitud anterior de un cliente ya es
+    // recuperable consultando `solicitudes` por sol_cliente_id.
 
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -133,16 +137,19 @@ export class AmpliacionCupoService {
       // Seleccionar etapa según estado
       etapaId = estadoId === 2 ? etapaClienteId : etapaOFCId;
 
-      // 6. Crear solicitud
+      // 6. Crear solicitud (incluye el monto y la justificación de la
+      // ampliación directamente en sus propias columnas — ver migración
+      // 20260719_agregar_cupo_solicitado_a_solicitudes.sql)
       const now = new Date();
       const insertSolicitudSQL = `
         INSERT INTO solicitudes (
           sol_cliente_id, sol_estado_id, sol_co_id,
           sol_nit_documento, sol_fecha_creacion, sol_created_at, sol_updated_at,
           sol_version, sol_formulario_version, sol_numero_solicitud, sol_es_zona_franca,
-          sol_ejecutivo_id, sol_etapa_actual_id, sol_resultado_etapa_id
+          sol_ejecutivo_id, sol_etapa_actual_id, sol_resultado_etapa_id,
+          sol_cupo_solicitado, sol_justificacion_ampliacion
         ) VALUES (
-          @0, @1, @2, @3, @4, @5, @6, @7, @8, @9, @10, @11, @12, @13
+          @0, @1, @2, @3, @4, @5, @6, @7, @8, @9, @10, @11, @12, @13, @14, @15
         );
         SELECT SCOPE_IDENTITY() AS sol_id;
       `;
@@ -162,6 +169,8 @@ export class AmpliacionCupoService {
         ejecutivoId, // @11 ejecutivo_id
         etapaId, // @12 etapa_actual_id
         resultadoId, // @13 resultado_etapa_id
+        dto.nuevoCupo, // @14 cupo_solicitado
+        dto.justificacion, // @15 justificacion_ampliacion
       ];
 
       const solicitudResult = await queryRunner.query(
@@ -181,27 +190,18 @@ export class AmpliacionCupoService {
       // 7. Registrar en workflow_historial
       await queryRunner.query(
         `INSERT INTO solicitud_workflow_historial
-         (swh_solicitud_id, swh_etapa_id, swh_resultado_id, swh_fecha)
-         VALUES (@0, @1, @2, @3)`,
-        [solicitudId, etapaId, resultadoId, now],
+         (swh_sol_id, swh_etapa_id, swh_resultado_id, swh_usuario_id, swh_fecha)
+         VALUES (@0, @1, @2, @3, @4)`,
+        [solicitudId, etapaId, resultadoId, usuarioId, now],
       );
 
-      // 8. Crear registro en ampliacion_cupo
-      const entity = this.repo.create({
-        ac_cliente_id: dto.clienteId,
-        ac_nuevo_cupo: dto.nuevoCupo,
-        ac_justificacion: dto.justificacion,
-        ac_solicitud_anterior_id: dto.solicitudAnteriorId || null,
-        ac_solicitud_id: solicitudId,
-        ac_estado_id: estadoId,
-        ac_etapa_actual_id: etapaId,
-        ac_resultado_etapa_id: resultadoId,
-      });
-
-      const savedEntity = await this.repo.save(entity);
+      const [creada] = await queryRunner.query(
+        `SELECT ${CAMPOS_SOLICITUD_AMPLIACION} FROM solicitudes WHERE sol_id = @0`,
+        [solicitudId],
+      );
 
       await queryRunner.commitTransaction();
-      return savedEntity;
+      return creada;
     } catch (error) {
       await queryRunner.rollbackTransaction();
       this.logger.error('Error creating ampliacion-cupo:', error);
@@ -249,61 +249,90 @@ export class AmpliacionCupoService {
     }
   }
 
-  async findAll(): Promise<AmpliacionCupoEntity[]> {
+  async findAll() {
     this.logger.log('Fetching all ampliaciones-cupo');
-    return await this.repo.find({
-      order: { ac_id: 'DESC' },
-    });
+    return this.dataSource.query(`
+      SELECT ${CAMPOS_SOLICITUD_AMPLIACION}
+      FROM solicitudes
+      WHERE sol_cupo_solicitado IS NOT NULL
+      ORDER BY sol_id DESC
+    `);
   }
 
-  async findOne(id: number): Promise<AmpliacionCupoEntity> {
-    this.logger.log(`Finding ampliacion-cupo ${id}`);
+  async findOne(solId: number) {
+    this.logger.log(`Finding ampliacion-cupo (solicitud ${solId})`);
 
-    const entity = await this.repo.findOne({
-      where: { ac_id: id },
-    });
+    const [fila] = await this.dataSource.query(
+      `SELECT ${CAMPOS_SOLICITUD_AMPLIACION}
+       FROM solicitudes
+       WHERE sol_id = @0 AND sol_cupo_solicitado IS NOT NULL`,
+      [solId],
+    );
 
-    if (!entity) {
-      throw new NotFoundException(`Ampliacion-cupo con id ${id} no encontrado`);
+    if (!fila) {
+      throw new NotFoundException(
+        `Ampliación de cupo (solicitud ${solId}) no encontrada`,
+      );
     }
 
-    return entity;
+    return fila;
   }
 
-  async findByCliente(clienteId: number): Promise<AmpliacionCupoEntity[]> {
+  async findByCliente(clienteId: number) {
     this.logger.log(`Finding ampliaciones-cupo for cliente ${clienteId}`);
 
-    return await this.repo.find({
-      where: { ac_cliente_id: clienteId },
-      order: { ac_id: 'DESC' },
-    });
+    return this.dataSource.query(
+      `SELECT ${CAMPOS_SOLICITUD_AMPLIACION}
+       FROM solicitudes
+       WHERE sol_cliente_id = @0 AND sol_cupo_solicitado IS NOT NULL
+       ORDER BY sol_id DESC`,
+      [clienteId],
+    );
   }
 
-  async update(
-    id: number,
-    dto: UpdateAmpliacionCupoDto,
-  ): Promise<AmpliacionCupoEntity> {
-    this.logger.log(`Updating ampliacion-cupo ${id}`);
+  async update(solId: number, dto: UpdateAmpliacionCupoDto) {
+    this.logger.log(`Updating ampliacion-cupo (solicitud ${solId})`);
 
-    await this.findOne(id);
+    await this.findOne(solId);
 
-    const updateData: any = {};
-    if (dto.clienteId !== undefined) updateData.ac_cliente_id = dto.clienteId;
-    if (dto.nuevoCupo !== undefined) updateData.ac_nuevo_cupo = dto.nuevoCupo;
-    if (dto.justificacion !== undefined)
-      updateData.ac_justificacion = dto.justificacion;
-    if (dto.solicitudAnteriorId !== undefined)
-      updateData.ac_solicitud_anterior_id = dto.solicitudAnteriorId;
+    // clienteId / solicitudAnteriorId no se persisten: cambiar el cliente
+    // dueño de una solicitud ya creada no tiene sentido, y la solicitud
+    // anterior es recuperable por consulta (ver nota en create()).
+    const sets: string[] = [];
+    const params: any[] = [];
 
-    await this.repo.update(id, updateData);
+    if (dto.nuevoCupo !== undefined) {
+      sets.push(`sol_cupo_solicitado = @${params.length}`);
+      params.push(dto.nuevoCupo);
+    }
+    if (dto.justificacion !== undefined) {
+      sets.push(`sol_justificacion_ampliacion = @${params.length}`);
+      params.push(dto.justificacion);
+    }
 
-    return await this.findOne(id);
+    if (sets.length > 0) {
+      params.push(solId);
+      await this.dataSource.query(
+        `UPDATE solicitudes SET ${sets.join(', ')} WHERE sol_id = @${params.length - 1}`,
+        params,
+      );
+    }
+
+    return this.findOne(solId);
   }
 
-  async remove(id: number): Promise<void> {
-    this.logger.log(`Deleting ampliacion-cupo ${id}`);
+  async remove(solId: number): Promise<void> {
+    this.logger.log(`Removing ampliacion-cupo flag from solicitud ${solId}`);
 
-    await this.findOne(id);
-    await this.repo.delete(id);
+    await this.findOne(solId);
+
+    // No se borra la solicitud (tiene workflow/historial real) — solo se
+    // le quita la marca de "es una ampliación de cupo".
+    await this.dataSource.query(
+      `UPDATE solicitudes
+       SET sol_cupo_solicitado = NULL, sol_justificacion_ampliacion = NULL
+       WHERE sol_id = @0`,
+      [solId],
+    );
   }
 }

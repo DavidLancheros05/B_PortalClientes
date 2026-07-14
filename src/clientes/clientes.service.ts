@@ -124,6 +124,47 @@ export class ClientesService {
   }
 
   // ========================
+  // SOLO CLIENTES YA APROBADOS (con al menos una solicitud en sol_estado_id
+  // = 5/APROBADA según la tabla real `solicitud_estados` — ver
+  // BACKEND/FLUJO_ETAPAS.md; ojo, NO es el mismo id que
+  // FRONTEND/src/constants/estado-solicitud.ts, que tiene APROBADA=4 y no
+  // coincide con este catálogo) — para selectores donde no aplica cualquier
+  // registro de Clientes, como el de "Ampliación de Cupo" (ver
+  // documentacion/plan-archivo-maestro-documentos-cliente-y-soportes-analisis.md)
+  // ========================
+  async findAllAprobados(): Promise<ClienteListResponseDto[]> {
+    const result = await this.clienteRepo.query(`
+      SELECT
+        c.cli_id AS [cli_id],
+        c.cli_razon_social AS [cli_razon_social],
+        c.cli_nro_identificacion AS [cli_nro_identificacion],
+        c.cli_direccion AS [cli_direccion],
+        c.cli_correo AS [cli_correo],
+        c.cli_estado AS [cli_estado],
+        c.ejng_id AS [ejng_id],
+        e.ejng_nombre AS [ejng_nombre]
+      FROM dbo.Clientes c
+      LEFT JOIN dbo.Ejecutivo_negocio e ON e.ejng_id = c.ejng_id
+      WHERE EXISTS (
+        SELECT 1 FROM dbo.solicitudes s
+        WHERE s.sol_cliente_id = c.cli_id AND s.sol_estado_id = 5
+      )
+      ORDER BY c.cli_razon_social ASC
+    `);
+
+    return result.map((item: any) => ({
+      cli_id: item.cli_id,
+      cli_razon_social: item.cli_razon_social,
+      cli_nro_identificacion: item.cli_nro_identificacion,
+      cli_direccion: item.cli_direccion,
+      cli_correo: item.cli_correo,
+      cli_estado: item.cli_estado,
+      ejng_id: item.ejng_id,
+      ejecutivo: item.ejng_nombre ? { nombre: item.ejng_nombre } : null,
+    }));
+  }
+
+  // ========================
   // FILTRAR POR CENTRO (con estado)
   // ========================
   async findByCentro(copId: number): Promise<ClienteListResponseDto[]> {
