@@ -1,10 +1,14 @@
 // src/solicitudes/solicitudes-workflow.service.ts
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { MailService } from '../mail/mail.service';
 import { WorkflowService } from './workflow.service';
 import { HistorialWorkflowService } from '../workflow/historial/historial-workflow.service';
+import {
+  IStorageService,
+  STORAGE_SERVICE,
+} from '../common/storage/storage.interface';
 
 @Injectable()
 export class SolicitudesWorkflowService {
@@ -14,6 +18,7 @@ export class SolicitudesWorkflowService {
     private readonly mailService: MailService,
     private readonly workflowService: WorkflowService,
     private readonly historialWorkflowService: HistorialWorkflowService,
+    @Inject(STORAGE_SERVICE) private readonly storageService: IStorageService,
   ) {}
 
   private async resolveLookupColumns() {
@@ -1370,9 +1375,11 @@ export class SolicitudesWorkflowService {
           c.cli_correo AS cliente_email,
           s.sol_cupo_aprobado,
           s.sol_plazo_pago,
-          s.sol_forma_pago
+          s.sol_forma_pago,
+          co.cop_nombre AS centro_nombre
         FROM solicitudes s
         LEFT JOIN clientes c ON c.${lookup.cliId} = s.sol_cliente_id
+        LEFT JOIN Centro_operacion co ON co.cop_id = s.sol_co_id
         WHERE s.sol_id = @0`,
         [sa_sol_id],
       );
@@ -1433,6 +1440,64 @@ export class SolicitudesWorkflowService {
         solicitud.sol_numero_solicitud,
         solicitud.cliente_nombre,
       );
+
+      // Persistir el PDF para que aparezca en "Mis Documentos" del cliente.
+      // Independiente del envío de correo (try/catch propio): si el storage
+      // falla igual debe intentarse enviar el correo con el buffer ya
+      // generado, y viceversa — ninguno de los dos debe tumbar la
+      // aprobación, que ya quedó confirmada (commitTransaction) antes de
+      // que se invoque esta función.
+      try {
+        const nombreArchivo = `carta-vinculacion-${solicitud.sol_numero_solicitud}.pdf`;
+        const carpeta = `documentos-solicitudes/${solicitud.centro_nombre || 'sin-centro'}/cartas/${solicitud.sol_numero_solicitud}`;
+        const subida = await this.storageService.upload(pdfBuffer, {
+          folder: carpeta,
+          filename: nombreArchivo,
+          mimetype: 'application/pdf',
+        });
+
+        const [existente] = await this.dataSource.query(
+          `SELECT scv_id FROM Solicitud_carta_vinculacion WHERE scv_sol_id = @0`,
+          [sa_sol_id],
+        );
+
+        if (existente) {
+          await this.dataSource.query(
+            `UPDATE Solicitud_carta_vinculacion SET
+              scv_nombre_original = @0,
+              scv_ruta_almacenamiento = @1,
+              scv_tipo_mime = @2,
+              scv_tamano_bytes = @3,
+              scv_created_at = GETDATE()
+            WHERE scv_sol_id = @4`,
+            [
+              nombreArchivo,
+              subida.url,
+              'application/pdf',
+              pdfBuffer.length,
+              sa_sol_id,
+            ],
+          );
+        } else {
+          await this.dataSource.query(
+            `INSERT INTO Solicitud_carta_vinculacion
+             (scv_sol_id, scv_nombre_original, scv_ruta_almacenamiento, scv_tipo_mime, scv_tamano_bytes)
+             VALUES (@0, @1, @2, @3, @4)`,
+            [
+              sa_sol_id,
+              nombreArchivo,
+              subida.url,
+              'application/pdf',
+              pdfBuffer.length,
+            ],
+          );
+        }
+      } catch (storageError) {
+        console.error(
+          `⚠️ [enviarCartaVinculacionPorCorreo] Error persistiendo el PDF:`,
+          storageError,
+        );
+      }
 
       let asunto = plantilla.asunto;
       let cuerpoHtml = plantilla.cuerpo_html;

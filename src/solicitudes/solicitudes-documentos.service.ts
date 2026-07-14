@@ -82,6 +82,12 @@ export class SolicitudesDocumentosService {
   }
 
   async obtenerDocumentosConVigencia(solicitudId: number) {
+    // La Carta de Vinculación (Solicitud_carta_vinculacion) no tiene
+    // Formulario_pregunta detrás (la genera el sistema al aprobar en CC2,
+    // no la sube el cliente), así que no puede vivir en Solicitud_archivo
+    // (sa_fp_id es NOT NULL). Se trae con UNION ALL, mapeada a las mismas
+    // columnas que ya consume el frontend, para que aparezca en "Mis
+    // Documentos" sin tocar el componente.
     const sql = `
       SELECT sa.sa_id, sa.sa_sol_id, sa.sa_fp_id AS fp_id, sa.sa_nombre_original, sa.sa_nombre_guardado,
              sa.sa_tamaño_bytes, sa.sa_tipo_mime, sa.sa_ruta_almacenamiento, sa.sa_cargado_por,
@@ -97,7 +103,23 @@ export class SolicitudesDocumentosService {
       LEFT JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
       LEFT JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tipo_documento_id
       WHERE sa.sa_sol_id = @0 AND sa.sa_estado = 'activo'
-      ORDER BY sa.sa_created_at DESC
+
+      UNION ALL
+
+      SELECT CAST(scv.scv_id AS BIGINT), scv.scv_sol_id, CAST(NULL AS INT), scv.scv_nombre_original, CAST(NULL AS NVARCHAR(255)),
+             scv.scv_tamano_bytes, scv.scv_tipo_mime, scv.scv_ruta_almacenamiento, CAST(NULL AS INT),
+             CAST('activo' AS VARCHAR(20)), scv.scv_created_at,
+             CAST(NULL AS DATE), CAST(NULL AS DATE),
+             CAST(0 AS BIT),
+             CAST(NULL AS INT), CAST('Carta de Vinculación Comercial' AS VARCHAR(150)), CAST(NULL AS INT),
+             CAST(NULL AS VARCHAR(20)), CAST(NULL AS INT),
+             CAST(0 AS BIT), CAST(NULL AS NVARCHAR(MAX)), CAST(NULL AS VARCHAR(20)),
+             CAST(NULL AS NVARCHAR(30)), CAST(NULL AS NVARCHAR(30)),
+             CAST(NULL AS NVARCHAR(10)), CAST(NULL AS INT)
+      FROM Solicitud_carta_vinculacion scv
+      WHERE scv.scv_sol_id = @0
+
+      ORDER BY fecha_carga DESC
     `;
 
     try {
