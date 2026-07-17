@@ -94,6 +94,7 @@ export class SolicitudesRespuestasService {
     // Manejar valor_opcion_id como array o valor único
     const opcionesIds: (number | null)[] = [];
     const esSelectTabla = fpTipo === 'SELECT_TABLA';
+    const esMultiselectTipo = fpTipo === 'MULTISELECT';
 
     if (
       valor_opcion_id !== undefined &&
@@ -162,7 +163,7 @@ export class SolicitudesRespuestasService {
             sa_sol_id,
             fp_id,
             opcionId,
-            opcionesIds.length > 1 ? 1 : 0,
+            esMultiselectTipo ? 1 : 0,
           ];
           console.log('🔹 SQL Params (SELECT_TABLA):', params);
           await queryRunner.query(sql, params);
@@ -180,7 +181,11 @@ export class SolicitudesRespuestasService {
             sa_sol_id,
             fp_id,
             opcionId,
-            opcionesIds.length > 1 ? 1 : 0, // es_multiselect = 1 si hay múltiples
+            // es_multiselect refleja el tipo de la pregunta, no cuantas
+            // opciones quedaron marcadas -- antes una sola opcion marcada en
+            // una pregunta MULTISELECT se guardaba con es_multiselect=0,
+            // indistinguible de un SELECT normal al recargar la solicitud.
+            esMultiselectTipo ? 1 : 0,
           ];
           console.log('🔹 SQL Params (opción):', params);
           await queryRunner.query(sql, params);

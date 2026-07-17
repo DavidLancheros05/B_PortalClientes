@@ -223,11 +223,11 @@ export class SolicitudesService {
           sol_fecha_estimada_oficial_cumplimiento, sol_fecha_estimada_comite_credito_1,
           sol_fecha_estimada_comite_credito_2,
           sol_motivo_rechazo_id, sol_usuario_modifica,
-          sol_etapa_actual_id, sol_resultado_etapa_id
+          sol_etapa_actual_id, sol_resultado_etapa_id, sol_observacion_cliente
         ) VALUES (
           @0, @1, @2, @3, @4, @5, @6, @7, @8, @9,
           @10, @11, @12, @13, @14, @15, @16, @17, @18, @19,
-          @20, @21, @22, @23, @24, @25, @26
+          @20, @21, @22, @23, @24, @25, @26, @27
         );
 
         SELECT SCOPE_IDENTITY() AS sol_id;
@@ -297,6 +297,17 @@ export class SolicitudesService {
       const etapaActualId =
         estadoId === 1 || hayDocumentosDiferidos ? etapaClienteId : etapaCenId;
 
+      // Texto que ve el cliente en su listado de solicitudes (columna
+      // Observaciones), igual que en cambiarEstado().
+      const observacionClienteInicial =
+        estadoId === 1
+          ? 'Puedes terminar de modificar tu formulario cuando lo desees.'
+          : hayDocumentosDiferidos
+            ? `Aún faltan generar y subir: ${documentosDiferidosFaltantes
+                .map((d) => d.tdo_nombre)
+                .join(', ')}.`
+            : 'Formulario y documentos cargados correctamente. Puedes editar hasta que Cartonera revise tu solicitud.';
+
       // 5.1 Parámetros en ARRAY en el ORDEN CORRECTO
       const solicitudParams = [
         // Campos NOT NULL
@@ -347,6 +358,7 @@ export class SolicitudesService {
         null, // @24 usuario_modifica
         etapaActualId, // @25 sol_etapa_actual_id (CLI si BORRADOR, EJN si PENDIENTE)
         resultadoFinalId, // @26 sol_resultado_etapa_id (PENDIENTE, o PEND_DOCS si faltan documentos diferidos)
+        observacionClienteInicial, // @27 sol_observacion_cliente
       ];
 
       console.log('🚀 Ejecutando SQL directo para solicitud...');

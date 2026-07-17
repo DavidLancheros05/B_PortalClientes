@@ -240,6 +240,11 @@ export class SolicitudesWorkflowService {
       let resultadoCodigo = 'PENDIENTE';
       let documentosDiferidosFaltantes: { tdo_id: number; tdo_nombre: string }[] =
         [];
+      // Texto que ve el cliente en su listado de solicitudes (columna
+      // Observaciones). Antes se calculaba en el frontend a partir de
+      // estado/etapa/resultado; ahora queda guardado en la fila para que
+      // refleje el evento real que lo origino.
+      let observacionCliente: string | null = null;
 
       if (estadoId === 1) {
         // BORRADOR → Etapa CLI
@@ -249,6 +254,8 @@ export class SolicitudesWorkflowService {
         etapaId = etapaResult?.[0]?.wet_id;
         mensajeTransicion =
           'Solicitud guardada como BORRADOR - Cliente llenando formulario';
+        observacionCliente =
+          'Puedes terminar de modificar tu formulario cuando lo desees.';
       } else if (estadoId === 2) {
         documentosDiferidosFaltantes = await this.obtenerDocumentosDiferidosFaltantes(
           solicitudId,
@@ -268,6 +275,9 @@ export class SolicitudesWorkflowService {
           mensajeTransicion = `Solicitud registrada - faltan documentos por generar y subir: ${documentosDiferidosFaltantes
             .map((d) => d.tdo_nombre)
             .join(', ')}`;
+          observacionCliente = `Aún faltan generar y subir: ${documentosDiferidosFaltantes
+            .map((d) => d.tdo_nombre)
+            .join(', ')}.`;
         } else {
           // PENDIENTE → Etapa EJN
           const etapaResult = await queryRunner.query(
@@ -275,6 +285,8 @@ export class SolicitudesWorkflowService {
           );
           etapaId = etapaResult?.[0]?.wet_id;
           mensajeTransicion = 'Solicitud enviada a Ejecutivo de Negocios';
+          observacionCliente =
+            'Formulario y documentos cargados correctamente. Puedes editar hasta que Cartonera revise tu solicitud.';
         }
       }
       // Para estados 3+ (REVISIÓN, COMPLETADA), no cambiamos la etapa
@@ -301,7 +313,7 @@ export class SolicitudesWorkflowService {
       const params: any[] = [estadoId, usuarioId];
 
       if (etapaId !== null) {
-        updateSQL += `, sol_etapa_actual_id = @2`;
+        updateSQL += `, sol_etapa_actual_id = @${params.length}`;
         params.push(etapaId);
       }
 
@@ -311,6 +323,11 @@ export class SolicitudesWorkflowService {
       } else if (etapaId !== null && resultadoId !== null) {
         updateSQL += `, sol_resultado_etapa_id = @${params.length}`;
         params.push(resultadoId);
+      }
+
+      if (observacionCliente !== null) {
+        updateSQL += `, sol_observacion_cliente = @${params.length}`;
+        params.push(observacionCliente);
       }
 
       updateSQL += ` WHERE sol_id = @${params.length}`;
@@ -806,18 +823,19 @@ export class SolicitudesWorkflowService {
         observacionesComercial,
         estadoRevisionId,
         usuario_modifica,
-        sa_sol_id,
+        'Tu solicitud se encuentra en revisión.',
       ];
-      let updateSQL = `UPDATE solicitudes SET sol_consumo_mensual_proyectado = @0, sol_observacion_ejn = @1, sol_estado_id = @2, sol_usuario_modifica = @3, sol_updated_at = GETDATE()`;
+      let updateSQL = `UPDATE solicitudes SET sol_consumo_mensual_proyectado = @0, sol_observacion_ejn = @1, sol_estado_id = @2, sol_usuario_modifica = @3, sol_updated_at = GETDATE(), sol_observacion_cliente = @4`;
 
       if (fecha_real_ejecutivo) {
-        updateSQL += `, sol_fecha_real_ejecutivo = @5`;
+        updateSQL += `, sol_fecha_real_ejecutivo = @${updateParams.length}`;
         updateParams.push(fecha_real_ejecutivo);
       } else {
         updateSQL += `, sol_fecha_real_ejecutivo = GETDATE()`;
       }
 
-      updateSQL += ` WHERE sol_id = @4`;
+      updateSQL += ` WHERE sol_id = @${updateParams.length}`;
+      updateParams.push(sa_sol_id);
 
       await this.dataSource.query(updateSQL, updateParams);
 
@@ -894,11 +912,16 @@ export class SolicitudesWorkflowService {
       let etapaDestId: number;
       let estadoId: number;
       let resultadoCodigo: string;
+      // Observacion que ve el cliente en su listado de solicitudes.
+      let observacionCliente: string;
 
       if (!aprobado) {
         etapaDestId = etapaActualId;
         estadoId = estadoRechazada.ses_id;
         resultadoCodigo = 'RECHAZADO';
+        observacionCliente = `Solicitud rechazada de forma definitiva${
+          etapaActualCodigo === 'OFC' ? ' por Cumplimiento' : ''
+        }. Revisa el correo enviado para más detalle.`;
       } else if (etapa_codigo_siguiente) {
         const [etapaSiguiente] = await queryRunner.query(
           `SELECT wet_id FROM workflow_etapas WHERE wet_codigo = @0`,
@@ -907,10 +930,13 @@ export class SolicitudesWorkflowService {
         etapaDestId = etapaSiguiente.wet_id;
         estadoId = estadoRevision.ses_id;
         resultadoCodigo = 'PENDIENTE';
+        observacionCliente = 'Tu solicitud se encuentra en revisión.';
       } else {
         etapaDestId = etapaActualId;
         estadoId = estadoAprobada.ses_id;
         resultadoCodigo = 'APROBADO';
+        observacionCliente =
+          '¡Tu solicitud fue aprobada! Ya puedes operar con el cupo asignado.';
       }
 
       const [resultadoWorkflow] = await queryRunner.query(
@@ -935,6 +961,7 @@ export class SolicitudesWorkflowService {
         etapaDestId,
         resultadoWorkflow.wee_id,
         usuario_modifica,
+        observacionCliente,
         sa_sol_id,
       ];
       let updateSQL = `UPDATE solicitudes SET
@@ -942,11 +969,12 @@ export class SolicitudesWorkflowService {
         sol_etapa_actual_id = @1,
         sol_resultado_etapa_id = @2,
         sol_usuario_modifica = @3,
-        sol_updated_at = GETDATE()
+        sol_updated_at = GETDATE(),
+        sol_observacion_cliente = @4
         ${columnaFecha}`;
 
       if (!aprobado && motivo_rechazo_id) {
-        updateSQL += `, sol_motivo_rechazo_id = @5`;
+        updateSQL += `, sol_motivo_rechazo_id = @${params.length}`;
         params.push(motivo_rechazo_id);
       }
 
@@ -973,7 +1001,7 @@ export class SolicitudesWorkflowService {
         }
       }
 
-      updateSQL += ` WHERE sol_id = @4`;
+      updateSQL += ` WHERE sol_id = @5`;
 
       try {
         await queryRunner.query(updateSQL, params);
@@ -987,7 +1015,8 @@ export class SolicitudesWorkflowService {
             sol_etapa_actual_id = @1,
             sol_resultado_etapa_id = @2,
             sol_usuario_modifica = @3,
-            sol_updated_at = GETDATE()
+            sol_updated_at = GETDATE(),
+            sol_observacion_cliente = @4
             ${columnaFecha}`;
 
           if (!aprobado && motivo_rechazo_id) {
@@ -996,11 +1025,12 @@ export class SolicitudesWorkflowService {
               etapaDestId,
               resultadoWorkflow.wee_id,
               usuario_modifica,
+              observacionCliente,
               sa_sol_id,
               motivo_rechazo_id,
             ];
             await queryRunner.query(
-              basicUpdateSQL + `, sol_motivo_rechazo_id = @5 WHERE sol_id = @4`,
+              basicUpdateSQL + `, sol_motivo_rechazo_id = @6 WHERE sol_id = @5`,
               basicParams,
             );
           } else {
@@ -1009,10 +1039,11 @@ export class SolicitudesWorkflowService {
               etapaDestId,
               resultadoWorkflow.wee_id,
               usuario_modifica,
+              observacionCliente,
               sa_sol_id,
             ];
             await queryRunner.query(
-              basicUpdateSQL + ` WHERE sol_id = @4`,
+              basicUpdateSQL + ` WHERE sol_id = @5`,
               basicParams,
             );
           }
@@ -1156,7 +1187,8 @@ export class SolicitudesWorkflowService {
           sol_resultado_etapa_id = @2,
           sol_usuario_modifica = @3,
           sol_updated_at = GETDATE(),
-          sol_fecha_real_comite_credito_1 = GETDATE()
+          sol_fecha_real_comite_credito_1 = GETDATE(),
+          sol_observacion_cliente = @5
         WHERE sol_id = @4`,
         [
           estadoRevision.ses_id,
@@ -1164,6 +1196,7 @@ export class SolicitudesWorkflowService {
           resultadoPendiente.wee_id,
           usuario_modifica,
           sa_sol_id,
+          'Tu solicitud se encuentra en revisión.',
         ],
       );
 
@@ -1327,9 +1360,10 @@ export class SolicitudesWorkflowService {
              sol_etapa_actual_id = @1,
              sol_resultado_etapa_id = @2,
              sol_usuario_modifica = @3,
-             sol_updated_at = GETDATE()
+             sol_updated_at = GETDATE(),
+             sol_observacion_cliente = @5
          WHERE sol_id = @4`,
-        [3, 3, 1, usuarioId, solicitudId],
+        [3, 3, 1, usuarioId, solicitudId, 'Tu solicitud se encuentra en revisión.'],
       );
 
       await queryRunner.query(

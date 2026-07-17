@@ -33,4 +33,5 @@ export class SolicitudClienteDto {
   sol_formulario_version?: number;
   sol_version?: number;
   sol_usuario_aprueba_condiciones?: number;
+  sol_observacion_cliente?: string;
 }

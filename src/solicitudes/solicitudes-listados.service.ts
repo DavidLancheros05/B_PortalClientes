@@ -198,6 +198,7 @@ export class SolicitudesListadosService {
       s.sol_plazo_pago AS [sol_plazo_pago],
       s.sol_forma_pago AS [sol_forma_pago],
       s.sol_usuario_aprueba_condiciones AS [sol_usuario_aprueba_condiciones],
+      s.sol_observacion_cliente AS [sol_observacion_cliente],
       c.cli_razon_social AS [cliente_nombre],
       c.cli_nro_identificacion AS [cliente_nit],
       co.cop_nombre AS [centro_operacion_nombre]
