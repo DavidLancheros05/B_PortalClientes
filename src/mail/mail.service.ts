@@ -1,13 +1,37 @@
 // backend/src/mail/mail.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
+import axios from 'axios';
+
+type CorreoOptions = {
+  to: string;
+  cc?: string;
+  subject: string;
+  html: string;
+  attachments?: Array<{
+    filename: string;
+    content: Buffer;
+    contentType?: string;
+  }>;
+};
+
+const BREVO_API_URL = 'https://api.brevo.com/v3/smtp/email';
 
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
   private transporter: nodemailer.Transporter | null = null;
 
-  private getRequiredEnv() {
+  /** "Nombre <correo@dominio.com>" -> { name, email }. Usada tanto por SMTP como por Brevo. */
+  private parseFrom(from: string) {
+    const match = from.match(/^(.*)<(.+)>$/);
+    if (match) {
+      return { name: match[1].trim().replace(/^"|"$/g, ''), email: match[2].trim() };
+    }
+    return { name: undefined, email: from.trim() };
+  }
+
+  private getSmtpConfig() {
     const config = {
       host: String(process.env.SMTP_HOST || '').trim(),
       port: Number(process.env.SMTP_PORT || 587),
@@ -36,10 +60,25 @@ export class MailService {
     return config;
   }
 
+  private getBrevoConfig() {
+    const apiKey = String(process.env.BREVO_API_KEY || '').trim();
+    const from = String(process.env.SMTP_FROM || '').trim();
+
+    const missing: string[] = [];
+    if (!apiKey) missing.push('BREVO_API_KEY');
+    if (!from) missing.push('SMTP_FROM');
+
+    if (missing.length > 0) {
+      throw new Error(`Configuracion Brevo incompleta: ${missing.join(', ')}`);
+    }
+
+    return { apiKey, sender: this.parseFrom(from) };
+  }
+
   private getTransporter() {
     if (this.transporter) return this.transporter;
 
-    const smtp = this.getRequiredEnv();
+    const smtp = this.getSmtpConfig();
 
     this.transporter = nodemailer.createTransport({
       host: smtp.host,
@@ -54,30 +93,58 @@ export class MailService {
     return this.transporter;
   }
 
-  async enviarCorreo(options: {
-    to: string;
-    cc?: string;
-    subject: string;
-    html: string;
-    attachments?: Array<{
-      filename: string;
-      content: Buffer;
-      contentType?: string;
-    }>;
-  }) {
-    try {
-      const transporter = this.getTransporter();
-      const smtp = this.getRequiredEnv();
+  private async enviarPorSmtp(options: CorreoOptions) {
+    const transporter = this.getTransporter();
+    const smtp = this.getSmtpConfig();
 
-      await transporter.sendMail({
-        from: smtp.from,
-        to: options.to,
-        cc: options.cc,
+    await transporter.sendMail({
+      from: smtp.from,
+      to: options.to,
+      cc: options.cc,
+      subject: options.subject,
+      html: options.html,
+      attachments: options.attachments,
+    });
+  }
+
+  private async enviarPorBrevo(options: CorreoOptions) {
+    const { apiKey, sender } = this.getBrevoConfig();
+
+    await axios.post(
+      BREVO_API_URL,
+      {
+        sender,
+        to: [{ email: options.to }],
+        cc: options.cc ? [{ email: options.cc }] : undefined,
         subject: options.subject,
-        html: options.html,
-        attachments: options.attachments,
-      });
-      this.logger.log(`Correo enviado a ${options.to}`);
+        htmlContent: options.html,
+        attachment: options.attachments?.map((a) => ({
+          name: a.filename,
+          content: a.content.toString('base64'),
+        })),
+      },
+      {
+        headers: {
+          'api-key': apiKey,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+      },
+    );
+  }
+
+  async enviarCorreo(options: CorreoOptions) {
+    const provider = String(process.env.MAIL_PROVIDER || 'smtp')
+      .toLowerCase()
+      .trim();
+
+    try {
+      if (provider === 'brevo') {
+        await this.enviarPorBrevo(options);
+      } else {
+        await this.enviarPorSmtp(options);
+      }
+      this.logger.log(`Correo enviado a ${options.to} (proveedor: ${provider})`);
     } catch (error) {
       this.logger.error('Error enviando correo:', error);
       throw error;
