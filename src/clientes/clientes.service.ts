@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { plainToInstance } from 'class-transformer';
@@ -372,5 +376,28 @@ export class ClientesService {
     }
 
     return this.findOne(cli_id);
+  }
+
+  // ========================
+  // CAMBIAR CONTRASEÑA (autoservicio del propio cliente)
+  // ========================
+  async changePasswordCliente(
+    cli_id: number,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<{ message: string }> {
+    const cliente = await this.clienteRepo.findOne({ where: { cli_id } });
+    if (!cliente) {
+      throw new NotFoundException('Cliente no existe');
+    }
+
+    // El login de clientes compara la contraseña en texto plano
+    // (auth.service.ts), asi que se guarda igual aqui.
+    if (cliente.cli_password !== currentPassword) {
+      throw new UnauthorizedException('La contraseña actual es incorrecta');
+    }
+
+    await this.clienteRepo.update(cli_id, { cli_password: newPassword });
+    return { message: 'Contraseña actualizada correctamente' };
   }
 }
