@@ -5,6 +5,7 @@ import { FormularioPregunta } from './entities/formulario-pregunta.entity';
 import { CreateFormularioPreguntaDto } from './dto/create-formulario-pregunta.dto';
 import { UpdateFormularioPreguntaDto } from './dto/update-formulario-pregunta.dto';
 import { normalizeMojibake } from 'src/common/utils/text-encoding.util';
+import { contarSolicitudesQueBloqueanVersion } from '../formularios/version-formulario.util';
 
 @Injectable()
 export class FormularioPreguntasService {
@@ -23,6 +24,30 @@ export class FormularioPreguntasService {
     };
 
     return this.formularioPreguntaRepository.save(normalizedDto);
+  }
+
+  // Preguntas del formulario activo (la única que se usa hoy en "nueva
+  // solicitud"), en su última versión — usado por el selector de variables
+  // de plantillas de documentos, que necesita referenciar cualquier
+  // pregunta ya respondida sin que el usuario tenga que saber el
+  // formularioId/versión de memoria.
+  async findPreguntasFormularioActivo() {
+    const result = await this.formularioPreguntaRepository.manager.query(`
+      SELECT TOP 1
+        f.frm_id AS formulario_id,
+        ISNULL(
+          f.frm_version_activa,
+          (SELECT MAX(fv.fv_numero) FROM Formulario_versiones fv WHERE fv.fv_frm_id = f.frm_id)
+        ) AS version
+      FROM formularios f
+      WHERE f.frm_activo = 1
+      ORDER BY f.frm_id
+    `);
+    const formularioId = result?.[0]?.formulario_id;
+    const version = result?.[0]?.version || 1;
+    if (!formularioId) return [];
+
+    return this.findAll(formularioId, version, true);
   }
 
   async findAll(
@@ -90,7 +115,9 @@ export class FormularioPreguntasService {
     };
   }
 
-  update(id: number, dto: UpdateFormularioPreguntaDto) {
+  async update(id: number, dto: UpdateFormularioPreguntaDto) {
+    await this.assertVersionSinSolicitudes(id, 'editar');
+
     const normalizedDto = {
       ...dto,
       fp_descripcion: dto.fp_descripcion
@@ -101,7 +128,33 @@ export class FormularioPreguntasService {
     return this.formularioPreguntaRepository.update(id, normalizedDto);
   }
 
-  remove(id: number) {
+  async remove(id: number) {
+    await this.assertVersionSinSolicitudes(id, 'eliminar');
+
     return this.formularioPreguntaRepository.update(id, { fp_estado: false });
+  }
+
+  // El PDF de una solicitud relee las preguntas EN VIVO (no guarda una foto
+  // de cómo eran al momento de responder) — si se edita/elimina una
+  // pregunta cuya versión ya tiene solicitudes reales, el PDF de una
+  // solicitud enviada hace meses empieza a mostrar el texto/tipo nuevo, y
+  // "eliminar" (soft delete) deja la respuesta ya dada invisible. La
+  // salida segura es "crear nueva versión" desde Parametrización.
+  private async assertVersionSinSolicitudes(fpId: number, accion: string) {
+    const pregunta = await this.formularioPreguntaRepository.manager.query(
+      `SELECT ISNULL(fp_version, 1) AS fp_version FROM Formulario_pregunta WHERE fp_id = @0`,
+      [fpId],
+    );
+    if (pregunta.length === 0) return;
+
+    const total = await contarSolicitudesQueBloqueanVersion(
+      this.formularioPreguntaRepository.manager,
+      pregunta[0].fp_version,
+    );
+    if (total > 0) {
+      throw new Error(
+        `No se puede ${accion} esta pregunta porque su versión del formulario ya tiene solicitudes asociadas. Creá una nueva versión del formulario para hacer cambios.`,
+      );
+    }
   }
 }

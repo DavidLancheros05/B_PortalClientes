@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
+import { StorageModule } from '../common/storage/storage.module';
 import { PQRSController } from './pqrs.controller';
 import { PQRSService } from './pqrs.service';
 import {
@@ -29,6 +30,7 @@ import { ClienteEntity } from '../clientes/entities/clientes.entity';
       ClienteEntity,
     ]),
     AuthModule,
+    StorageModule,
   ],
   controllers: [PQRSController],
   providers: [PQRSService],

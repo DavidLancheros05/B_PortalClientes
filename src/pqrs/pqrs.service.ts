@@ -1,4 +1,5 @@
 import {
+  Inject,
   Injectable,
   NotFoundException,
   BadRequestException,
@@ -16,6 +17,10 @@ import {
   PQRSAsignacionEntity,
 } from './entities';
 import { CreatePQRSDto, UpdatePQRSDto, CreateComentarioDto } from './dto';
+import {
+  IStorageService,
+  STORAGE_SERVICE,
+} from '../common/storage/storage.interface';
 
 @Injectable()
 export class PQRSService {
@@ -36,6 +41,8 @@ export class PQRSService {
     private readonly adjuntoRepository: Repository<PQRSAdjuntoEntity>,
     @InjectRepository(PQRSAsignacionEntity)
     private readonly asignacionRepository: Repository<PQRSAsignacionEntity>,
+    @Inject(STORAGE_SERVICE)
+    private readonly storageService: IStorageService,
   ) {}
 
   async getTipos() {
@@ -325,6 +332,59 @@ export class PQRSService {
       relations: ['usuario', 'cliente'],
       order: { pc_fecha: 'DESC' },
     });
+  }
+
+  async subirAdjunto(
+    pqrsId: number,
+    file: { buffer: Buffer; originalname: string; mimetype: string; size: number },
+    usuario: { usr_id?: number; rol?: string; cliente_id?: number },
+  ) {
+    const pqrs = await this.getById(pqrsId);
+
+    if (pqrs.estado?.pe_codigo === 'CERRADA') {
+      throw new BadRequestException(
+        'Esta PQRS está cerrada y no acepta más adjuntos',
+      );
+    }
+
+    const carpeta = `pqrs/${pqrs.pqrs_numero}`;
+    const nombreGuardado = `${Date.now()}_${file.originalname}`;
+    const subida = await this.storageService.upload(file.buffer, {
+      folder: carpeta,
+      filename: nombreGuardado,
+      mimetype: file.mimetype,
+    });
+
+    const isCliente = usuario.rol === 'CLIENTE';
+    const extension = file.originalname.includes('.')
+      ? file.originalname.split('.').pop()
+      : undefined;
+
+    const adjunto = this.adjuntoRepository.create({
+      pa_pqrs_id: pqrsId,
+      ...(isCliente
+        ? { pa_cliu_id: usuario.cliente_id }
+        : { pa_usr_id: usuario.usr_id }),
+      pa_nombre_original: file.originalname,
+      pa_nombre_guardado: nombreGuardado,
+      pa_ruta: subida.url,
+      pa_extension: extension,
+      pa_mime_type: file.mimetype,
+      pa_tamano: file.size,
+    });
+
+    const resultado = await this.adjuntoRepository.save(adjunto);
+
+    await this.historialRepository.save({
+      ph_pqrs_id: pqrsId,
+      ...(isCliente
+        ? { ph_cliu_id: usuario.cliente_id }
+        : { ph_usr_id: usuario.usr_id }),
+      ph_accion: 'ADJUNTO',
+      ph_comentario: `Archivo adjuntado: ${file.originalname}`,
+    });
+
+    return resultado;
   }
 
   async getHistorial(pqrsId: number) {

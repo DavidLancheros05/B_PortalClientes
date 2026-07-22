@@ -101,11 +101,14 @@ export class AmpliacionCupoService {
         queryRunner,
       );
 
-      // 4. Obtener última versión del formulario
+      // 4. Obtener versión activa del formulario (fijada a mano con
+      // activarVersion, o si nadie la fijó, la más reciente)
       const formularioResult = await queryRunner.query(`
-        SELECT TOP 1 MAX(fv.fv_numero) AS formulario_version
-        FROM Formulario_versiones fv
-        INNER JOIN formularios f ON fv.fv_frm_id = f.frm_id
+        SELECT TOP 1 ISNULL(
+          f.frm_version_activa,
+          (SELECT MAX(fv.fv_numero) FROM Formulario_versiones fv WHERE fv.fv_frm_id = f.frm_id)
+        ) AS formulario_version
+        FROM formularios f
         WHERE f.frm_activo = 1
       `);
       const formularioVersion = Number(

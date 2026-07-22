@@ -78,11 +78,22 @@ export class FormulariosController {
 
   @Delete(':id')
   async eliminar(@Param('id', ParseIntPipe) id: number) {
-    const eliminado = await this.formulariosService.eliminar(id);
-    if (!eliminado) {
-      throw new HttpException('Formulario no encontrado', HttpStatus.NOT_FOUND);
+    try {
+      const eliminado = await this.formulariosService.eliminar(id);
+      if (!eliminado) {
+        throw new HttpException(
+          'Formulario no encontrado',
+          HttpStatus.NOT_FOUND,
+        );
+      }
+      return { success: true, message: 'Formulario eliminado exitosamente' };
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      throw new HttpException(
+        error instanceof Error ? error.message : 'Error al eliminar formulario',
+        HttpStatus.BAD_REQUEST,
+      );
     }
-    return { success: true, message: 'Formulario eliminado exitosamente' };
   }
 
   @Get(':id/versiones')

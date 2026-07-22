@@ -109,12 +109,15 @@ parado (`git -C BACKEND status`, `git -C FRONTEND status`), nunca asumir.
   vive en un `middleware.ts` sino en **`FRONTEND/src/proxy.ts`**
   (`matcher`: `/dashboard`, `/solicitudes`, `/pedidos`, `/aprobaciones`,
   `/condiciones-financieras`, `/admin`, `/perfil`) — verifica un JWT en la
-  **cookie** `token` firmado con el secreto hardcodeado `mi_super_secreto`
+  **cookie** `pc_token` (renombrada desde `token` el 2026-07-22 porque las
+  cookies de `localhost` no distinguen puerto y otra app local con cookie
+  `token` la sobrescribía, cerrando la sesión) firmado con el secreto
+  hardcodeado `mi_super_secreto`
   (via `jose`), que es **distinto** del `JWT_SECRET` del backend usado por
   `mint-jwt.mjs`/`JwtAuthGuard`. Si falta o es inválida esa cookie, redirige
   a `/login` con 307 **antes de que cargue cualquier JS de la página**
   (confirmable con `curl -I` a la ruta). Para probar rutas protegidas con
-  Playwright hacen falta **dos tokens distintos**: la cookie `token`
+  Playwright hacen falta **dos tokens distintos**: la cookie `pc_token`
   (firmada con `mi_super_secreto`, solo necesita pasar `jwtVerify`, no
   importa el payload) para pasar `proxy.ts`, y el `localStorage.token`
   (minteado con `mint-jwt.mjs`, valen igual que en curl) para que las
@@ -180,6 +183,31 @@ hardcodeado — moverlo requeriría cambiar esa ruta en el script.
   Cambiar la env var en Vercel no alcanza: hay que forzar un redeploy sin
   build cache para que el rewrite la vuelva a leer. URL real de Render:
   `https://b-portalclientes-1.onrender.com`.
+
+- **El menú del portal es 100% dinámico desde BD, no deriva de las rutas del
+  código**: agregar un `page.tsx` nuevo (front) + módulo NestJS nuevo (back)
+  **no lo hace aparecer en el menú de ningún rol**. El árbol de navegación
+  sale de `pc_modulos` (`mod_nombre`, `mod_ruta`, `mod_padre_id`,
+  `mod_posicion`, `mod_estado`) + `pc_rol_modulo` (`rm_rol_id`, `rm_mod_id`,
+  `rm_ver`/`rm_crear`/`rm_editar`/`rm_eliminar`/`rm_aprobar`, `rm_activo`),
+  vía `ModulosService.findByRol` (`src/modulos/modulos.service.ts`) y
+  consumido en `FRONTEND/src/components/layout/Header.tsx`
+  (`resolveModuloRoute`). `findByRol` además filtra: si un módulo no tiene
+  fila en `pc_rol_modulo` para ese rol con al menos un permiso en `true`
+  (`ver`/`crear`/`editar`/`eliminar`/`aprobar`), **no aparece**, aunque
+  `mod_estado = 1`. Por cada página nueva de este tipo hace falta una
+  migración en `migrations/` que inserte el módulo (y su padre si es
+  jerárquico) en `pc_modulos` **y** una fila en `pc_rol_modulo` por cada rol
+  que deba verlo — ver `20260716_actualizar_modulos_pqrs.sql` y
+  `20260721_crear_modulos_consultas.sql` como plantilla (patrón idempotente
+  `IF NOT EXISTS ... ELSE UPDATE`). Además, si la ruta nueva debe quedar
+  detrás del login, hay que sumarla también al `matcher` de
+  `FRONTEND/src/proxy.ts` — son dos mecanismos independientes (menú visible
+  vs. acceso protegido) y falta cualquiera de los dos rompe la página por
+  una razón distinta.
+
+- **Columnas SQL Server `date` (sin hora/zona) exigen aritmética en UTC, no en hora local del proceso.** `mssql`/tedious serializa/deserializa `date` como medianoche UTC. `common/utils/business-days.util.ts` usaba `getDate()`/`setDate()`/`getDay()` (hora local) — inofensivo mientras el proceso Node corra en UTC (típico en Render/Vercel), pero al ejecutar el mismo cálculo desde una máquina en otra zona horaria (ej. un dev en `America/Bogota`, UTC-5) para reconstruir/recalcular fechas ya guardadas, la lectura de una columna `date` como `2026-07-20T00:00:00.000Z` se interpreta como `2026-07-19` 19:00 local — un día completo de corrimiento. Se descubrió porque un script de recálculo retroactivo escribió fechas mal la primera vez (detectado comparando el resultado contra un cálculo manual). Fix: todas las funciones de `business-days.util.ts` ahora usan `getUTC*`/`setUTC*` exclusivamente. Cualquier script nuevo que lea/escriba una columna `date` y haga aritmética de fechas debe hacer lo mismo (o forzar `TZ=UTC` en el proceso).
+- **Días no hábiles de la semana ahora son parametrizables** (antes hardcodeado a sábado/domingo en `isBusinessDay`) vía tabla `param_dias_no_habiles_semana` (`dsh_dia_semana` 0=domingo..6=sábado, `dsh_co_id` NULL=todas las compañías, mismo criterio que `Festivos.fes_co_id`) — sin pantalla de administración propia, igual que `Festivos` (se edita directo en BD). Callers: `solicitudes.service.ts` (creación) y `historial-workflow.service.ts` (transición real), ambos con fallback a sábado/domingo si la tabla no existe o está vacía.
 
 ## Patrones de verificación que ya funcionan en este proyecto
 

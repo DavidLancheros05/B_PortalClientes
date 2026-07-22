@@ -10,8 +10,12 @@ export class DiaRespuesta {
   @PrimaryGeneratedColumn()
   pdr_id: number;
 
-  @Column({ type: 'varchar', length: 20 })
-  pdr_area: 'COMERCIAL' | 'FINANCIERA';
+  // Área real: nombre de una etapa del workflow (wet_nombre), ej.
+  // "Ejecutivo Negocios", "Auxiliar Servicio Cliente" — NO valores fijos
+  // 'COMERCIAL'/'FINANCIERA' (así estaba antes; no correspondía a ningún
+  // dato real y bloqueaba crear SLA para etapas reales vía el DTO).
+  @Column({ type: 'varchar', length: 50 })
+  pdr_area: string;
 
   @Column({ type: 'int' })
   pdr_dias: number;

@@ -23,6 +23,13 @@ export class CondicionesFinancierasController {
     return this.service.findAll();
   }
 
+  // Debe declararse antes de @Get(':id') para que "formas-pago" no
+  // caiga en el ParseIntPipe de esa ruta
+  @Get('formas-pago')
+  getFormasPago() {
+    return this.service.getFormasPago();
+  }
+
   @Get('solicitud/:solicitudId')
   findBySolicitud(@Param('solicitudId', ParseIntPipe) solicitudId: number) {
     return this.service.findBySolicitud(solicitudId);

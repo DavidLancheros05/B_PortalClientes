@@ -42,4 +42,7 @@ export class SolicitudWorkflowHistorialEntity {
 
   @CreateDateColumn({ name: 'swh_fecha' })
   swh_fecha: Date;
+
+  @Column({ name: 'swh_fecha_estimada', type: 'datetime', nullable: true })
+  swh_fecha_estimada: Date | null;
 }

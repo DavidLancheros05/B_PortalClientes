@@ -5,10 +5,15 @@ import {
   Put,
   Body,
   Param,
+  ParseIntPipe,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
   Request,
   Logger,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PQRSService } from './pqrs.service';
 import { CreatePQRSDto, UpdatePQRSDto, CreateComentarioDto } from './dto';
@@ -87,6 +92,20 @@ export class PQRSController {
   @Get(':id/historial')
   async getHistorial(@Param('id') id: number) {
     return this.pqrsService.getHistorial(id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/adjuntos')
+  @UseInterceptors(FileInterceptor('archivo'))
+  async subirAdjunto(
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() file: Express.Multer.File,
+    @Request() req,
+  ) {
+    if (!file) {
+      throw new BadRequestException('No se proporcionó ningún archivo');
+    }
+    return this.pqrsService.subirAdjunto(id, file, req.user);
   }
 
   @UseGuards(JwtAuthGuard)

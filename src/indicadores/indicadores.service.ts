@@ -109,48 +109,65 @@ export class IndicadoresService {
         label: 'Ejecutivo de Negocios',
         col_real: 'sol_fecha_real_ejecutivo',
         col_est: 'sol_fecha_estimada_ejecutivo',
+        wet_codigo: 'EJN',
       },
       {
         area: 'AUXILIAR_SC',
         label: 'Auxiliar Serv. Cliente',
         col_real: 'sol_fecha_real_auxiliar_servicio_cliente',
         col_est: 'sol_fecha_estimada_auxiliar_servicio_cliente',
+        wet_codigo: 'ASC',
       },
       {
         area: 'OFICIAL_CUMPLIMIENTO',
         label: 'Oficial de Cumplimiento',
         col_real: 'sol_fecha_real_oficial_cumplimiento',
         col_est: 'sol_fecha_estimada_oficial_cumplimiento',
+        wet_codigo: 'OFC',
       },
       {
         area: 'COMITE_1',
         label: 'Comité de Crédito 1',
         col_real: 'sol_fecha_real_comite_credito_1',
         col_est: 'sol_fecha_estimada_comite_credito_1',
+        wet_codigo: 'CC1',
       },
       {
         area: 'COMITE_2',
         label: 'Comité de Crédito 2',
         col_real: 'sol_fecha_real_comite_credito_2',
         col_est: 'sol_fecha_estimada_comite_credito_2',
+        wet_codigo: 'CC2',
       },
     ];
 
     const results: AreaKPI[] = [];
 
     for (const a of areas) {
+      // fecha_estimada "vigente": la que quedó registrada en el historial en
+      // el momento real en que la solicitud entró a esta etapa. Si esa fila
+      // de historial es anterior a que existiera esta columna (o no hay
+      // días de SLA configurados), cae de vuelta a la columna fija de
+      // `solicitudes` (estimación inicial calculada al crear la solicitud).
       const sql = `
         SELECT
           COUNT(*) AS total,
-          SUM(CASE WHEN ${a.col_real} <= ${a.col_est} THEN 1 ELSE 0 END) AS a_tiempo,
-          SUM(CASE WHEN ${a.col_real} > ${a.col_est} THEN 1 ELSE 0 END) AS vencidas,
-          AVG(CAST(DATEDIFF(day, sol_fecha_envio, ${a.col_real}) AS FLOAT)) AS dias_promedio_real,
-          AVG(CAST(DATEDIFF(day, sol_fecha_envio, ${a.col_est}) AS FLOAT)) AS dias_promedio_estimado
-        FROM solicitudes
-        WHERE ${a.col_real} IS NOT NULL
-          AND (@0 IS NULL OR sol_fecha_envio >= @0)
-          AND (@1 IS NULL OR sol_fecha_envio <= @1)
-          AND (@2 IS NULL OR sol_co_id = @2)
+          SUM(CASE WHEN s.${a.col_real} <= COALESCE(fe.swh_fecha_estimada, s.${a.col_est}) THEN 1 ELSE 0 END) AS a_tiempo,
+          SUM(CASE WHEN s.${a.col_real} > COALESCE(fe.swh_fecha_estimada, s.${a.col_est}) THEN 1 ELSE 0 END) AS vencidas,
+          AVG(CAST(DATEDIFF(day, s.sol_fecha_envio, s.${a.col_real}) AS FLOAT)) AS dias_promedio_real,
+          AVG(CAST(DATEDIFF(day, s.sol_fecha_envio, COALESCE(fe.swh_fecha_estimada, s.${a.col_est})) AS FLOAT)) AS dias_promedio_estimado
+        FROM solicitudes s
+        OUTER APPLY (
+          SELECT TOP 1 swh.swh_fecha_estimada
+          FROM solicitud_workflow_historial swh
+          WHERE swh.swh_sol_id = s.sol_id
+            AND swh.swh_etapa_id = (SELECT wet_id FROM workflow_etapas WHERE wet_codigo = '${a.wet_codigo}')
+          ORDER BY swh.swh_fecha DESC
+        ) fe
+        WHERE s.${a.col_real} IS NOT NULL
+          AND (@0 IS NULL OR s.sol_fecha_envio >= @0)
+          AND (@1 IS NULL OR s.sol_fecha_envio <= @1)
+          AND (@2 IS NULL OR s.sol_co_id = @2)
       `;
       const rows = await this.dataSource.query(sql, [
         fechaDesde,
@@ -200,23 +217,23 @@ export class IndicadoresService {
         ISNULL(se.ses_codigo, '') AS estado,
 
         -- EJECUTIVO
-        CONVERT(varchar(10), s.sol_fecha_estimada_ejecutivo, 23) AS est_ejecutivo,
+        CONVERT(varchar(10), COALESCE(fe_ejn.swh_fecha_estimada, s.sol_fecha_estimada_ejecutivo), 23) AS est_ejecutivo,
         CONVERT(varchar(10), s.sol_fecha_real_ejecutivo, 23) AS real_ejecutivo,
 
         -- AUXILIAR SC
-        CONVERT(varchar(10), s.sol_fecha_estimada_auxiliar_servicio_cliente, 23) AS est_auxiliar_sc,
+        CONVERT(varchar(10), COALESCE(fe_asc.swh_fecha_estimada, s.sol_fecha_estimada_auxiliar_servicio_cliente), 23) AS est_auxiliar_sc,
         CONVERT(varchar(10), s.sol_fecha_real_auxiliar_servicio_cliente, 23) AS real_auxiliar_sc,
 
         -- OFICIAL CUMPLIMIENTO
-        CONVERT(varchar(10), s.sol_fecha_estimada_oficial_cumplimiento, 23) AS est_oficial,
+        CONVERT(varchar(10), COALESCE(fe_ofc.swh_fecha_estimada, s.sol_fecha_estimada_oficial_cumplimiento), 23) AS est_oficial,
         CONVERT(varchar(10), s.sol_fecha_real_oficial_cumplimiento, 23) AS real_oficial,
 
         -- COMITE 1
-        CONVERT(varchar(10), s.sol_fecha_estimada_comite_credito_1, 23) AS est_comite1,
+        CONVERT(varchar(10), COALESCE(fe_cc1.swh_fecha_estimada, s.sol_fecha_estimada_comite_credito_1), 23) AS est_comite1,
         CONVERT(varchar(10), s.sol_fecha_real_comite_credito_1, 23) AS real_comite1,
 
         -- COMITE 2
-        CONVERT(varchar(10), s.sol_fecha_estimada_comite_credito_2, 23) AS est_comite2,
+        CONVERT(varchar(10), COALESCE(fe_cc2.swh_fecha_estimada, s.sol_fecha_estimada_comite_credito_2), 23) AS est_comite2,
         CONVERT(varchar(10), s.sol_fecha_real_comite_credito_2, 23) AS real_comite2,
 
         -- SLAs configurados
@@ -225,6 +242,31 @@ export class IndicadoresService {
       FROM solicitudes s
       LEFT JOIN Centro_operacion co ON s.sol_co_id = co.cop_id
       LEFT JOIN solicitud_estados se ON s.sol_estado_id = se.ses_id
+      OUTER APPLY (
+        SELECT TOP 1 swh.swh_fecha_estimada FROM solicitud_workflow_historial swh
+        WHERE swh.swh_sol_id = s.sol_id AND swh.swh_etapa_id = (SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'EJN')
+        ORDER BY swh.swh_fecha DESC
+      ) fe_ejn
+      OUTER APPLY (
+        SELECT TOP 1 swh.swh_fecha_estimada FROM solicitud_workflow_historial swh
+        WHERE swh.swh_sol_id = s.sol_id AND swh.swh_etapa_id = (SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'ASC')
+        ORDER BY swh.swh_fecha DESC
+      ) fe_asc
+      OUTER APPLY (
+        SELECT TOP 1 swh.swh_fecha_estimada FROM solicitud_workflow_historial swh
+        WHERE swh.swh_sol_id = s.sol_id AND swh.swh_etapa_id = (SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'OFC')
+        ORDER BY swh.swh_fecha DESC
+      ) fe_ofc
+      OUTER APPLY (
+        SELECT TOP 1 swh.swh_fecha_estimada FROM solicitud_workflow_historial swh
+        WHERE swh.swh_sol_id = s.sol_id AND swh.swh_etapa_id = (SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'CC1')
+        ORDER BY swh.swh_fecha DESC
+      ) fe_cc1
+      OUTER APPLY (
+        SELECT TOP 1 swh.swh_fecha_estimada FROM solicitud_workflow_historial swh
+        WHERE swh.swh_sol_id = s.sol_id AND swh.swh_etapa_id = (SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'CC2')
+        ORDER BY swh.swh_fecha DESC
+      ) fe_cc2
       WHERE (@0 IS NULL OR s.sol_id = @0)
         AND (@1 IS NULL OR s.sol_numero_solicitud = @1)
     `;
@@ -329,26 +371,34 @@ export class IndicadoresService {
     fecha_hasta?: string;
     co_id?: string;
   }): Promise<SolicitudDetalle[]> {
-    const AREAS: Record<string, { col_real: string; col_est: string }> = {
+    const AREAS: Record<
+      string,
+      { col_real: string; col_est: string; wet_codigo: string }
+    > = {
       EJECUTIVO: {
         col_real: 'sol_fecha_real_ejecutivo',
         col_est: 'sol_fecha_estimada_ejecutivo',
+        wet_codigo: 'EJN',
       },
       AUXILIAR_SC: {
         col_real: 'sol_fecha_real_auxiliar_servicio_cliente',
         col_est: 'sol_fecha_estimada_auxiliar_servicio_cliente',
+        wet_codigo: 'ASC',
       },
       OFICIAL_CUMPLIMIENTO: {
         col_real: 'sol_fecha_real_oficial_cumplimiento',
         col_est: 'sol_fecha_estimada_oficial_cumplimiento',
+        wet_codigo: 'OFC',
       },
       COMITE_1: {
         col_real: 'sol_fecha_real_comite_credito_1',
         col_est: 'sol_fecha_estimada_comite_credito_1',
+        wet_codigo: 'CC1',
       },
       COMITE_2: {
         col_real: 'sol_fecha_real_comite_credito_2',
         col_est: 'sol_fecha_estimada_comite_credito_2',
+        wet_codigo: 'CC2',
       },
     };
 
@@ -365,12 +415,19 @@ export class IndicadoresService {
         s.sol_numero_solicitud,
         ISNULL(s.sol_razon_social, '') AS razon_social,
         CONVERT(varchar(10), s.sol_fecha_envio, 23) AS fecha_envio,
-        CONVERT(varchar(10), s.${cols.col_est}, 23) AS fecha_estimada,
+        CONVERT(varchar(10), COALESCE(fe.swh_fecha_estimada, s.${cols.col_est}), 23) AS fecha_estimada,
         CONVERT(varchar(10), s.${cols.col_real}, 23) AS fecha_real,
         DATEDIFF(day, s.sol_fecha_envio, s.${cols.col_real}) AS dias_reales,
-        DATEDIFF(day, s.sol_fecha_envio, s.${cols.col_est}) AS dias_estimados,
-        DATEDIFF(day, s.${cols.col_est}, s.${cols.col_real}) AS diferencia
+        DATEDIFF(day, s.sol_fecha_envio, COALESCE(fe.swh_fecha_estimada, s.${cols.col_est})) AS dias_estimados,
+        DATEDIFF(day, COALESCE(fe.swh_fecha_estimada, s.${cols.col_est}), s.${cols.col_real}) AS diferencia
       FROM solicitudes s
+      OUTER APPLY (
+        SELECT TOP 1 swh.swh_fecha_estimada
+        FROM solicitud_workflow_historial swh
+        WHERE swh.swh_sol_id = s.sol_id
+          AND swh.swh_etapa_id = (SELECT wet_id FROM workflow_etapas WHERE wet_codigo = '${cols.wet_codigo}')
+        ORDER BY swh.swh_fecha DESC
+      ) fe
       WHERE s.${cols.col_real} IS NOT NULL
         AND (@0 IS NULL OR s.sol_fecha_envio >= @0)
         AND (@1 IS NULL OR s.sol_fecha_envio <= @1)

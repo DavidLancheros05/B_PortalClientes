@@ -9,6 +9,8 @@ import {
   UseGuards,
   ParseIntPipe,
   Query,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { FormularioPreguntasService } from './formulario-preguntas.service';
@@ -33,6 +35,12 @@ export class FormularioPreguntasController {
   @Get('activas')
   async getPreguntasActivas() {
     return this.service.findAll(undefined, undefined, true);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('formulario-activo')
+  async getPreguntasFormularioActivo() {
+    return this.service.findPreguntasFormularioActivo();
   }
 
   @UseGuards(JwtAuthGuard)
@@ -65,20 +73,34 @@ export class FormularioPreguntasController {
   }
 
   @Put(':id/opciones/:opcionId')
-  updateOpcion(
+  async updateOpcion(
     @Param('id', ParseIntPipe) id: number,
     @Param('opcionId', ParseIntPipe) opcionId: number,
     @Body() dto: UpdateFormularioPreguntaOpcionDto,
   ) {
-    return this.opcionesService.update(opcionId, dto);
+    try {
+      return await this.opcionesService.update(opcionId, dto);
+    } catch (error) {
+      throw new HttpException(
+        error instanceof Error ? error.message : 'Error al editar opción',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
   }
 
   @Delete(':id/opciones/:opcionId')
-  deleteOpcion(
+  async deleteOpcion(
     @Param('id', ParseIntPipe) id: number,
     @Param('opcionId', ParseIntPipe) opcionId: number,
   ) {
-    return this.opcionesService.remove(opcionId);
+    try {
+      return await this.opcionesService.remove(opcionId);
+    } catch (error) {
+      throw new HttpException(
+        error instanceof Error ? error.message : 'Error al eliminar opción',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
   }
 
   @UseGuards(JwtAuthGuard)
@@ -88,12 +110,29 @@ export class FormularioPreguntasController {
   }
 
   @Put(':id')
-  update(@Param('id') id: number, @Body() dto: UpdateFormularioPreguntaDto) {
-    return this.service.update(+id, dto);
+  async update(
+    @Param('id') id: number,
+    @Body() dto: UpdateFormularioPreguntaDto,
+  ) {
+    try {
+      return await this.service.update(+id, dto);
+    } catch (error) {
+      throw new HttpException(
+        error instanceof Error ? error.message : 'Error al editar pregunta',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
   }
 
   @Delete(':id')
-  remove(@Param('id') id: number) {
-    return this.service.remove(+id);
+  async remove(@Param('id') id: number) {
+    try {
+      return await this.service.remove(+id);
+    } catch (error) {
+      throw new HttpException(
+        error instanceof Error ? error.message : 'Error al eliminar pregunta',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
   }
 }

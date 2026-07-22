@@ -1,8 +1,9 @@
-import { IsIn, IsInt, Min } from 'class-validator';
+import { IsInt, IsNotEmpty, IsString, Min } from 'class-validator';
 
 export class CreateDiaRespuestaDto {
-  @IsIn(['COMERCIAL', 'FINANCIERA'])
-  pdr_area: 'COMERCIAL' | 'FINANCIERA';
+  @IsString()
+  @IsNotEmpty()
+  pdr_area: string;
 
   @IsInt()
   @Min(1)

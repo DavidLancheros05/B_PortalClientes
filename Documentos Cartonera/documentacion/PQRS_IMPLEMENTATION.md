@@ -77,6 +77,18 @@ Sistema de comentarios tipo chat.
 - Scroll automático al último comentario
 - Estados de carga
 
+### 6. **PQRSAdjuntos** (`src/components/pqrs/PQRSAdjuntos.tsx`)
+
+Listado y subida de archivos adjuntos de la PQRS (agregado 2026-07-21).
+
+**Features:**
+
+- Listado de adjuntos existentes: nombre, tamaño formateado (B/KB/MB) y fecha
+- Botón "Descargar" por archivo (enlace directo a la URL de Cloudinary)
+- Selector de archivo para subir uno nuevo, con validación de tamaño máximo (10 MB) en el propio navegador antes de subir
+- Deshabilitado (con mensaje) si la PQRS tiene estado CERRADA — igual que el formulario de respuesta de comentarios
+- Estado de carga (spinner) mientras sube
+
 ---
 
 ## Páginas Actualizadas/Creadas
@@ -170,6 +182,12 @@ Sección expandible con texto completo de la PQRS
 - Formulario de respuesta (solo si estado = PENDIENTE_CLIENTE)
 - Contador de caracteres
 - Botón "Enviar respuesta" con animación
+
+**Tab 3: Adjuntos** (agregado 2026-07-21)
+
+- Listado de archivos ya subidos, con descarga directa
+- Formulario para subir un nuevo archivo (deshabilitado si estado = CERRADA)
+- Contador de adjuntos en el tab, igual que el de comentarios
 
 #### Diseño
 
@@ -309,6 +327,23 @@ interface Comentario {
 }
 ```
 
+### Adjunto (agregado 2026-07-21)
+
+```typescript
+interface Adjunto {
+  pa_id: number;
+  pa_nombre_original: string;
+  pa_ruta?: string;        // URL directa de Cloudinary
+  pa_mime_type?: string;
+  pa_tamano?: number;       // bytes
+  pa_fecha?: string;
+}
+```
+
+`pqrs.adjuntos` viene incluido directamente en la respuesta de `getById(id)`
+(relación TypeORM `adjuntos` en `PQRSEntity` → tabla `pqrs_adjuntos`), no
+requiere un endpoint de listado aparte.
+
 ---
 
 ## APIs Utilizadas
@@ -316,12 +351,48 @@ interface Comentario {
 Del servicio `pqrsService`:
 
 - `getListado(params?)` - Lista de PQRS del usuario
-- `getById(id)` - Detalle completo de PQRS
+- `getById(id)` - Detalle completo de PQRS (incluye `adjuntos`)
 - `getComentarios(pqrsId)` - Comentarios de una PQRS
 - `getHistorial(pqrsId)` - Timeline de eventos
 - `addComentario(pqrsId, comentario, esInterno)` - Agregar comentario
+- `subirAdjunto(pqrsId, file)` - Sube un archivo adjunto (agregado 2026-07-21)
 - `getTipos()` - Tipos de PQRS disponibles
 - `getEstados()` - Estados disponibles
+
+---
+
+## Backend: subida de adjuntos (agregado 2026-07-21)
+
+Antes de esta fecha, `pqrs_adjuntos` y la relación `adjuntos` en `getById`
+ya existían en el modelo de datos, pero no había ningún endpoint para
+crear un adjunto — la tabla estaba vacía y sin forma de llenarla desde la
+app. Lo que se agregó:
+
+- **`POST /pqrs/:id/adjuntos`** (`pqrs.controller.ts::subirAdjunto`,
+  protegido por `JwtAuthGuard`) — recibe el archivo con
+  `FileInterceptor('archivo')`, igual patrón que
+  `solicitudes.controller.ts::subirSoporteAnalisis`.
+- **`PQRSService.subirAdjunto()`** — sube el archivo a Cloudinary vía
+  `STORAGE_SERVICE` (`IStorageService`, ver
+  `almacenamiento-de-archivos.md`) a la carpeta `pqrs/{pqrs_numero}/`,
+  guarda la fila en `pqrs_adjuntos` (`pa_ruta` = URL directa devuelta por
+  Cloudinary, igual que `Solicitud_soporte_analisis.ssa_ruta_almacenamiento`
+  — sin guardar `public_id`/`resource_type` por separado, la descarga usa
+  la URL tal cual) y registra un evento `ADJUNTO` en `pqrs_historial`.
+- Rechaza con 400 si la PQRS tiene estado `CERRADA`, mismo criterio que
+  `addComentario`.
+- `PqrsModule` ahora importa `StorageModule` para poder inyectar
+  `STORAGE_SERVICE`.
+
+**Nota de diseño:** se guarda la URL completa de Cloudinary en `pa_ruta` en
+vez de un `public_id` + endpoint de descarga con `buildDownloadUrl` (como sí
+hace `Solicitud_archivo` en el flujo de documentos de solicitudes) porque es
+el mismo atajo que ya usa `Solicitud_soporte_analisis` para este mismo tipo
+de archivo "interno" — más simple, un solo `<a href>` en el frontend, sin
+endpoint de descarga propio. Si más adelante se necesita URL firmada o
+forzar `Content-Disposition: attachment`, hay que agregar las columnas de
+`public_id`/`resource_type` a `pqrs_adjuntos` y un endpoint de descarga,
+igual que el de solicitudes.
 
 ---
 
@@ -366,7 +437,7 @@ Se usa `date-fns` con locale es-CO. Está configurado automáticamente en:
 
 ## Próximas Mejoras (Opcional)
 
-- [ ] Soporte para adjuntos (descargar/subir)
+- [x] Soporte para adjuntos (descargar/subir) — implementado 2026-07-21
 - [ ] Impresión de PQRS
 - [ ] Exportar a PDF
 - [ ] Notificaciones en tiempo real
@@ -379,5 +450,6 @@ Se usa `date-fns` con locale es-CO. Está configurado automáticamente en:
 ---
 
 **Creado**: 2026-05-10
-**Versión**: 1.0
+**Última actualización**: 2026-07-21 (soporte de adjuntos)
+**Versión**: 1.1
 **Status**: ✅ Implementación completa

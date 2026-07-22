@@ -6,12 +6,14 @@ import {
   IStorageService,
   STORAGE_SERVICE,
 } from '../common/storage/storage.interface';
+import { PermissionsService } from '../permissions/permissions.service';
 
 @Injectable()
 export class SolicitudesDocumentosService {
   constructor(
     private readonly dataSource: DataSource,
     @Inject(STORAGE_SERVICE) private readonly storageService: IStorageService,
+    private readonly permissionsService: PermissionsService,
   ) {}
 
   async obtenerSolicitud(id: number) {
@@ -98,7 +100,7 @@ export class SolicitudesDocumentosService {
              td.tdo_regla_vigencia, td.tdo_anios_atras_permitidos,
              td.tdo_tiene_plantilla, td.tdo_plantilla_contenido, td.tdo_tipo_plantilla,
              td.tdo_formato_codigo, td.tdo_formato_codigo_secundario,
-             td.tdo_revision, td.tdo_paginas_total
+             td.tdo_revision, td.tdo_paginas_total, td.tdo_permite_vencimiento
       FROM Solicitud_archivo sa
       LEFT JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
       LEFT JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tipo_documento_id
@@ -115,7 +117,7 @@ export class SolicitudesDocumentosService {
              CAST(NULL AS VARCHAR(20)), CAST(NULL AS INT),
              CAST(0 AS BIT), CAST(NULL AS NVARCHAR(MAX)), CAST(NULL AS VARCHAR(20)),
              CAST(NULL AS NVARCHAR(30)), CAST(NULL AS NVARCHAR(30)),
-             CAST(NULL AS NVARCHAR(10)), CAST(NULL AS INT)
+             CAST(NULL AS NVARCHAR(10)), CAST(NULL AS INT), CAST(0 AS BIT)
       FROM Solicitud_carta_vinculacion scv
       WHERE scv.scv_sol_id = @0
 
@@ -332,7 +334,25 @@ export class SolicitudesDocumentosService {
     return { downloadUrl, nombreOriginal: sa_nombre_original };
   }
 
-  async deleteSolicitud(solicitudId: number) {
+  /**
+   * Permisos de borrado:
+   * - Cualquier rol con "eliminar" habilitado en pc_rol_modulo para el
+   *   módulo Solicitudes puede eliminar en cualquier estado (hoy solo
+   *   ADMIN, gestionable desde /seguridad/roles — ver migración
+   *   20260723_resetear_eliminar_solicitudes_pc_rol_modulo.sql).
+   * - CLIENTE, independientemente de ese permiso, solo puede eliminar sus
+   *   propias solicitudes y solo en estado 1 (BORRADOR) — es el "cancelar
+   *   antes de enviar" de siempre, una regla de dueño+estado, no de rol.
+   */
+  async deleteSolicitud(
+    solicitudId: number,
+    user: {
+      rol?: string;
+      usr_id?: number;
+      cliente_id?: number;
+      cli_id?: number;
+    },
+  ) {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -340,35 +360,58 @@ export class SolicitudesDocumentosService {
     try {
       // Validar que la solicitud exista
       const solicitudResult = await queryRunner.query(
-        `SELECT sa_sol_id, numero_solicitud, estado_id FROM solicitudes WHERE sa_sol_id = @0`,
+        `SELECT sol_id, sol_numero_solicitud, sol_estado_id, sol_cliente_id FROM solicitudes WHERE sol_id = @0`,
         [solicitudId],
       );
 
       if (!solicitudResult.length) {
-        await queryRunner.release();
         const error = new Error('No encontrado');
         (error as any).statusCode = 404;
         throw error;
       }
 
       const solicitud = solicitudResult[0];
-      if (Number(solicitud.estado_id) !== 5) {
-        await queryRunner.release();
-        const error = new Error(
-          'Solo se pueden eliminar solicitudes en estado borrador',
+
+      if (user?.rol === 'CLIENTE') {
+        // Regla de dueño+estado, no de rol — a propósito NO pasa por
+        // pc_rol_modulo aunque alguien active "eliminar" para CLIENTE ahí:
+        // un cliente nunca debe poder borrar una solicitud ajena o que ya
+        // salió de sus manos, sin importar qué diga ese permiso genérico.
+        const clienteId = user?.cliente_id ?? user?.cli_id;
+        if (Number(solicitud.sol_cliente_id) !== Number(clienteId)) {
+          const error = new Error('No tienes acceso a esta solicitud');
+          (error as any).statusCode = 403;
+          throw error;
+        }
+
+        if (Number(solicitud.sol_estado_id) !== 1) {
+          const error = new Error(
+            'Solo se pueden eliminar solicitudes en estado borrador',
+          );
+          (error as any).statusCode = 409;
+          throw error;
+        }
+      } else {
+        const puedeEliminar = await this.permissionsService.tienePermiso(
+          user,
+          '/solicitudes',
+          'eliminar',
         );
-        (error as any).statusCode = 409;
-        throw error;
+        if (!puedeEliminar) {
+          const error = new Error(
+            'No tienes permiso para eliminar solicitudes',
+          );
+          (error as any).statusCode = 403;
+          throw error;
+        }
       }
 
-      // Eliminar respuestas de formulario
-      await queryRunner.query(
-        `DELETE FROM Formulario_respuesta WHERE fr_solicitud_id = @0`,
-        [solicitudId],
-      );
-
-      // Eliminar la solicitud
-      await queryRunner.query(`DELETE FROM solicitudes WHERE sa_sol_id = @0`, [
+      // Formulario_respuesta, Solicitud_archivo, Solicitud_carta_vinculacion,
+      // Solicitud_soporte_analisis, solicitud_workflow_historial y
+      // Solicitudes_estados_hist tienen FK ON DELETE CASCADE hacia
+      // solicitudes(sol_id) (migración 20260722), así que este único DELETE
+      // arrastra todo — ya no hace falta borrarlas a mano una por una.
+      await queryRunner.query(`DELETE FROM solicitudes WHERE sol_id = @0`, [
         solicitudId,
       ]);
 
@@ -376,8 +419,8 @@ export class SolicitudesDocumentosService {
 
       return {
         ok: true,
-        sa_sol_id: solicitudId,
-        numero_solicitud: solicitud.numero_solicitud,
+        sol_id: solicitudId,
+        numero_solicitud: solicitud.sol_numero_solicitud,
         message: 'Solicitud eliminada correctamente',
       };
     } catch (error) {

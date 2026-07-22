@@ -17,6 +17,7 @@ import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 import { WorkflowModule } from '../workflow/workflow.module';
 import { WorkflowService } from './workflow.service';
 import { StorageModule } from '../common/storage/storage.module';
+import { PermissionsModule } from '../permissions/permissions.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { StorageModule } from '../common/storage/storage.module';
     NotificacionesModule,
     WorkflowModule,
     StorageModule,
+    PermissionsModule,
   ],
   controllers: [SolicitudesController], // <-- esto es clave
   providers: [

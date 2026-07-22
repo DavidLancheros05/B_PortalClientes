@@ -9,6 +9,10 @@ export interface PreguntaRenderizable {
   seccion_id: number;
   fp_orden: number;
   fp_requerida: boolean;
+  // Código lógico estable de la pregunta (sobrevive renames y versiones
+  // nuevas del formulario) — ancla de los placeholders {{pregunta|cod:...}}
+  // de las plantillas de documentos.
+  fp_codigo?: string | null;
 
   // Visibilidad
   es_visible: boolean;
@@ -31,6 +35,14 @@ export interface PreguntaRenderizable {
   // Imagen cargada (para fp_tipo === 'IMAGEN')
   imagen_ruta?: string | null;
   imagen_tipo_mime?: string | null;
+
+  // Documento cargado (para fp_tipo === 'ARCHIVO' o 'DOCUMENTOS_TABLA') —
+  // el archivo real vive en Solicitud_archivo, no en Formulario_respuesta.
+  // null cuando no se ha subido nada todavía.
+  documento_cargado?: {
+    nombre_archivo: string;
+    fecha_emision: string | null;
+  } | null;
 
   // Número de líneas del espacio en blanco (para fp_tipo === 'ESPACIO_FIRMA')
   espacio_lineas?: number;
@@ -56,7 +68,7 @@ export class FormularioRenderizableService {
     // 1. Obtener información de la solicitud
     const solicitud = await this.dataSource.query(
       `SELECT
-        sol_id, sol_numero_solicitud, cli_razon_social, cop_nombre
+        sol_id, sol_numero_solicitud, cli_razon_social, cop_nombre, sol_fecha_envio
       FROM solicitudes s
       LEFT JOIN Clientes c ON c.cli_id = s.sol_cliente_id
       LEFT JOIN Centro_operacion co ON co.cop_id = s.sol_co_id
@@ -68,7 +80,12 @@ export class FormularioRenderizableService {
       throw new Error('Solicitud no encontrada');
     }
 
-    const { sol_numero_solicitud, cli_razon_social, cop_nombre } = solicitud[0];
+    const {
+      sol_numero_solicitud,
+      cli_razon_social,
+      cop_nombre,
+      sol_fecha_envio,
+    } = solicitud[0];
 
     // 2. Obtener versión del formulario
     const formularioVersion = await this.dataSource.query(
@@ -115,7 +132,8 @@ export class FormularioRenderizableService {
         fp.fp_catalogo_columna,
         fp.fp_catalogo_pk_column,
         fp.fp_tabla_columnas,
-        fp.fp_maximo
+        fp.fp_maximo,
+        fp.fp_codigo
       FROM Formulario_pregunta fp
       WHERE fp.formulario_id = @0
         AND fp.fp_estado = 1
@@ -134,6 +152,7 @@ export class FormularioRenderizableService {
         fr.fr_valor_opcion_id,
         fr.fr_valor_archivo_id,
         fp.fp_tipo,
+        fp.fp_subtipo,
         fp.fp_catalogo_tabla,
         fp.fp_catalogo_columna,
         fp.fp_catalogo_pk_column
@@ -154,12 +173,17 @@ export class FormularioRenderizableService {
       [solicitudId],
     );
 
-    // 5.5 Obtener imágenes cargadas (para fp_tipo === 'IMAGEN')
-    const imagenesResult = await this.dataSource.query(
+    // 5.5 Obtener archivos cargados por pregunta — cubre tanto fp_tipo ===
+    // 'IMAGEN' (imagenesMap) como 'ARCHIVO'/'DOCUMENTOS_TABLA'
+    // (archivosDocMap): en ambos casos el archivo real vive en
+    // Solicitud_archivo, nunca en Formulario_respuesta.
+    const archivosResult = await this.dataSource.query(
       `
-      SELECT sa.sa_fp_id, sa.sa_ruta_almacenamiento, sa.sa_tipo_mime
+      SELECT sa.sa_fp_id, sa.sa_ruta_almacenamiento, sa.sa_tipo_mime,
+        sa.sa_nombre_original, sa.sa_fecha_emision
       FROM (
         SELECT sa_fp_id, sa_ruta_almacenamiento, sa_tipo_mime,
+          sa_nombre_original, sa_fecha_emision,
           ROW_NUMBER() OVER (PARTITION BY sa_fp_id ORDER BY sa_created_at DESC) AS rn
         FROM Solicitud_archivo
         WHERE sa_sol_id = @0 AND sa_estado = 'activo'
@@ -172,10 +196,20 @@ export class FormularioRenderizableService {
       number,
       { sa_ruta_almacenamiento: string; sa_tipo_mime: string }
     >();
-    for (const img of imagenesResult) {
-      imagenesMap.set(img.sa_fp_id, {
-        sa_ruta_almacenamiento: img.sa_ruta_almacenamiento,
-        sa_tipo_mime: img.sa_tipo_mime,
+    const archivosDocMap = new Map<
+      number,
+      { nombre_archivo: string; fecha_emision: string | null }
+    >();
+    for (const arch of archivosResult) {
+      imagenesMap.set(arch.sa_fp_id, {
+        sa_ruta_almacenamiento: arch.sa_ruta_almacenamiento,
+        sa_tipo_mime: arch.sa_tipo_mime,
+      });
+      archivosDocMap.set(arch.sa_fp_id, {
+        nombre_archivo: arch.sa_nombre_original,
+        fecha_emision: arch.sa_fecha_emision
+          ? new Date(arch.sa_fecha_emision).toLocaleDateString('es-CO')
+          : null,
       });
     }
 
@@ -209,41 +243,81 @@ export class FormularioRenderizableService {
       visibilidadMap.set(pregunta.fp_id, esVisible);
     }
 
+    // 7.5 Preguntas "de sistema": no se diligencian, se calculan al generar
+    // el PDF. Identificadas por fp_codigo (mismo mecanismo que TIPO_SOLICITUD
+    // en el frontend) en vez de por fp_id, para que sobrevivan a nuevas
+    // versiones del formulario.
+    const fechaEnvioTexto = sol_fecha_envio
+      ? new Date(sol_fecha_envio).toLocaleDateString('es-CO')
+      : null;
+
     // 8. Construir preguntas renderizables
     const preguntasRenderizables: PreguntaRenderizable[] = preguntas.map(
-      (p: any) => ({
-        fp_id: p.fp_id,
-        fp_tipo: p.fp_tipo,
-        fp_descripcion: p.fp_descripcion,
-        fp_descripcion_adicional: p.fp_descripcion_adicional,
-        seccion_id: p.seccion_id,
-        fp_orden: p.fp_orden,
-        fp_requerida: p.fp_requerida,
-        es_visible: visibilidadMap.get(p.fp_id) ?? true,
-        fp_pregunta_padre_id: p.fp_pregunta_padre_id,
-        fp_valor_padre_disparador: p.fp_valor_padre_disparador,
-        valor_resuelto: respuestasMap.get(p.fp_id) || 'Sin respuesta',
-        tiene_respuesta: respuestasMap.has(p.fp_id),
-        fp_catalogo_tabla: p.fp_catalogo_tabla,
-        fp_catalogo_columna: p.fp_catalogo_columna,
-        fp_catalogo_pk_column: p.fp_catalogo_pk_column,
-        tabla_columnas:
-          p.fp_tipo === 'TABLA'
-            ? this.parseTablaColumnas(p.fp_tabla_columnas)
-            : undefined,
-        tabla_filas:
-          p.fp_tipo === 'TABLA' ? tablaFilasMap.get(p.fp_id) : undefined,
-        imagen_ruta:
-          p.fp_tipo === 'IMAGEN'
-            ? (imagenesMap.get(p.fp_id)?.sa_ruta_almacenamiento ?? null)
-            : undefined,
-        imagen_tipo_mime:
-          p.fp_tipo === 'IMAGEN'
-            ? (imagenesMap.get(p.fp_id)?.sa_tipo_mime ?? null)
-            : undefined,
-        espacio_lineas:
-          p.fp_tipo === 'ESPACIO_FIRMA' ? p.fp_maximo || 5 : undefined,
-      }),
+      (p: any) => {
+        // ARCHIVO/DOCUMENTOS_TABLA: el archivo real vive en Solicitud_archivo,
+        // no en Formulario_respuesta — respuestasMap.get(p.fp_id) para estos
+        // tipos puede traer un fr_valor_opcion_id "placeholder" heredado (una
+        // Formulario_pregunta_opcion cuyo fpo_valor es igual a la propia
+        // fp_descripcion), que hacía que el PDF mostrara la pregunta
+        // repetida en vez de si el documento fue cargado o no.
+        const esTipoDocumento =
+          p.fp_tipo === 'ARCHIVO' || p.fp_tipo === 'DOCUMENTOS_TABLA';
+        const documentoCargado = esTipoDocumento
+          ? (archivosDocMap.get(p.fp_id) ?? null)
+          : null;
+
+        return {
+          fp_id: p.fp_id,
+          fp_tipo: p.fp_tipo,
+          fp_descripcion: p.fp_descripcion,
+          fp_descripcion_adicional: p.fp_descripcion_adicional,
+          fp_codigo: p.fp_codigo,
+          seccion_id: p.seccion_id,
+          fp_orden: p.fp_orden,
+          fp_requerida: p.fp_requerida,
+          es_visible: visibilidadMap.get(p.fp_id) ?? true,
+          fp_pregunta_padre_id: p.fp_pregunta_padre_id,
+          fp_valor_padre_disparador: p.fp_valor_padre_disparador,
+          valor_resuelto:
+            p.fp_codigo === 'FECHA_ENVIO'
+              ? fechaEnvioTexto || 'Sin respuesta'
+              : esTipoDocumento
+                ? documentoCargado
+                  ? `Cargado: ${documentoCargado.nombre_archivo}${
+                      documentoCargado.fecha_emision
+                        ? ` (Emitido: ${documentoCargado.fecha_emision})`
+                        : ''
+                    }`
+                  : 'Sin respuesta'
+                : respuestasMap.get(p.fp_id) || 'Sin respuesta',
+          tiene_respuesta:
+            p.fp_codigo === 'FECHA_ENVIO'
+              ? Boolean(fechaEnvioTexto)
+              : esTipoDocumento
+                ? Boolean(documentoCargado)
+                : respuestasMap.has(p.fp_id),
+          fp_catalogo_tabla: p.fp_catalogo_tabla,
+          fp_catalogo_columna: p.fp_catalogo_columna,
+          fp_catalogo_pk_column: p.fp_catalogo_pk_column,
+          tabla_columnas:
+            p.fp_tipo === 'TABLA'
+              ? this.parseTablaColumnas(p.fp_tabla_columnas)
+              : undefined,
+          tabla_filas:
+            p.fp_tipo === 'TABLA' ? tablaFilasMap.get(p.fp_id) : undefined,
+          imagen_ruta:
+            p.fp_tipo === 'IMAGEN'
+              ? (imagenesMap.get(p.fp_id)?.sa_ruta_almacenamiento ?? null)
+              : undefined,
+          imagen_tipo_mime:
+            p.fp_tipo === 'IMAGEN'
+              ? (imagenesMap.get(p.fp_id)?.sa_tipo_mime ?? null)
+              : undefined,
+          documento_cargado: documentoCargado,
+          espacio_lineas:
+            p.fp_tipo === 'ESPACIO_FIRMA' ? p.fp_maximo || 5 : undefined,
+        };
+      },
     );
 
     return {
@@ -261,9 +335,19 @@ export class FormularioRenderizableService {
     if (!fpTablaColumnas) return [];
     try {
       const parsed = JSON.parse(fpTablaColumnas);
-      return Array.isArray(parsed)
-        ? parsed.filter((c) => typeof c === 'string')
-        : [];
+      if (!Array.isArray(parsed)) return [];
+      // Columnas antiguas: array de strings. Columnas con tipo (CATALOGO,
+      // SI_NO, etc., ver TablaField.tsx en el frontend): array de objetos
+      // { nombre, tipo, ... }.
+      return parsed
+        .map((c) => {
+          if (typeof c === 'string') return c;
+          if (c && typeof c === 'object' && typeof c.nombre === 'string') {
+            return c.nombre;
+          }
+          return null;
+        })
+        .filter((c): c is string => c !== null);
     } catch {
       return [];
     }
@@ -325,6 +409,13 @@ export class FormularioRenderizableService {
       return respuesta.fr_valor_texto;
     }
     if (respuesta.fr_valor_numero !== null) {
+      // Mismo formato que el formulario en vivo para preguntas NUMERO con
+      // fp_subtipo='MONEDA' (ver PreguntaRenderer.tsx en el frontend):
+      // símbolo "$" + separador de miles es-CO. Sin esto, el PDF mostraba
+      // el número crudo sin formato (ej. "4342323" en vez de "$4.342.323").
+      if (respuesta.fp_subtipo === 'MONEDA') {
+        return `$${Number(respuesta.fr_valor_numero).toLocaleString('es-CO')}`;
+      }
       return String(respuesta.fr_valor_numero);
     }
     if (respuesta.fr_valor_fecha) {

@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { CondicionFinanciera } from './condicion-financiera.entity';
 
 @Injectable()
@@ -8,10 +8,17 @@ export class CondicionesFinancierasService {
   constructor(
     @InjectRepository(CondicionFinanciera)
     private readonly repo: Repository<CondicionFinanciera>,
+    private readonly dataSource: DataSource,
   ) {}
 
   findAll(): Promise<CondicionFinanciera[]> {
     return this.repo.find();
+  }
+
+  getFormasPago(): Promise<{ fpg_id: number; fpg_nombre: string }[]> {
+    return this.dataSource.query(
+      'SELECT fpg_id, fpg_nombre FROM Forma_pago ORDER BY fpg_nombre',
+    );
   }
 
   findBySolicitud(solicitudId: number): Promise<CondicionFinanciera[]> {

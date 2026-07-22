@@ -48,3 +48,21 @@ Módulo completo aparte del flujo de solicitudes: creación (`nueva`/`nuevo`), b
 
 ## 9. Integraciones externas
 - Integración "UNO" (`integraciones/uno`) — parece un stub/placeholder aún no implementado (archivos casi vacíos), probablemente una integración contable/ERP planeada
+
+## 10. Consultas SIESA (cliente)
+Módulo "Consultas" (front: `consultas`, hub en `/consultas`), agregado
+2026-07-21 — reportes de solo lectura contra SIESA para el rol CLIENTE,
+todos con el mismo patrón: query real de SIESA documentada y comentada en
+el `.service.ts` + datos quemados de ejemplo mientras no exista conexión
+real a SIESA (ver `plan-migracion-clientes-siesa.md`).
+- Pedidos (`pedidos`, ya existía) — `mis-pedidos`, `faltantes`
+- Remisiones y devoluciones (`remisiones`)
+- Facturas y notas (`facturas`)
+- Existencia a la fecha por bodega (`existencias`)
+- Resumen de saldos de clientes / cartera (`cartera`)
+
+Cada consulta se acota al cliente logueado agregando un filtro por NIT
+(`t200_fact.f200_nit`/`f200_id` o `ter.f200_nit` según la query) que las
+consultas originales de SIESA no siempre traían — ver detalle en cada
+`.service.ts`. Para que el menú las muestre hizo falta además una migración
+en `pc_modulos`/`pc_rol_modulo` — ver `menu-dinamico-pc-modulos.md`.

@@ -358,16 +358,30 @@ export class SolicitudesController {
   @UseGuards(JwtAuthGuard)
   async getMisDocumentos(
     @Req()
-    req: Request & { user: { cliente_id?: number; cli_id?: number } },
+    req: Request & {
+      user: { rol?: string; cliente_id?: number; cli_id?: number };
+    },
+    @Query('solicitudId') solicitudIdParam?: string,
   ) {
     try {
-      const clienteId = req.user?.cliente_id ?? req.user?.cli_id;
-      if (!clienteId) {
-        throw new HttpException('Usuario sin cliente asociado', 400);
-      }
-
+      // Personal interno (rol != CLIENTE) puede pasar solicitudId para
+      // gestionar los documentos de un cliente en su nombre (ej. modo de
+      // solución "Auxiliar Actualiza" — ver corregir-formulario-asc). Un
+      // CLIENTE nunca puede usar este parámetro para ver otra solicitud que
+      // no sea la propia.
+      const esStaff = Boolean(req.user?.rol) && req.user.rol !== 'CLIENTE';
       const solicitud =
-        await this.listadosService.obtenerUltimaSolicitud(clienteId);
+        esStaff && solicitudIdParam
+          ? await this.listadosService.obtenerSolicitudPorId(
+              Number(solicitudIdParam),
+            )
+          : await (async () => {
+              const clienteId = req.user?.cliente_id ?? req.user?.cli_id;
+              if (!clienteId) {
+                throw new HttpException('Usuario sin cliente asociado', 400);
+              }
+              return this.listadosService.obtenerUltimaSolicitud(clienteId);
+            })();
 
       if (!solicitud) {
         return {
@@ -402,15 +416,27 @@ export class SolicitudesController {
             solicitud,
           ),
         ]);
-      const puedeCorregir = [1, 2].includes(Number(solicitud.sol_estado_id));
-
-      // Rechazado por Auxiliar Servicio Cliente: Pendiente(2) + Etapa
-      // ASC(3) + Resultado RECHAZADO(3). Misma condición literal ya usada
-      // en SolicitudesContent.tsx y en solicitudes-workflow.service.ts.
-      const rechazadoPorAuxiliar =
-        Number(solicitud.sol_estado_id) === 2 &&
+      // Rechazado en Auxiliar Servicio Cliente: Etapa ASC(3) + Resultado
+      // RECHAZADO(3), sin importar el estado (2=PENDIENTE si el modo de
+      // solución fue "Cliente Actualiza", 3=REVISIÓN si fue "Auxiliar
+      // Actualiza" — ver modo-solucion-rechazo-asc.md). Misma condición de
+      // etapa+resultado que usa aprobarRechazarSolicitud para llegar acá.
+      const enRechazoASC =
         Number(solicitud.sol_etapa_actual_id) === 3 &&
         Number(solicitud.sol_resultado_etapa_id) === 3;
+
+      const puedeCorregir = esStaff
+        ? enRechazoASC
+        : [1, 2].includes(Number(solicitud.sol_estado_id));
+
+      // Restringe la edición a solo los documentos marcados/vencidos (en
+      // vez de dejar todo editable) — aplica tanto si es el cliente
+      // corrigiendo (modo_solucion='cliente_actualiza', estado=2) como si es
+      // el auxiliar corrigiendo en su nombre (modo_solucion=
+      // 'auxiliar_actualiza', estado=3, solo alcanzable acá vía solicitudId).
+      const rechazadoPorAuxiliar = esStaff
+        ? enRechazoASC
+        : Number(solicitud.sol_estado_id) === 2 && enRechazoASC;
 
       const documentosDiferidos = enEsperaDiferidos ? todosLosDiferidos : [];
 
@@ -457,11 +483,22 @@ export class SolicitudesController {
         await this.formularioRenderizableService.obtenerFormularioRenderizable(
           id,
         );
-      const preguntaRepLegal = (renderizable?.preguntas || []).find(
-        (p: any) =>
-          p.fp_tipo === 'TABLA' &&
-          /representante legal/i.test(p.fp_descripcion || ''),
-      );
+      // Ancla preferida: fp_codigo REP_LEGAL_TABLA (estable ante renames y
+      // versiones nuevas). Fallback para versiones viejas sin código: regex
+      // laxa sobre el nombre (igual que SolicitudFormContent en el front) —
+      // "REPRESENTANTE LEGAL PRINCIPAL...", "Tabla represéntate legal"
+      // (sic), etc.
+      const preguntasRend = renderizable?.preguntas || [];
+      const preguntaRepLegal =
+        preguntasRend.find(
+          (p: any) =>
+            p.fp_tipo === 'TABLA' && p.fp_codigo === 'REP_LEGAL_TABLA',
+        ) ||
+        preguntasRend.find(
+          (p: any) =>
+            p.fp_tipo === 'TABLA' &&
+            /repres.*legal/i.test(p.fp_descripcion || ''),
+        );
       const filaPrincipal = preguntaRepLegal?.tabla_filas?.[0];
       if (filaPrincipal) {
         representanteLegal = {
@@ -1324,9 +1361,21 @@ export class SolicitudesController {
   }
 
   @Delete(':id')
-  async deleteSolicitud(@Param('id', ParseIntPipe) id: number) {
+  @UseGuards(JwtAuthGuard)
+  async deleteSolicitud(
+    @Param('id', ParseIntPipe) id: number,
+    @Req()
+    req: Request & {
+      user: {
+        rol?: string;
+        usr_id?: number;
+        cliente_id?: number;
+        cli_id?: number;
+      };
+    },
+  ) {
     try {
-      return await this.documentosService.deleteSolicitud(id);
+      return await this.documentosService.deleteSolicitud(id, req.user);
     } catch (error: any) {
       const statusCode = error.statusCode || 500;
       throw new HttpException(error.message || 'Error interno', statusCode);

@@ -33,6 +33,12 @@ import { UsuarioRolesModule } from './usuario-roles/usuario-roles.module';
 import { ConsecutivosModule } from './consecutivos/consecutivos.module';
 import { CartaPdfVinculacionModule } from './parametrizacion/carta-pdf-vinculacion/carta-pdf-vinculacion.module';
 import { AmpliacionCupoModule } from './ampliacion-cupo/ampliacion-cupo.module';
+import { PedidosModule } from './pedidos/pedidos.module';
+import { RemisionesModule } from './remisiones/remisiones.module';
+import { FacturasModule } from './facturas/facturas.module';
+import { ExistenciasModule } from './existencias/existencias.module';
+import { CarteraModule } from './cartera/cartera.module';
+import { UnoModule } from './integraciones/uno/uno.module';
 
 @Module({
   imports: [
@@ -87,6 +93,12 @@ import { AmpliacionCupoModule } from './ampliacion-cupo/ampliacion-cupo.module';
     ConsecutivosModule,
     CartaPdfVinculacionModule,
     AmpliacionCupoModule,
+    PedidosModule,
+    RemisionesModule,
+    FacturasModule,
+    ExistenciasModule,
+    CarteraModule,
+    UnoModule,
   ],
 })
 export class AppModule {}

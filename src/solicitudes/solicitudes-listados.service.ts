@@ -284,7 +284,8 @@ export class SolicitudesListadosService {
       s.sol_cliente_id AS [sol_cliente_id],
       s.sol_co_id AS [sol_co_id],
       s.sol_fecha_creacion AS [sol_fecha_creacion],
-      s.sol_fecha_estimada_ejecutivo AS [sol_fecha_estimada_ejecutivo],
+      s.sol_fecha_envio AS [sol_fecha_envio],
+      COALESCE(fe_vigente.swh_fecha_estimada, s.sol_fecha_estimada_ejecutivo) AS [sol_fecha_estimada_ejecutivo],
       s.sol_created_at AS [sol_created_at],
       s.sol_updated_at AS [sol_updated_at],
       s.sol_razon_social AS [sol_razon_social],
@@ -301,6 +302,19 @@ export class SolicitudesListadosService {
     FROM solicitudes s
     LEFT JOIN clientes c ON s.sol_cliente_id = c.${columns.cliId}
     LEFT JOIN Centro_operacion co ON s.sol_co_id = co.cop_id
+    OUTER APPLY (
+      -- Esta bandeja no filtra por etapa actual (puede incluir solicitudes
+      -- que ya avanzaron más allá de Ejecutivo de Negocios), así que se
+      -- ancla siempre a la etapa EJN específicamente, no a
+      -- sol_etapa_actual_id -- si se usara la etapa actual, una solicitud
+      -- que ya está en Auxiliar/Comité mostraría la fecha estimada de esa
+      -- otra etapa bajo la etiqueta "ejecutivo".
+      SELECT TOP 1 swh.swh_fecha_estimada
+      FROM solicitud_workflow_historial swh
+      WHERE swh.swh_sol_id = s.sol_id
+        AND swh.swh_etapa_id = (SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'EJN')
+      ORDER BY swh.swh_fecha DESC
+    ) fe_vigente
     WHERE s.sol_ejecutivo_id = @0
       AND s.sol_estado_id = 2
     ORDER BY s.sol_fecha_creacion DESC
@@ -482,6 +496,29 @@ export class SolicitudesListadosService {
     return result[0] || null;
   }
 
+  // Igual que obtenerUltimaSolicitud pero por sol_id — usado por el
+  // personal interno para gestionar documentos de una solicitud puntual
+  // (ej. GET /solicitudes/mis-documentos?solicitudId=X en modo staff).
+  async obtenerSolicitudPorId(solicitudId: number) {
+    const sql = `
+      SELECT TOP 1
+        s.sol_id AS [sol_id],
+        s.sol_numero_solicitud AS [sol_numero_solicitud],
+        s.sol_estado_id AS [sol_estado_id],
+        s.sol_etapa_actual_id AS [sol_etapa_actual_id],
+        s.sol_resultado_etapa_id AS [sol_resultado_etapa_id],
+        s.sol_fecha_creacion AS [sol_fecha_creacion],
+        s.sol_fecha_envio AS [sol_fecha_envio],
+        c.cli_razon_social AS [cliente_nombre],
+        c.cli_nro_identificacion AS [cliente_nit]
+      FROM solicitudes s
+      LEFT JOIN clientes c ON c.cli_id = s.sol_cliente_id
+      WHERE s.sol_id = @0
+    `;
+    const result = await this.dataSource.query(sql, [solicitudId]);
+    return result[0] || null;
+  }
+
   async obtenerUltimaSolicitudPendiente(clienteId: number) {
     const sql = `
       SELECT TOP 1
@@ -565,10 +602,10 @@ export class SolicitudesListadosService {
         s.sol_fecha_creacion AS [sol_fecha_creacion],
         s.sol_fecha_estimada_respuesta_comercial AS [sol_fecha_estimada_respuesta_comercial],
         s.sol_fecha_real_respuesta_comercial AS [sol_fecha_real_respuesta_comercial],
-        s.sol_fecha_estimada_auxiliar_servicio_cliente AS [sol_fecha_estimada_auxiliar_servicio_cliente],
-        s.sol_fecha_estimada_oficial_cumplimiento AS [sol_fecha_estimada_oficial_cumplimiento],
-        s.sol_fecha_estimada_comite_credito_1 AS [sol_fecha_estimada_comite_credito_1],
-        s.sol_fecha_estimada_comite_credito_2 AS [sol_fecha_estimada_comite_credito_2],
+        CASE WHEN we.wet_codigo = 'ASC' THEN COALESCE(fe_vigente.swh_fecha_estimada, s.sol_fecha_estimada_auxiliar_servicio_cliente) ELSE s.sol_fecha_estimada_auxiliar_servicio_cliente END AS [sol_fecha_estimada_auxiliar_servicio_cliente],
+        CASE WHEN we.wet_codigo = 'OFC' THEN COALESCE(fe_vigente.swh_fecha_estimada, s.sol_fecha_estimada_oficial_cumplimiento) ELSE s.sol_fecha_estimada_oficial_cumplimiento END AS [sol_fecha_estimada_oficial_cumplimiento],
+        CASE WHEN we.wet_codigo = 'CC1' THEN COALESCE(fe_vigente.swh_fecha_estimada, s.sol_fecha_estimada_comite_credito_1) ELSE s.sol_fecha_estimada_comite_credito_1 END AS [sol_fecha_estimada_comite_credito_1],
+        CASE WHEN we.wet_codigo = 'CC2' THEN COALESCE(fe_vigente.swh_fecha_estimada, s.sol_fecha_estimada_comite_credito_2) ELSE s.sol_fecha_estimada_comite_credito_2 END AS [sol_fecha_estimada_comite_credito_2],
         s.sol_consumo_mensual_proyectado AS [consumo_mensual_proyectado],
         s.sol_observacion_ejn AS [observacionesComercial],
         we.wet_nombre AS [etapa_nombre],
@@ -581,6 +618,12 @@ export class SolicitudesListadosService {
       LEFT JOIN usuarios u ON s.sol_ejecutivo_id = u.${columns.usrId}
       LEFT JOIN workflow_etapas we ON we.wet_id = s.sol_etapa_actual_id
       LEFT JOIN workflow_estado_etapa wr ON wr.wee_id = s.sol_resultado_etapa_id
+      OUTER APPLY (
+        SELECT TOP 1 swh.swh_fecha_estimada
+        FROM solicitud_workflow_historial swh
+        WHERE swh.swh_sol_id = s.sol_id AND swh.swh_etapa_id = s.sol_etapa_actual_id
+        ORDER BY swh.swh_fecha DESC
+      ) fe_vigente
       WHERE ${whereClause}
       ORDER BY s.sol_fecha_creacion DESC
     `;

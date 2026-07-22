@@ -30,6 +30,104 @@ export class PermissionsService {
     private readonly dataSource: DataSource,
   ) {}
 
+  /**
+   * Resuelve si un usuario tiene una acción habilitada (ver/crear/editar/
+   * eliminar/aprobar) sobre un módulo, identificado por su ruta de menú
+   * (`pc_modulos.mod_ruta`), consultando `pc_rol_modulo` en vez de comparar
+   * nombres de rol quemados en el código.
+   *
+   * CLIENTE no vive en `pc_usuario_rol` (esa tabla es para `usuarios`
+   * internos) — su rol_id se resuelve fijo vía `pc_roles`, igual que hace
+   * `AuthService.loginCliente`. Un usuario interno puede tener varios roles
+   * activos a la vez; se toman todos y basta con que UNO otorgue el permiso.
+   *
+   * Si la ruta tiene más de una fila en `pc_modulos` (dato sucio conocido,
+   * ej. `/solicitudes` duplicada en mod_id 50/83), se prioriza
+   * determinísticamente la fila raíz (`mod_padre_id IS NULL`) sobre
+   * cualquier duplicado anidado, para que un duplicado nunca otorgue más
+   * permiso del que dice la fila canónica.
+   */
+  async tienePermiso(
+    user: { rol?: string; usr_id?: number },
+    ruta: string,
+    accion: keyof Permisos,
+  ): Promise<boolean> {
+    const rolIds = await this.resolverRolIds(user);
+    if (rolIds.length === 0) {
+      return false;
+    }
+
+    const columnaPorAccion: Record<keyof Permisos, string> = {
+      ver: 'rm_ver',
+      crear: 'rm_crear',
+      editar: 'rm_editar',
+      eliminar: 'rm_eliminar',
+      aprobar: 'rm_aprobar',
+    };
+    const columna = columnaPorAccion[accion];
+
+    const placeholders = rolIds.map((_, i) => `@${i + 1}`).join(', ');
+    const rows = await this.dataSource.query(
+      `
+      SELECT rm.rm_rol_id, m.mod_id, m.mod_padre_id, rm.${columna} AS habilitado
+      FROM pc_rol_modulo rm
+      INNER JOIN pc_modulos m ON m.mod_id = rm.rm_mod_id
+      WHERE m.mod_ruta = @0
+        AND rm.rm_activo = 1
+        AND rm.rm_rol_id IN (${placeholders})
+      `,
+      [ruta, ...rolIds],
+    );
+
+    const porRol = new Map<number, any>();
+    for (const row of rows) {
+      const rolId = Number(row.rm_rol_id);
+      const actual = porRol.get(rolId);
+      const esRaiz = row.mod_padre_id == null;
+      // Prefiere la fila raíz; si ya había una raíz elegida, no la reemplaza.
+      if (!actual || (esRaiz && actual.mod_padre_id != null)) {
+        porRol.set(rolId, row);
+      }
+    }
+
+    return Array.from(porRol.values()).some((row) => Boolean(row.habilitado));
+  }
+
+  private async resolverRolIds(user: {
+    rol?: string;
+    usr_id?: number;
+  }): Promise<number[]> {
+    if (user?.rol === 'CLIENTE') {
+      const rows = await this.dataSource.query(
+        `SELECT rol_id FROM pc_roles WHERE rol_codigo = 'CLIENTE'`,
+      );
+      return rows.map((r: any) => Number(r.rol_id));
+    }
+
+    if (user?.usr_id) {
+      const rows = await this.dataSource.query(
+        `SELECT DISTINCT ur_rol_id FROM pc_usuario_rol WHERE ur_usuario_id = @0 AND ur_activo = 1`,
+        [user.usr_id],
+      );
+      if (rows.length > 0) {
+        return rows.map((r: any) => Number(r.ur_rol_id));
+      }
+    }
+
+    // Login "genérico" (AuthService.login) no siempre puebla pc_usuario_rol
+    // para el usuario — como red de seguridad, cae a resolver por el código
+    // de rol del JWT directamente contra pc_roles.
+    if (user?.rol) {
+      const rows = await this.dataSource.query(
+        `SELECT rol_id FROM pc_roles WHERE rol_codigo = @0`,
+        [user.rol],
+      );
+      return rows.map((r: any) => Number(r.rol_id));
+    }
+
+    return [];
+  }
+
   async getModulesByRole(rolId: number): Promise<MenuModulo[]> {
     console.log(
       `[PermissionsService] getModulesByRole called with rolId: ${rolId}`,

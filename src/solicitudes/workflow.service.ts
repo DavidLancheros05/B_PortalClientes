@@ -1,9 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { HistorialWorkflowService } from '../workflow/historial/historial-workflow.service';
 
 @Injectable()
 export class WorkflowService {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly historialWorkflowService: HistorialWorkflowService,
+  ) {}
 
   async obtenerEtapaPorCodigo(codigo: string): Promise<any> {
     const result = await this.dataSource.query(
@@ -119,14 +123,11 @@ export class WorkflowService {
         [etapaId, resultadoId, usuarioId, solicitudId],
       );
 
-      // Registrar en historial
-      await queryRunner.query(
-        `
-        INSERT INTO solicitud_workflow_historial
-        (swh_sol_id, swh_etapa_id, swh_resultado_id, swh_usuario_id, swh_comentario)
-        VALUES (@0, @1, @2, @3, @4)
-      `,
-        [solicitudId, etapaId, resultadoId, usuarioId, comentario || null],
+      // Registrar en historial (incluye la fecha estimada vigente de la
+      // nueva etapa, calculada desde este momento real de la transición)
+      await this.historialWorkflowService.registrarTransicionConSLA(
+        queryRunner,
+        { solicitudId, etapaId, resultadoId, usuarioId, comentario },
       );
 
       await queryRunner.commitTransaction();

@@ -312,6 +312,12 @@ export class SolicitudesWorkflowService {
       `;
       const params: any[] = [estadoId, usuarioId];
 
+      if (estadoId === 2) {
+        // Primera vez que entra a PENDIENTE = fecha real de envío. COALESCE
+        // evita pisarla si el cliente es rechazado y reenvía después.
+        updateSQL += `, sol_fecha_envio = COALESCE(sol_fecha_envio, GETDATE())`;
+      }
+
       if (etapaId !== null) {
         updateSQL += `, sol_etapa_actual_id = @${params.length}`;
         params.push(etapaId);
@@ -353,18 +359,16 @@ export class SolicitudesWorkflowService {
           etapaId !== etapaPrevia || resultadoId !== resultadoPrevio;
 
         if (resultadoId && esTransicionReal) {
-          const workflowHistorialSQL = `
-            INSERT INTO solicitud_workflow_historial
-            (swh_sol_id, swh_etapa_id, swh_resultado_id, swh_usuario_id, swh_comentario, swh_fecha)
-            VALUES (@0, @1, @2, @3, @4, GETDATE())
-          `;
-          await queryRunner.query(workflowHistorialSQL, [
-            solicitudId,
-            etapaId,
-            resultadoId,
-            usuarioId,
-            mensajeTransicion,
-          ]);
+          await this.historialWorkflowService.registrarTransicionConSLA(
+            queryRunner,
+            {
+              solicitudId,
+              etapaId,
+              resultadoId,
+              usuarioId,
+              comentario: mensajeTransicion,
+            },
+          );
         }
       } else if (resultadoIdActualizar !== null) {
         // Registrar en historial si solo se cambió el resultado (sin cambiar etapa)
@@ -375,18 +379,17 @@ export class SolicitudesWorkflowService {
 
         if (solicitudActual.length > 0) {
           const { sol_etapa_actual_id } = solicitudActual[0];
-          const workflowHistorialSQL = `
-            INSERT INTO solicitud_workflow_historial
-            (swh_sol_id, swh_etapa_id, swh_resultado_id, swh_usuario_id, swh_comentario, swh_fecha)
-            VALUES (@0, @1, @2, @3, @4, GETDATE())
-          `;
-          await queryRunner.query(workflowHistorialSQL, [
-            solicitudId,
-            sol_etapa_actual_id,
-            resultadoIdActualizar,
-            usuarioId,
-            'Cliente editó solicitud rechazada - Resultado vuelve a PENDIENTE',
-          ]);
+          await this.historialWorkflowService.registrarTransicionConSLA(
+            queryRunner,
+            {
+              solicitudId,
+              etapaId: sol_etapa_actual_id,
+              resultadoId: resultadoIdActualizar,
+              usuarioId,
+              comentario:
+                'Cliente editó solicitud rechazada - Resultado vuelve a PENDIENTE',
+            },
+          );
         }
       }
 
@@ -452,6 +455,12 @@ export class SolicitudesWorkflowService {
       return { ok: true, avanzo: false, documentosDiferidosFaltantes: faltantes };
     }
 
+    // Texto que ve el cliente en su listado (columna Observaciones) una vez
+    // ya no falta ningún documento diferido — mismo mensaje que usa
+    // cambiarEstado() para el caso "sin diferidos pendientes".
+    const observacionAlDia =
+      'Formulario y documentos cargados correctamente. Puedes editar hasta que Cartonera revise tu solicitud.';
+
     const [solicitud] = await this.dataSource.query(
       `SELECT sol_estado_id, sol_etapa_actual_id, sol_resultado_etapa_id FROM solicitudes WHERE sol_id = @0`,
       [solicitudId],
@@ -461,7 +470,18 @@ export class SolicitudesWorkflowService {
       !solicitud ||
       !(await this.solicitudEnEsperaDocumentosDiferidos(solicitud))
     ) {
-      // No estaba en espera de documentos diferidos: nada que avanzar.
+      // No estaba en espera de documentos diferidos por este gate (ej. la
+      // solicitud ya había avanzado de etapa por otra vía) — no hay nada
+      // que avanzar, pero la Observación que ve el cliente puede haber
+      // quedado congelada en el mensaje viejo de "faltan documentos"
+      // aunque ya no falte ninguno. Se refresca solo en ese caso, sin
+      // tocar etapa/resultado.
+      await this.dataSource.query(
+        `UPDATE solicitudes
+         SET sol_observacion_cliente = @0
+         WHERE sol_id = @1 AND sol_observacion_cliente LIKE 'Aún faltan generar y subir%'`,
+        [observacionAlDia, solicitudId],
+      );
       return { ok: true, avanzo: false, documentosDiferidosFaltantes: [] };
     }
 
@@ -480,22 +500,28 @@ export class SolicitudesWorkflowService {
       await queryRunner.query(
         `UPDATE solicitudes
          SET sol_etapa_actual_id = @0, sol_resultado_etapa_id = @1,
-             sol_usuario_modifica = @2, sol_updated_at = GETDATE()
-         WHERE sol_id = @3`,
-        [etapaEJN.wet_id, resultadoPendiente.wee_id, usuarioId, solicitudId],
-      );
-
-      await queryRunner.query(
-        `INSERT INTO solicitud_workflow_historial
-         (swh_sol_id, swh_etapa_id, swh_resultado_id, swh_usuario_id, swh_comentario, swh_fecha)
-         VALUES (@0, @1, @2, @3, @4, GETDATE())`,
+             sol_observacion_cliente = @2,
+             sol_usuario_modifica = @3, sol_updated_at = GETDATE()
+         WHERE sol_id = @4`,
         [
-          solicitudId,
           etapaEJN.wet_id,
           resultadoPendiente.wee_id,
+          observacionAlDia,
           usuarioId,
-          'Cliente subió los documentos generados pendientes - Solicitud enviada a Ejecutivo de Negocios',
+          solicitudId,
         ],
+      );
+
+      await this.historialWorkflowService.registrarTransicionConSLA(
+        queryRunner,
+        {
+          solicitudId,
+          etapaId: etapaEJN.wet_id,
+          resultadoId: resultadoPendiente.wee_id,
+          usuarioId,
+          comentario:
+            'Cliente subió los documentos generados pendientes - Solicitud enviada a Ejecutivo de Negocios',
+        },
       );
 
       await queryRunner.commitTransaction();
@@ -537,9 +563,6 @@ export class SolicitudesWorkflowService {
     await queryRunner.startTransaction();
 
     try {
-      if (!aprobado && !motivo_rechazo_id) {
-        throw new Error('motivo_rechazo_id es requerido cuando se rechaza');
-      }
 
       // Obtener IDs de estados desde BD (sin hardcodear)
       const estadosRevisionResult = await queryRunner.query(
@@ -569,6 +592,10 @@ export class SolicitudesWorkflowService {
       let estadoId: number;
       let resultadoCodigo: string;
       let comentario: string;
+      // Observación que ve el cliente en su listado de solicitudes
+      // (sol_observacion_cliente) — decidida acá en vez de dejar que el
+      // frontend la infiera del estado/etapa/resultado.
+      let observacionCliente: string;
 
       if (aprobado) {
         // ASC aprueba → avanza a OFC en REVISIÓN
@@ -579,6 +606,7 @@ export class SolicitudesWorkflowService {
         estadoId = estadoRevision.ses_id;
         resultadoCodigo = 'PENDIENTE';
         comentario = 'Solicitud aprobada en Auxiliar Servicio Cliente';
+        observacionCliente = 'Tu solicitud se encuentra en revisión.';
       } else {
         // ASC rechaza → etapa ASC con resultado RECHAZADO
         // El estado depende del modo_solucion
@@ -589,13 +617,19 @@ export class SolicitudesWorkflowService {
           estadoId = estadoPendiente.ses_id;
           comentario =
             'Solicitud rechazada en Auxiliar Servicio Cliente - Cliente debe actualizar';
+          observacionCliente =
+            'El auxiliar de servicio al cliente rechazó tu solicitud porque algunos documentos tienen la fecha de emisión incorrecta o no corresponden. Corrige los documentos marcados en "Mis Documentos".';
         } else if (modo_solucion === 'auxiliar_actualiza') {
           estadoId = estadoRevision.ses_id;
           comentario =
             'Solicitud rechazada en Auxiliar Servicio Cliente - Auxiliar debe actualizar';
+          observacionCliente =
+            'Tu solicitud está en revisión. Te avisaremos por correo cuando haya una decisión.';
         } else {
           estadoId = estadoPendiente.ses_id;
           comentario = 'Solicitud rechazada en Auxiliar Servicio Cliente';
+          observacionCliente =
+            'Tu solicitud fue rechazada por el auxiliar de servicio al cliente.';
         }
       }
 
@@ -624,13 +658,15 @@ export class SolicitudesWorkflowService {
         clienteEmail = solicitudData?.cli_correo || null;
       }
 
-      const motivoValue = aprobado ? 'NULL' : motivo_rechazo_id;
+      const motivoValue =
+        aprobado || !motivo_rechazo_id ? 'NULL' : motivo_rechazo_id;
       const fechaEstimadaValue = fecha_estimada_respuesta_comercial
         ? `'${fecha_estimada_respuesta_comercial.toISOString().split('T')[0]}'`
         : 'NULL';
       const usuarioModificaValue = usuario_modifica ?? 'NULL';
 
-      await queryRunner.query(`
+      await queryRunner.query(
+        `
         UPDATE solicitudes SET
           sol_estado_id = ${estadoId},
           sol_etapa_actual_id = ${etapaDestId},
@@ -639,9 +675,12 @@ export class SolicitudesWorkflowService {
           sol_fecha_estimada_respuesta_comercial = ${fechaEstimadaValue},
           sol_fecha_real_auxiliar_servicio_cliente = GETDATE(),
           sol_usuario_modifica = ${usuarioModificaValue},
+          sol_observacion_cliente = @0,
           sol_updated_at = GETDATE()
         WHERE sol_id = ${solicitudId}
-      `);
+      `,
+        [observacionCliente],
+      );
 
       // Registrar en historial de estados
       await queryRunner.query(`
@@ -651,17 +690,15 @@ export class SolicitudesWorkflowService {
       `);
 
       // Registrar transición en workflow historial (etapa ASC con su resultado)
-      await queryRunner.query(
-        `INSERT INTO solicitud_workflow_historial
-         (swh_sol_id, swh_etapa_id, swh_resultado_id, swh_usuario_id, swh_comentario)
-         VALUES (@0, @1, @2, @3, @4)`,
-        [
+      await this.historialWorkflowService.registrarTransicionConSLA(
+        queryRunner,
+        {
           solicitudId,
-          etapaSAC.wet_id,
-          resultadoWorkflow.wee_id,
-          usuario_modifica || 1,
+          etapaId: etapaSAC.wet_id,
+          resultadoId: resultadoWorkflow.wee_id,
+          usuarioId: usuario_modifica || 1,
           comentario,
-        ],
+        },
       );
 
       // Persistir el flag "requiere cambio" por documento cuando el
@@ -692,8 +729,13 @@ export class SolicitudesWorkflowService {
 
       await queryRunner.commitTransaction();
 
-      // Enviar correo al cliente si la solicitud fue rechazada
-      if (!aprobado && clienteEmail) {
+      // Enviar correo al cliente si la solicitud fue rechazada — salvo que
+      // el modo de solución sea 'auxiliar_actualiza': ahí el auxiliar
+      // corrige los documentos él mismo en /solicitudes/:id/editar (entra
+      // desde /solicitudes/corregir-formulario-asc), sin involucrar al
+      // cliente, así que no corresponde notificarlo. Ver
+      // documentacion/Funcionalidades/modo-solucion-rechazo-asc.md.
+      if (!aprobado && clienteEmail && modo_solucion !== 'auxiliar_actualiza') {
         try {
           let motivoDescripcion: string | null = null;
           if (motivo_rechazo_id) {
@@ -838,6 +880,20 @@ export class SolicitudesWorkflowService {
       updateParams.push(sa_sol_id);
 
       await this.dataSource.query(updateSQL, updateParams);
+
+      try {
+        await this.guardarRespuestasConceptoEjecutivo(
+          sa_sol_id,
+          usuario_modifica,
+          consumo_mensual_proyectado ?? null,
+          observacionesComercial ?? null,
+        );
+      } catch (respuestasError) {
+        console.error(
+          '⚠️ [guardarGestionEjecutivo] Error llenando sección CONCEPTO DEL EJECUTIVO:',
+          respuestasError,
+        );
+      }
 
       // EJN aprobó → la solicitud queda pendiente en la bandeja del
       // Auxiliar de Servicio al Cliente. Avisar a cada usuario activo con
@@ -1052,21 +1108,29 @@ export class SolicitudesWorkflowService {
         }
       }
 
+      if (etapaActualCodigo === 'CC2') {
+        await this.guardarRespuestasUsoExclusivo(
+          queryRunner,
+          sa_sol_id,
+          aprobado,
+          usuario_modifica,
+          condiciones,
+        );
+      }
+
       const mensajeHistorial = aprobado
         ? `Aprobado en etapa ${etapaActualCodigo}`
         : `Rechazado en etapa ${etapaActualCodigo}`;
 
-      await queryRunner.query(
-        `INSERT INTO solicitud_workflow_historial
-         (swh_sol_id, swh_etapa_id, swh_resultado_id, swh_usuario_id, swh_comentario)
-         VALUES (@0, @1, @2, @3, @4)`,
-        [
-          sa_sol_id,
-          etapaActualId,
-          resultadoWorkflow.wee_id,
-          usuario_modifica,
-          comentario || mensajeHistorial,
-        ],
+      await this.historialWorkflowService.registrarTransicionConSLA(
+        queryRunner,
+        {
+          solicitudId: sa_sol_id,
+          etapaId: etapaActualId,
+          resultadoId: resultadoWorkflow.wee_id,
+          usuarioId: usuario_modifica,
+          comentario: comentario || mensajeHistorial,
+        },
       );
 
       await queryRunner.commitTransaction();
@@ -1147,6 +1211,216 @@ export class SolicitudesWorkflowService {
     }
   }
 
+  // Upsert de una respuesta del formulario. `db` puede ser un queryRunner
+  // (dentro de transacción) o el dataSource — ambos exponen .query().
+  private async upsertRespuestaFormulario(
+    db: { query: (sql: string, params?: any[]) => Promise<any> },
+    sa_sol_id: number,
+    fp_id: number,
+    valores: {
+      texto?: string | null;
+      numero?: number | null;
+      opcionId?: number | null;
+    },
+    usuario_modifica: number,
+  ) {
+    const [existente] = await db.query(
+      `SELECT fr_id FROM Formulario_respuesta
+       WHERE fr_solicitud_id = @0 AND fr_fp_id = @1`,
+      [sa_sol_id, fp_id],
+    );
+    const params = [
+      valores.texto ?? null,
+      valores.numero ?? null,
+      valores.opcionId ?? null,
+      usuario_modifica,
+    ];
+    if (existente) {
+      await db.query(
+        `UPDATE Formulario_respuesta SET
+           fr_valor_texto = @0, fr_valor_numero = @1, fr_valor_opcion_id = @2,
+           fr_actualizado_por = @3, fr_updated_at = GETDATE(), fr_completado = 1
+         WHERE fr_id = @4`,
+        [...params, existente.fr_id],
+      );
+    } else {
+      await db.query(
+        `INSERT INTO Formulario_respuesta
+           (fr_solicitud_id, fr_fp_id, fr_valor_texto, fr_valor_numero,
+            fr_valor_opcion_id, fr_actualizado_por, fr_completado, fr_created_at)
+         VALUES (@4, @5, @0, @1, @2, @3, 1, GETDATE())`,
+        [...params, sa_sol_id, fp_id],
+      );
+    }
+  }
+
+  // El concepto del Ejecutivo de Negocios también se refleja como respuestas
+  // de la sección "CONCEPTO DEL EJECUTIVO DE NEGOCIOS" del formulario
+  // (oculta al cliente), igual que la sección USO EXCLUSIVO con el CC2.
+  private async guardarRespuestasConceptoEjecutivo(
+    sa_sol_id: number,
+    usuario_modifica: number,
+    consumo_mensual_proyectado: number | null,
+    observaciones: string | null,
+  ) {
+    const preguntas: { fp_id: number; fp_descripcion: string }[] =
+      await this.dataSource.query(
+        `SELECT fp.fp_id, fp.fp_descripcion
+         FROM Formulario_pregunta fp
+         JOIN Formulario_secciones fs ON fs.fs_id = fp.seccion_id
+         WHERE fs.fs_nombre LIKE 'CONCEPTO DEL EJECUTIVO%' AND fp.fp_estado = 1`,
+      );
+    if (!preguntas.length) {
+      console.warn(
+        '[guardarRespuestasConceptoEjecutivo] Sección CONCEPTO DEL EJECUTIVO sin preguntas; se omite.',
+      );
+      return;
+    }
+    const porDescripcion = (texto: string) =>
+      preguntas.find(
+        (p) =>
+          p.fp_descripcion.trim().replace(/:$/, '').toUpperCase() ===
+          texto.toUpperCase(),
+      );
+
+    const nombrePregunta = porDescripcion('Ejecutivo de negocios');
+    if (nombrePregunta) {
+      const [usr] = await this.dataSource.query(
+        `SELECT usr_nombre FROM usuarios WHERE usr_id = @0`,
+        [usuario_modifica],
+      );
+      if (usr?.usr_nombre) {
+        await this.upsertRespuestaFormulario(
+          this.dataSource,
+          sa_sol_id,
+          nombrePregunta.fp_id,
+          { texto: usr.usr_nombre },
+          usuario_modifica,
+        );
+      }
+    }
+
+    const consumoPregunta = porDescripcion('Consumo mes proyectado');
+    if (consumoPregunta && consumo_mensual_proyectado != null) {
+      await this.upsertRespuestaFormulario(
+        this.dataSource,
+        sa_sol_id,
+        consumoPregunta.fp_id,
+        { numero: consumo_mensual_proyectado },
+        usuario_modifica,
+      );
+    }
+
+    const obsPregunta = porDescripcion('Observaciones adicionales');
+    if (obsPregunta && observaciones) {
+      await this.upsertRespuestaFormulario(
+        this.dataSource,
+        sa_sol_id,
+        obsPregunta.fp_id,
+        { texto: observaciones },
+        usuario_modifica,
+      );
+    }
+  }
+
+  // La decisión del CC2 también se refleja como respuestas de la sección
+  // "USO EXCLUSIVO DE CARTONERA NACIONAL S.A." del formulario (oculta al
+  // cliente durante el diligenciamiento), para que aparezca diligenciada en
+  // el formulario completo y su PDF. Las preguntas se resuelven por nombre
+  // de sección + descripción para no depender de fp_ids fijos.
+  private async guardarRespuestasUsoExclusivo(
+    queryRunner: any,
+    sa_sol_id: number,
+    aprobado: boolean,
+    usuario_modifica: number,
+    condiciones?: { cupo?: number; plazoPago?: number; formaPago?: string },
+  ) {
+    const preguntas: {
+      fp_id: number;
+      fp_descripcion: string;
+      fp_tipo: string;
+    }[] = await queryRunner.query(
+      `SELECT fp.fp_id, fp.fp_descripcion, fp.fp_tipo
+       FROM Formulario_pregunta fp
+       JOIN Formulario_secciones fs ON fs.fs_id = fp.seccion_id
+       WHERE fs.fs_nombre LIKE 'USO EXCLUSIVO%' AND fp.fp_estado = 1`,
+    );
+    if (!preguntas.length) {
+      console.warn(
+        '[guardarRespuestasUsoExclusivo] Sección USO EXCLUSIVO sin preguntas; se omite.',
+      );
+      return;
+    }
+    const porDescripcion = (texto: string) =>
+      preguntas.find(
+        (p) => p.fp_descripcion.trim().toUpperCase() === texto.toUpperCase(),
+      );
+
+    const upsert = (
+      fp_id: number,
+      valores: {
+        texto?: string | null;
+        numero?: number | null;
+        opcionId?: number | null;
+      },
+    ) =>
+      this.upsertRespuestaFormulario(
+        queryRunner,
+        sa_sol_id,
+        fp_id,
+        valores,
+        usuario_modifica,
+      );
+
+    // DECISION (SELECT): opción Aprobado/Negado por su fpo_valor
+    const decision = porDescripcion('DECISION');
+    if (decision) {
+      const [opcion] = await queryRunner.query(
+        `SELECT fpo_id FROM Formulario_pregunta_opcion
+         WHERE fpo_fp_id = @0 AND fpo_valor = @1 AND fpo_estado = 1`,
+        [decision.fp_id, aprobado ? 'Aprobado' : 'Negado'],
+      );
+      if (opcion) await upsert(decision.fp_id, { opcionId: opcion.fpo_id });
+    }
+
+    // Nombre de quien aprueba (TEXTO): nombre real del usuario que decide
+    const nombrePregunta = porDescripcion('Nombre de quien aprueba');
+    if (nombrePregunta) {
+      const [usr] = await queryRunner.query(
+        `SELECT usr_nombre FROM usuarios WHERE usr_id = @0`,
+        [usuario_modifica],
+      );
+      if (usr?.usr_nombre)
+        await upsert(nombrePregunta.fp_id, { texto: usr.usr_nombre });
+    }
+
+    // Condiciones financieras: solo aplican si la decisión fue Aprobado
+    if (aprobado && condiciones) {
+      const cupoPregunta = porDescripcion('Cupo$');
+      if (cupoPregunta && condiciones.cupo !== undefined) {
+        await upsert(cupoPregunta.fp_id, { numero: condiciones.cupo });
+      }
+
+      const plazoPregunta = porDescripcion('Plazo de Pago');
+      if (plazoPregunta && condiciones.plazoPago !== undefined) {
+        await upsert(plazoPregunta.fp_id, {
+          texto: String(condiciones.plazoPago),
+        });
+      }
+
+      // Forma de pago (SELECT_TABLA sobre Forma_pago): guarda el fpg_id en
+      // fr_valor_numero, igual que el resto de respuestas SELECT_TABLA
+      const formaPregunta = porDescripcion('Forma de pago');
+      if (formaPregunta && condiciones.formaPago) {
+        const [fp] = await queryRunner.query(
+          `SELECT fpg_id FROM Forma_pago WHERE fpg_nombre = @0`,
+          [condiciones.formaPago],
+        );
+        if (fp) await upsert(formaPregunta.fp_id, { numero: fp.fpg_id });
+      }
+    }
+  }
+
   // Comité de Crédito 1 no aprueba ni rechaza: solo deja su revisión
   // (evaluación de riesgo, límite/plazo recomendado, observaciones) y la
   // solicitud siempre avanza a Comité de Crédito 2, que es quien decide.
@@ -1200,17 +1474,15 @@ export class SolicitudesWorkflowService {
         ],
       );
 
-      await queryRunner.query(
-        `INSERT INTO solicitud_workflow_historial
-         (swh_sol_id, swh_etapa_id, swh_resultado_id, swh_usuario_id, swh_comentario)
-         VALUES (@0, @1, @2, @3, @4)`,
-        [
-          sa_sol_id,
-          etapaActualId,
-          resultadoPendiente.wee_id,
-          usuario_modifica,
-          comentario || 'Revisión de Comité de Crédito 1',
-        ],
+      await this.historialWorkflowService.registrarTransicionConSLA(
+        queryRunner,
+        {
+          solicitudId: sa_sol_id,
+          etapaId: etapaActualId,
+          resultadoId: resultadoPendiente.wee_id,
+          usuarioId: usuario_modifica,
+          comentario: comentario || 'Revisión de Comité de Crédito 1',
+        },
       );
 
       await queryRunner.commitTransaction();
@@ -1335,6 +1607,8 @@ export class SolicitudesWorkflowService {
           usuario_id: h.usuarioId,
           comentario: h.comentario,
           fecha: h.fecha,
+          fecha_estimada_inicio: h.fechaEstimadaInicio,
+          fecha_estimada_etapa_anterior: h.fechaEstimadaEtapaAnterior,
         })),
       };
     } catch (error) {
@@ -1366,17 +1640,16 @@ export class SolicitudesWorkflowService {
         [3, 3, 1, usuarioId, solicitudId, 'Tu solicitud se encuentra en revisión.'],
       );
 
-      await queryRunner.query(
-        `INSERT INTO solicitud_workflow_historial
-         (swh_sol_id, swh_etapa_id, swh_resultado_id, swh_usuario_id, swh_comentario, swh_fecha)
-         VALUES (@0, @1, @2, @3, @4, GETDATE())`,
-        [
+      await this.historialWorkflowService.registrarTransicionConSLA(
+        queryRunner,
+        {
           solicitudId,
-          3,
-          1,
+          etapaId: 3,
+          resultadoId: 1,
           usuarioId,
-          'Solicitud corregida por cliente - Resultado actualizado a PENDIENTE',
-        ],
+          comentario:
+            'Solicitud corregida por cliente - Resultado actualizado a PENDIENTE',
+        },
       );
 
       await queryRunner.commitTransaction();

@@ -1,0 +1,34 @@
+export class FacturaClienteResponseDto {
+  fecha: string;
+  nit: string;
+  vendedor: string;
+  clienteRazonSocial: string;
+  numeroDocumento: string;
+  ordenCompra: string | null;
+  pedidoDocumento: string | null;
+  documentoRemision: string | null;
+  item: number;
+  referencia: string;
+  descripcionItem: string;
+  descripcionCorta: string | null;
+  itemResumen: string;
+  cantidad: number;
+  precioUnitario: number;
+  precioCliente: number | null;
+  precioPeso: number;
+  peso: number;
+  valorSubtotal: number;
+  valorSubtotalLocal: number;
+  valorImpuesto: number;
+  valorNeto: number;
+  bodega: string;
+  centroOperacion: string;
+  ciudad: string | null;
+  descripcionPuntoEnvio: string | null;
+  plan001: string | null;
+  plan003: string | null;
+  sec: string | null;
+  sse: string | null;
+  vendedorClienteNombre: string | null;
+  numero: number;
+}

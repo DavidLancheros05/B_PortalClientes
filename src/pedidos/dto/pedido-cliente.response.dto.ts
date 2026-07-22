@@ -1,0 +1,32 @@
+export class PedidoClienteResponseDto {
+  clienteRazonSocial: string;
+  nit: string;
+  numeroDocumento: string;
+  estado: string;
+  fechaCreacion: string;
+  fechaEntrega: string | null;
+  ordenCompra: string | null;
+  item: number;
+  referencia: string;
+  descripcionItem: string;
+  cantidadPedida: number;
+  cantidadDisponibleInsumo: number;
+  cantidadRemisionada: number;
+  cantidadPendiente: number;
+  pesoPendiente: number;
+  volumenPendiente: number;
+  ciudad: string;
+  precioUnitario: number;
+  precioPeso: number;
+  plan003: string | null;
+  valorPendienteSubtotal: number;
+  valorPendiente: number;
+  direccion: string;
+  vendedor: string;
+  valorNeto: number;
+  valorBrutoLocal: number;
+  pesoPedida: number;
+  cdv: string | null;
+  notas: string | null;
+  numero: number;
+}

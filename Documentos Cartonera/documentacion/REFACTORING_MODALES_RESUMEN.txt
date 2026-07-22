@@ -1,0 +1,65 @@
+REFACTORING DE MODALES NATIVOS (alert/confirm) A MODALES GENÉRICOS
+====================================================================
+
+Ver GUIA_MODALES.md para el patrón a seguir (ConfirmModal / SuccessModal,
+usando ConfirmModal con isDangerous=true para reemplazar alert() de error).
+
+Componentes fuente:
+  F_PortalClientes/src/components/modals/ModalesGenericos.tsx
+  (ConfirmModal, SuccessModal, LoadingModal, ErrorModal, WarningModal)
+
+Nota: aunque ModalesGenericos.tsx expone también ErrorModal, la convención
+documentada en GUIA_MODALES.md es usar ConfirmModal con isDangerous=true
+para errores, no ErrorModal. Mantener esa convención al refactorizar.
+
+--------------------------------------------------------------------
+ARCHIVOS COMPLETAMENTE REFACTORIZADOS
+--------------------------------------------------------------------
+
+- F_PortalClientes/src/app/parametrizacion/formularios/[formularioId]/versiones/page.tsx
+  * alert() -> SuccessModal / ConfirmModal(isDangerous=true) via estado "notificacion"
+  * confirm() -> ConfirmModal via estado "versionAConfirmar" (flujo "Activar versión")
+
+- F_PortalClientes/src/app/parametrizacion/formularios/[formularioId]/nueva-version/page.tsx
+  * alert() -> SuccessModal / ConfirmModal(isDangerous=true) via estado "notificacion"
+    (SuccessModal navega a versiones/ en su onAction, igual que hacía el alert antes)
+
+--------------------------------------------------------------------
+ARCHIVOS PENDIENTES (31 archivos, ~104 ocurrencias detectadas 2026-07-18)
+--------------------------------------------------------------------
+
+Ordenados por cantidad de ocurrencias (mayor a menor):
+
+12  seguridad/modulos/page.tsx
+ 8  parametrizacion/formulario-tipos-pregunta/page.tsx
+ 6  solicitudes/gestion-comite-credito-2/[id]/gestionar/page.tsx
+ 6  parametrizacion/motivos-rechazo/page.tsx
+ 5  seguridad/usuarios/page.tsx
+ 5  solicitudes/gestion-oficial-de-cumplimiento/[id]/gestionar/page.tsx
+ 5  solicitudes/gestion-ejecutivo-negocios/[id]/registrar/page.tsx
+ 5  solicitudes/gestion-auxiliar-servicio-al-cliente/[id]/gestionar/page.tsx
+ 5  solicitudes/gestion-comite-credito-1/[id]/gestionar/page.tsx
+ 4  solicitudes/[id]/detalle/page.tsx
+ 4  parametrizacion/formulario-secciones/page.tsx
+ 3  parametrizacion/formularios/nuevo/page.tsx
+ 3  components/SoportesAnalisis.tsx
+ 3  parametrizacion/formulario-editor/hooks/useSeccionEditor.ts
+ 2  components/form/SolicitudForm.tsx
+ 2  parametrizacion/formulario-preguntas/components/FormularioPreguntaTable.tsx
+ 2  parametrizacion/formulario-preguntas/components/FormularioPreguntaForm.tsx
+ 2  parametrizacion/formularios/page.tsx
+ 2  solicitudes/gestion-oficial-de-cumplimiento/page.tsx
+ 2  solicitudes/gestion-ejecutivo-negocios/page.tsx
+ 2  solicitudes/gestion-auxiliar-servicio-al-cliente/page.tsx
+ 2  solicitudes/gestion-comite-credito-2/page.tsx
+ 2  solicitudes/corregir-formulario-asc/page.tsx
+ 2  solicitudes/gestion-comite-credito-1/page.tsx
+ 1  app/pqrs/bandeja/page.tsx
+ 1  seguridad/usuarios/UsuarioCentrosModal.tsx
+ 1  components/LoginForm.tsx
+ 1  solicitudes/nueva/components/ImagenField.tsx
+ 1  solicitudes/nueva/components/DocumentoTablaField.tsx
+ 1  solicitudes/nueva/components/ArchivoField.tsx
+
+Para recalcular al retomar la tarea:
+  grep -rn "\balert(\|\bconfirm(" F_PortalClientes/src

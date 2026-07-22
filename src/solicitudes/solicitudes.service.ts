@@ -11,6 +11,12 @@ import { PDFDocument, PDFFont, PDFPage, rgb } from 'pdf-lib';
 import { WorkflowEtapaResponseDto } from './dto/workflow-etapa.response.dto';
 import { WorkflowResultadoResponseDto } from './dto/workflow-resultado.response.dto';
 import { ParamDiasRespuestaResponseDto } from './dto/param-dias-respuesta.response.dto';
+import {
+  ENCABEZADO_ALTURA,
+  dibujarEncabezadoOficialPdf,
+  dibujarTablaRevisionesPdf,
+  leerLogoBytes,
+} from '../common/utils/encabezado-oficial-pdf.util';
 
 @Injectable()
 export class SolicitudesService {
@@ -77,6 +83,19 @@ export class SolicitudesService {
 
       if (!clienteId || !coId) {
         throw new Error('Faltan cliente_id o co_id');
+      }
+
+      // 1.5. Validar que no exista ya una solicitud en estado BORRADOR para este cliente
+      const solicitudBorrador = await queryRunner.query(
+        `SELECT sol_id, sol_numero_solicitud FROM solicitudes
+         WHERE sol_cliente_id = @0 AND sol_estado_id = 1`,
+        [clienteId],
+      );
+
+      if (solicitudBorrador && solicitudBorrador.length > 0) {
+        throw new Error(
+          `El cliente ya tiene una solicitud en borrador (No. ${solicitudBorrador[0].sol_numero_solicitud}). Complétala o elimínala antes de crear una nueva.`,
+        );
       }
 
       // 2. Asegurar esZonaFranca
@@ -165,33 +184,68 @@ export class SolicitudesService {
         festivos = [];
       }
 
+      let diasNoHabilesSemana: number[] | undefined;
+      try {
+        const diasNoHabilesResult = await queryRunner.query(
+          `
+          SELECT dsh_dia_semana AS dia
+          FROM param_dias_no_habiles_semana
+          WHERE (dsh_co_id = @0 OR dsh_co_id IS NULL) AND dsh_activo = 1
+        `,
+          [coId],
+        );
+        diasNoHabilesSemana = (diasNoHabilesResult || [])
+          .map((row: any) => Number(row?.dia))
+          .filter((value: number) => !Number.isNaN(value));
+      } catch (error) {
+        console.warn(
+          '⚠️ Tabla param_dias_no_habiles_semana no encontrada, usando sábado/domingo por defecto',
+        );
+        diasNoHabilesSemana = undefined;
+      }
+
+      // Encadenadas: cada etapa asume que la anterior se resolvió justo a
+      // tiempo, no que todas arrancan el mismo día de creación (si no, dos
+      // etapas con el mismo plazo configurado caen en la misma fecha).
       const fechaEstimadaEjecutivo = addBusinessDays(
         now,
         diasRespuestaEjecutivo,
         festivos,
+        diasNoHabilesSemana,
       );
 
       const fechaEstimadaAuxiliar = addBusinessDays(
-        now,
+        fechaEstimadaEjecutivo,
         diasRespuestaAuxiliar,
         festivos,
+        diasNoHabilesSemana,
       );
 
       const fechaEstimadaOficial = addBusinessDays(
-        now,
+        fechaEstimadaAuxiliar,
         diasRespuestaOficial,
         festivos,
+        diasNoHabilesSemana,
       );
 
-      const fechaEstimadaCC1 = addBusinessDays(now, diasRespuestaCC1, festivos);
+      const fechaEstimadaCC1 = addBusinessDays(
+        fechaEstimadaOficial,
+        diasRespuestaCC1,
+        festivos,
+        diasNoHabilesSemana,
+      );
 
-      const fechaEstimadaCC2 = addBusinessDays(now, diasRespuestaCC2, festivos);
+      const fechaEstimadaCC2 = addBusinessDays(
+        fechaEstimadaCC1,
+        diasRespuestaCC2,
+        festivos,
+        diasNoHabilesSemana,
+      );
 
       const formularioActivoResult = await queryRunner.query(`
-        SELECT TOP 1 (
-          SELECT MAX(fv.fv_numero)
-          FROM Formulario_versiones fv
-          WHERE fv.fv_frm_id = f.frm_id
+        SELECT TOP 1 ISNULL(
+          f.frm_version_activa,
+          (SELECT MAX(fv.fv_numero) FROM Formulario_versiones fv WHERE fv.fv_frm_id = f.frm_id)
         ) AS formulario_version
         FROM formularios f
         WHERE f.frm_activo = 1
@@ -265,8 +319,10 @@ export class SolicitudesService {
       // recién se está creando, ninguno puede estar subido todavía — si el
       // formulario de esta versión tiene alguno configurado, la solicitud
       // se queda en CLI+PEND_DOCS en vez de pasar directo a EJN.
-      let documentosDiferidosFaltantes: { tdo_id: number; tdo_nombre: string }[] =
-        [];
+      let documentosDiferidosFaltantes: {
+        tdo_id: number;
+        tdo_nombre: string;
+      }[] = [];
       if (estadoId === 2) {
         documentosDiferidosFaltantes = await queryRunner.query(
           `
@@ -406,12 +462,15 @@ export class SolicitudesService {
               .join(', ')}`
           : 'Solicitud enviada a Ejecutivo de Negocios';
         if (etapaTransicion) {
-          await this.historialWorkflowService.registrarTransicion(
-            solicitudId,
-            etapaTransicion,
-            resultadoFinalId,
-            1, // usuario 1
-            mensajeTransicion,
+          await this.historialWorkflowService.registrarTransicionConSLA(
+            queryRunner,
+            {
+              solicitudId,
+              etapaId: etapaTransicion,
+              resultadoId: resultadoFinalId,
+              usuarioId: 1, // usuario 1
+              comentario: mensajeTransicion,
+            },
           );
           console.log('✅ Transición inicial de workflow registrada');
         }
@@ -548,7 +607,41 @@ export class SolicitudesService {
       }));
     }
 
+    // Encabezado "formato oficial" — este PDF ES el documento F-P3-06
+    // (tdo_tipo_plantilla='PDF_SOLICITUD'), así que su código/revisión salen
+    // de esa fila de Tipos_documentos en vez de estar hardcodeados.
+    const tipoDocumentoFormatoRows = await this.dataSource.query(`
+      SELECT TOP 1 tdo_id, tdo_nombre, tdo_formato_codigo, tdo_formato_codigo_secundario, tdo_revision
+      FROM Tipos_documentos
+      WHERE tdo_tipo_plantilla = 'PDF_SOLICITUD' AND tdo_estado = 1
+      ORDER BY tdo_id
+    `);
+    const tipoDocumentoFormato = tipoDocumentoFormatoRows[0] ?? null;
+
+    // Historial de revisiones ("CONTROL DE CAMBIOS") configurado para ese
+    // mismo tipo de documento — se dibuja una sola vez, al final del cuerpo.
+    const revisionesRows = tipoDocumentoFormato
+      ? await this.dataSource.query(
+          `SELECT tdr_revision, tdr_descripcion_cambio, tdr_fecha
+           FROM Tipos_documentos_revisiones
+           WHERE tdr_tdo_id = @0 AND tdr_estado = 1
+           ORDER BY tdr_orden, tdr_fecha`,
+          [tipoDocumentoFormato.tdo_id],
+        )
+      : [];
+    const revisionesDocumento = revisionesRows.map((r: any) => ({
+      revision: r.tdr_revision,
+      descripcionCambio: r.tdr_descripcion_cambio,
+      fecha: new Date(r.tdr_fecha).toLocaleDateString('es-CO', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      }),
+    }));
+
     const pdfDoc = await PDFDocument.create();
+    const logoBytes = leerLogoBytes();
+    const logoImage = await pdfDoc.embedJpg(logoBytes);
     const helvetica = await pdfDoc.embedFont('Helvetica');
     const helveticaBold = await pdfDoc.embedFont('Helvetica-Bold');
 
@@ -556,11 +649,23 @@ export class SolicitudesService {
     const pageHeight = 842;
     const marginLeft = 40;
     const marginRight = 40;
+    const marginTop = 30;
     const contentWidth = pageWidth - marginLeft - marginRight;
+    const headerTopY = pageHeight - marginTop;
+    const bodyTopY = headerTopY - ENCABEZADO_ALTURA - 15;
 
-    let currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
-    let yPos = pageHeight - 40;
-    let pageNumber = 1;
+    // Todas las páginas quedan registradas acá para poder dibujarles el
+    // encabezado oficial al final, una vez que se sabe el total real de
+    // páginas (igual criterio que generarFormatoOficialPdf en el frontend).
+    const paginas: PDFPage[] = [];
+    const nuevaPagina = (): PDFPage => {
+      const pagina = pdfDoc.addPage([pageWidth, pageHeight]);
+      paginas.push(pagina);
+      return pagina;
+    };
+
+    let currentPage = nuevaPagina();
+    let yPos = bodyTopY;
 
     const drawBox = (
       x: number,
@@ -656,153 +761,6 @@ export class SolicitudesService {
       });
     };
 
-    // ===== HEADER MEJORADO (incluye la info de la solicitud) =====
-    const headerBoxHeight = 118;
-    // Fondo header principal
-    drawBox(
-      marginLeft - 10,
-      yPos + 10,
-      contentWidth + 20,
-      headerBoxHeight,
-      rgb(0, 0.239, 0.6),
-      rgb(0, 0.239, 0.6),
-    );
-
-    // Línea decorativa azul más clara arriba
-    currentPage.drawRectangle({
-      x: marginLeft - 10,
-      y: yPos + 10,
-      width: contentWidth + 20,
-      height: 3,
-      color: rgb(0, 0.322, 0.8),
-    });
-
-    const titleText = `${formulario.formulario_nombre} - v${formulario.formulario_version}`;
-    const titleWidth = helveticaBold.widthOfTextAtSize(titleText, 20);
-    currentPage.drawText(titleText, {
-      x: marginLeft + (contentWidth - titleWidth) / 2,
-      y: yPos - 8,
-      size: 20,
-      font: helveticaBold,
-      color: rgb(1, 1, 1),
-    });
-
-    const subtitleText = 'Solicitud de Vinculación Comercial';
-    const subtitleWidth = helvetica.widthOfTextAtSize(subtitleText, 10);
-    currentPage.drawText(subtitleText, {
-      x: marginLeft + (contentWidth - subtitleWidth) / 2,
-      y: yPos - 28,
-      size: 10,
-      font: helvetica,
-      color: rgb(0.95, 0.95, 0.95),
-    });
-
-    // Separador fino entre el título y la info de la solicitud
-    currentPage.drawRectangle({
-      x: marginLeft + 20,
-      y: yPos - 42,
-      width: contentWidth - 40,
-      height: 1,
-      color: rgb(0.3, 0.45, 0.75),
-    });
-
-    const col1Width = contentWidth / 3;
-    const col2Width = contentWidth / 3;
-    const col3Width = contentWidth / 3;
-
-    const drawCentered = (
-      text: string,
-      colX: number,
-      colWidth: number,
-      y: number,
-      size: number,
-      font: any,
-      color: any,
-    ) => {
-      const textWidth = font.widthOfTextAtSize(text, size);
-      currentPage.drawText(text, {
-        x: colX + (colWidth - textWidth) / 2,
-        y,
-        size,
-        font,
-        color,
-      });
-    };
-
-    const col1X = marginLeft;
-    const col2X = marginLeft + col1Width;
-    const col3X = marginLeft + col1Width + col2Width;
-    const infoLabelColor = rgb(0.82, 0.88, 1);
-    const infoValueColor = rgb(1, 1, 1);
-
-    // Columna 1
-    drawCentered(
-      'N° Solicitud',
-      col1X,
-      col1Width,
-      yPos - 60,
-      8,
-      helvetica,
-      infoLabelColor,
-    );
-    drawCentered(
-      formulario.sol_numero_solicitud || 'N/A',
-      col1X,
-      col1Width,
-      yPos - 72,
-      10,
-      helveticaBold,
-      infoValueColor,
-    );
-
-    // Columna 2
-    drawCentered(
-      'Cliente',
-      col2X,
-      col2Width,
-      yPos - 60,
-      8,
-      helvetica,
-      infoLabelColor,
-    );
-    const clientLines = wrapText(
-      formulario.cliente_nombre || 'N/A',
-      col2Width - 16,
-      9,
-      helveticaBold,
-    );
-    drawCentered(
-      clientLines[0] || '',
-      col2X,
-      col2Width,
-      yPos - 72,
-      10,
-      helveticaBold,
-      infoValueColor,
-    );
-
-    // Columna 3
-    drawCentered(
-      'Centro de Operación',
-      col3X,
-      col3Width,
-      yPos - 60,
-      8,
-      helvetica,
-      infoLabelColor,
-    );
-    drawCentered(
-      formulario.centro_operacion_nombre || 'N/A',
-      col3X,
-      col3Width,
-      yPos - 72,
-      10,
-      helveticaBold,
-      infoValueColor,
-    );
-
-    yPos -= headerBoxHeight + 15;
-
     // ===== TABLA DE SECCIONES =====
     for (const seccion of secciones) {
       // Título de sección
@@ -829,74 +787,89 @@ export class SolicitudesService {
 
       yPos -= 15;
 
-      // Separar preguntas NOTA, TABLA (con filas), IMAGEN (con archivo),
-      // ESPACIO_FIRMA (espacio en blanco para firma manual) y preguntas normales
-      const notaPreguntas: any[] = [];
-      const tablaPreguntas: any[] = [];
-      const imagenPreguntas: any[] = [];
-      const espacioFirmaPreguntas: any[] = [];
-      const normalPreguntas: any[] = [];
-      for (const preg of seccion.preguntas) {
-        if (preg.fp_tipo === 'NOTA') {
-          notaPreguntas.push(preg);
-        } else if (
+      // Clasificar cada pregunta según cómo se renderiza, y agrupar en
+      // tramos de preguntas CONSECUTIVAS del mismo tipo — preservando el
+      // fp_orden real de la sección (`seccion.preguntas` ya viene ordenado
+      // así desde formulario-renderizable.service.ts). Antes se armaban 5
+      // baldes GLOBALES (todas las NOTA, todas las TABLA, etc. de la
+      // sección completa) y se dibujaba balde por balde en un orden fijo
+      // sin importar la posición real de cada pregunta — por eso una
+      // pregunta normal como "¿Solicitud de Credito?" terminaba impresa
+      // DESPUÉS de las tablas "Referencia Comercial"/"Referencia Bancaria"
+      // que en el formulario dependen de ella, solo porque el código
+      // dibujaba siempre todas las TABLA antes que todas las NORMAL.
+      type TipoRenderPregunta =
+        | 'NOTA'
+        | 'TABLA'
+        | 'IMAGEN'
+        | 'ESPACIO_FIRMA'
+        | 'NORMAL';
+      const clasificarPregunta = (preg: any): TipoRenderPregunta => {
+        if (preg.fp_tipo === 'NOTA') return 'NOTA';
+        if (
           preg.fp_tipo === 'TABLA' &&
           Array.isArray(preg.tabla_columnas) &&
           preg.tabla_columnas.length > 0 &&
           Array.isArray(preg.tabla_filas) &&
           preg.tabla_filas.length > 0
         ) {
-          tablaPreguntas.push(preg);
-        } else if (preg.fp_tipo === 'IMAGEN' && preg.imagen_ruta) {
-          imagenPreguntas.push(preg);
-        } else if (preg.fp_tipo === 'ESPACIO_FIRMA') {
-          espacioFirmaPreguntas.push(preg);
+          return 'TABLA';
+        }
+        if (preg.fp_tipo === 'IMAGEN' && preg.imagen_ruta) return 'IMAGEN';
+        if (preg.fp_tipo === 'ESPACIO_FIRMA') return 'ESPACIO_FIRMA';
+        return 'NORMAL';
+      };
+      const tramos: { tipo: TipoRenderPregunta; items: any[] }[] = [];
+      for (const preg of seccion.preguntas) {
+        const tipo = clasificarPregunta(preg);
+        const ultimoTramo = tramos[tramos.length - 1];
+        if (ultimoTramo && ultimoTramo.tipo === tipo) {
+          ultimoTramo.items.push(preg);
         } else {
-          normalPreguntas.push(preg);
+          tramos.push({ tipo, items: [preg] });
         }
       }
 
-      // Renderizar NOTAS a ancho completo primero. Igual que en pantalla
+      // Si la descripción de la pregunta ya trae ":" al final (dato así
+      // cargado en Formulario_pregunta.fp_descripcion, ej. "Actividad
+      // Economica:"), no hay que agregarle otro — antes se concatenaba
+      // siempre sin revisar, y esas preguntas terminaban mostrando
+      // "Actividad Economica::" con dos puntos pegados.
+      const conDosPuntos = (texto: string): string =>
+        texto.trim().endsWith(':') ? texto : `${texto}:`;
+
+      // Renderizar una NOTA a ancho completo. Igual que en pantalla
       // (getNotaDisplay en el frontend): fp_descripcion + fp_descripcion_adicional
       // se combinan y se parten por línea en título / subtítulo / cuerpo — el
       // cuerpo es lo único que se justifica (el título/subtítulo son
       // encabezados cortos, no párrafos).
       const notaTextWidth = contentWidth - 16;
-      for (const notaPregunta of notaPreguntas) {
-        const bloquesNota: string[] = [];
-        if (String(notaPregunta.fp_descripcion || '').trim()) {
-          bloquesNota.push(String(notaPregunta.fp_descripcion).trim());
-        }
-        if (String(notaPregunta.fp_descripcion_adicional || '').trim()) {
-          bloquesNota.push(
-            String(notaPregunta.fp_descripcion_adicional).trim(),
-          );
-        }
-        const lineasNota = bloquesNota
-          .join('\n')
-          .split('\n')
-          .map((linea) => linea.trim())
-          .filter(Boolean);
+      const renderNota = (notaPregunta: any) => {
+        const descripcionNota = String(
+          notaPregunta.fp_descripcion || '',
+        ).trim();
+        const descripcionAdicionalNota = String(
+          notaPregunta.fp_descripcion_adicional || '',
+        ).trim();
 
-        // La mayoría de las notas reales son un solo párrafo largo, sin
-        // saltos de línea. Si se tratara esa única línea como "título" (en
-        // negrita, sin justificar), el texto completo nunca se vería
-        // justificado. Solo se separa título/subtítulo cuando el autor de
-        // la pregunta realmente escribió varias líneas (mismo criterio que
-        // getNotaDisplay en el frontend).
+        // El editor de preguntas solo permite escribir fp_descripcion (no
+        // tiene campo propio para fp_descripcion_adicional) — el caso
+        // normal es un único bloque de texto, que puede traer varios
+        // párrafos separados por línea en blanco escritos por el autor, y
+        // se muestra completo como cuerpo (el bloque de abajo ya divide el
+        // cuerpo por '\n' y dibuja cada párrafo aparte). Solo si además hay
+        // una descripción adicional configurada por otra vía, la pregunta
+        // actúa como título corto y la adicional como cuerpo (mismo
+        // criterio que getNotaDisplay en el frontend).
         let notaTitulo = '';
         let notaSubtitulo = '';
         let notaCuerpo = '';
 
-        if (lineasNota.length === 1) {
-          notaCuerpo = lineasNota[0];
-        } else if (lineasNota.length === 2) {
-          notaTitulo = lineasNota[0];
-          notaCuerpo = lineasNota[1];
-        } else if (lineasNota.length > 2) {
-          notaTitulo = lineasNota[0];
-          notaSubtitulo = lineasNota[1];
-          notaCuerpo = lineasNota.slice(2).join('\n');
+        if (descripcionAdicionalNota) {
+          notaTitulo = descripcionNota;
+          notaCuerpo = descripcionAdicionalNota;
+        } else {
+          notaCuerpo = descripcionNota;
         }
 
         const tituloLinesNota = wrapText(
@@ -989,22 +962,13 @@ export class SolicitudesService {
 
         // Nueva página si es necesario
         if (yPos < 100) {
-          currentPage.drawText(`Página ${pageNumber}`, {
-            x: pageWidth / 2 - 20,
-            y: 20,
-            size: 8,
-            font: helvetica,
-            color: rgb(0.6, 0.6, 0.6),
-          });
-
-          currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
-          pageNumber++;
-          yPos = pageHeight - 40;
+          currentPage = nuevaPagina();
+          yPos = bodyTopY;
         }
-      }
+      };
 
-      // Renderizar preguntas TABLA como grillas reales (una fila = un registro)
-      for (const tablaPregunta of tablaPreguntas) {
+      // Renderizar una pregunta TABLA como grilla real (una fila = un registro)
+      const renderTabla = (tablaPregunta: any) => {
         const columnas: string[] = tablaPregunta.tabla_columnas;
         const filas: Record<string, string>[] = tablaPregunta.tabla_filas;
         const numCols = columnas.length;
@@ -1021,9 +985,8 @@ export class SolicitudesService {
         );
         for (const line of tituloLines) {
           if (yPos < 100) {
-            currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
-            pageNumber++;
-            yPos = pageHeight - 40;
+            currentPage = nuevaPagina();
+            yPos = bodyTopY;
           }
           currentPage.drawText(line, {
             x: marginLeft,
@@ -1049,9 +1012,8 @@ export class SolicitudesService {
 
         const dibujarEncabezado = () => {
           if (yPos < 100) {
-            currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
-            pageNumber++;
-            yPos = pageHeight - 40;
+            currentPage = nuevaPagina();
+            yPos = bodyTopY;
           }
           const headerHeight = 14;
           drawBox(
@@ -1082,16 +1044,8 @@ export class SolicitudesService {
 
           // Nueva página si la fila no cabe; repetir encabezado
           if (yPos - rowHeight < 100) {
-            currentPage.drawText(`Página ${pageNumber}`, {
-              x: pageWidth / 2 - 20,
-              y: 20,
-              size: 8,
-              font: helvetica,
-              color: rgb(0.6, 0.6, 0.6),
-            });
-            currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
-            pageNumber++;
-            yPos = pageHeight - 40;
+            currentPage = nuevaPagina();
+            yPos = bodyTopY;
             dibujarEncabezado();
           }
 
@@ -1123,7 +1077,7 @@ export class SolicitudesService {
         });
 
         yPos -= 10;
-      }
+      };
 
       // Renderizar preguntas IMAGEN embebiendo la imagen real en el PDF,
       // dos por fila (p.ej. logo y firma quedan uno al lado del otro)
@@ -1132,11 +1086,7 @@ export class SolicitudesService {
       const imagenMaxWidth = imagenColWidth - imagenColGap;
       const imagenMaxHeight = 90;
 
-      for (let i = 0; i < imagenPreguntas.length; i += 2) {
-        const par = [imagenPreguntas[i], imagenPreguntas[i + 1]].filter(
-          Boolean,
-        );
-
+      const renderImagenesPar = async (par: any[]) => {
         // Pre-cargar/embeber ambas imágenes de la fila antes de dibujar,
         // para poder calcular la altura real de la fila de antemano.
         const items = await Promise.all(
@@ -1191,16 +1141,8 @@ export class SolicitudesService {
           Math.max(...items.map((it) => it.imgHeight));
 
         if (yPos - rowHeight < 100) {
-          currentPage.drawText(`Página ${pageNumber}`, {
-            x: pageWidth / 2 - 20,
-            y: 20,
-            size: 8,
-            font: helvetica,
-            color: rgb(0.6, 0.6, 0.6),
-          });
-          currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
-          pageNumber++;
-          yPos = pageHeight - 40;
+          currentPage = nuevaPagina();
+          yPos = bodyTopY;
         }
 
         const rowTopY = yPos;
@@ -1211,7 +1153,7 @@ export class SolicitudesService {
           // La imagen va arriba, alineada por abajo con la más alta del
           // par, y el nombre del campo (p.ej. "Firma representante legal")
           // queda debajo, a modo de leyenda.
-          let colY = rowTopY - (maxImgHeight - item.imgHeight);
+          const colY = rowTopY - (maxImgHeight - item.imgHeight);
 
           if (item.error) {
             currentPage.drawText('(No se pudo cargar la imagen)', {
@@ -1244,18 +1186,13 @@ export class SolicitudesService {
         });
 
         yPos -= rowHeight + 12;
-      }
+      };
 
       // Renderizar preguntas ESPACIO_FIRMA como un área en blanco con leyenda
       // debajo (mismo layout de 2 por fila que las imágenes), para que el
       // cliente la firme a mano tras imprimir/descargar el PDF
       const espacioLineHeight = 14;
-      for (let i = 0; i < espacioFirmaPreguntas.length; i += 2) {
-        const par = [
-          espacioFirmaPreguntas[i],
-          espacioFirmaPreguntas[i + 1],
-        ].filter(Boolean);
-
+      const renderEspacioFirmaPar = (par: any[]) => {
         const items = par.map((espacioPregunta) => {
           const tituloLines = wrapText(
             String(espacioPregunta.fp_descripcion),
@@ -1273,16 +1210,8 @@ export class SolicitudesService {
           Math.max(...items.map((it) => it.boxHeight));
 
         if (yPos - rowHeight < 100) {
-          currentPage.drawText(`Página ${pageNumber}`, {
-            x: pageWidth / 2 - 20,
-            y: 20,
-            size: 8,
-            font: helvetica,
-            color: rgb(0.6, 0.6, 0.6),
-          });
-          currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
-          pageNumber++;
-          yPos = pageHeight - 40;
+          currentPage = nuevaPagina();
+          yPos = bodyTopY;
         }
 
         const rowTopY = yPos;
@@ -1308,149 +1237,173 @@ export class SolicitudesService {
         });
 
         yPos -= rowHeight + 12;
-      }
+      };
 
-      // Organizar preguntas NORMALES en 3 columnas - ALTURA DINÁMICA
+      // Organizar un tramo de preguntas NORMALES en 3 columnas - ALTURA DINÁMICA
       const columnWidth = contentWidth / 3;
-      const preguntasArray = normalPreguntas;
-      let preguntaIndex = 0;
+      const renderNormales = (preguntasArray: any[]) => {
+        let preguntaIndex = 0;
 
-      while (preguntaIndex < preguntasArray.length) {
-        const rowStartY = yPos;
-        const columnXPositions = [
-          marginLeft,
-          marginLeft + columnWidth,
-          marginLeft + columnWidth * 2,
-        ];
+        while (preguntaIndex < preguntasArray.length) {
+          const rowStartY = yPos;
+          const columnXPositions = [
+            marginLeft,
+            marginLeft + columnWidth,
+            marginLeft + columnWidth * 2,
+          ];
 
-        // Calcular altura real de cada columna
-        const columnHeights = [0, 0, 0];
-        for (let col = 0; col < 3; col++) {
-          if (preguntaIndex + col >= preguntasArray.length) continue;
+          // Calcular altura real de cada columna
+          const columnHeights = [0, 0, 0];
+          for (let col = 0; col < 3; col++) {
+            if (preguntaIndex + col >= preguntasArray.length) continue;
 
-          const pregunta = preguntasArray[preguntaIndex + col];
-          const preguntaText = String(pregunta.fp_descripcion);
-          const maxColWidth = columnWidth - 12;
+            const pregunta = preguntasArray[preguntaIndex + col];
+            const preguntaText = String(pregunta.fp_descripcion);
+            const maxColWidth = columnWidth - 12;
 
-          // Preguntas normales: mostrar pregunta + respuesta
-          const respuestaText = String(
-            pregunta.valor_resuelto || 'Sin respuesta',
-          );
-          const preguntaLines = wrapText(
-            preguntaText + ':',
-            maxColWidth,
-            8,
-            helveticaBold,
-          );
-          const respuestaLines = wrapText(respuestaText, maxColWidth, 8);
+            // Preguntas normales: mostrar pregunta + respuesta
+            const respuestaText = String(
+              pregunta.valor_resuelto || 'Sin respuesta',
+            );
+            const preguntaLines = wrapText(
+              conDosPuntos(preguntaText),
+              maxColWidth,
+              8,
+              helveticaBold,
+            );
+            const respuestaLines = wrapText(respuestaText, maxColWidth, 8);
 
-          // Si pregunta cabe en 1 línea y respuesta también, revisar si caben juntas
-          let totalHeight = 10;
-          if (preguntaLines.length === 1 && respuestaText.length < 30) {
-            totalHeight = 10;
-          } else {
-            totalHeight =
-              preguntaLines.length * 9 + respuestaLines.length * 9 + 8;
+            // Si pregunta cabe en 1 línea y respuesta también, revisar si caben juntas
+            let totalHeight = 10;
+            if (preguntaLines.length === 1 && respuestaText.length < 30) {
+              totalHeight = 10;
+            } else {
+              totalHeight =
+                preguntaLines.length * 9 + respuestaLines.length * 9 + 8;
+            }
+
+            columnHeights[col] = totalHeight;
           }
 
-          columnHeights[col] = totalHeight;
-        }
+          const maxHeightInRow = Math.max(...columnHeights, 15);
 
-        const maxHeightInRow = Math.max(...columnHeights, 15);
+          // Procesar hasta 3 columnas
+          for (let col = 0; col < 3; col++) {
+            if (preguntaIndex >= preguntasArray.length) break;
 
-        // Procesar hasta 3 columnas
-        for (let col = 0; col < 3; col++) {
-          if (preguntaIndex >= preguntasArray.length) break;
+            const pregunta = preguntasArray[preguntaIndex];
+            const preguntaText = String(pregunta.fp_descripcion);
 
-          const pregunta = preguntasArray[preguntaIndex];
-          const preguntaText = String(pregunta.fp_descripcion);
+            const colX = columnXPositions[col];
+            const maxColWidth = columnWidth - 12;
 
-          const colX = columnXPositions[col];
-          const maxColWidth = columnWidth - 12;
+            let currentY = rowStartY;
 
-          let currentY = rowStartY;
+            // PREGUNTAS NORMALES: mostrar pregunta + respuesta
+            const respuestaText = String(
+              pregunta.valor_resuelto || 'Sin respuesta',
+            );
+            // Documento cargado (ARCHIVO/DOCUMENTOS_TABLA con archivo real en
+            // Solicitud_archivo, ver formulario-renderizable.service.ts): se
+            // resalta en verde en vez del gris estándar de cualquier otra
+            // respuesta, para que salte a la vista qué ya se cargó.
+            const colorRespuesta = pregunta.documento_cargado
+              ? rgb(0.02, 0.45, 0.15)
+              : rgb(0.2, 0.2, 0.2);
+            const preguntaLines = wrapText(
+              conDosPuntos(preguntaText),
+              maxColWidth,
+              8,
+              helveticaBold,
+            );
+            const respuestaLines = wrapText(respuestaText, maxColWidth, 8);
 
-          // PREGUNTAS NORMALES: mostrar pregunta + respuesta
-          const respuestaText = String(
-            pregunta.valor_resuelto || 'Sin respuesta',
-          );
-          const preguntaLines = wrapText(
-            preguntaText + ':',
-            maxColWidth,
-            8,
-            helveticaBold,
-          );
-          const respuestaLines = wrapText(respuestaText, maxColWidth, 8);
-
-          // Si pregunta cabe en 1 línea y respuesta es corta, intentar poner juntas
-          if (
-            preguntaLines.length === 1 &&
-            respuestaText.length < 30 &&
-            (preguntaLines[0].length + respuestaText.length) * 4.5 < maxColWidth
-          ) {
-            // Caben en la misma línea
-            currentPage.drawText(preguntaLines[0], {
-              x: colX,
-              y: currentY,
-              size: 8,
-              font: helveticaBold,
-              color: rgb(0, 0.239, 0.6),
-            });
-
-            currentPage.drawText(respuestaText, {
-              x: colX + preguntaLines[0].length * 4.5 + 2,
-              y: currentY,
-              size: 8,
-              font: helvetica,
-              color: rgb(0.2, 0.2, 0.2),
-            });
-          } else {
-            // Mostrar pregunta (puede ser varias líneas)
-            for (let i = 0; i < preguntaLines.length; i++) {
-              currentPage.drawText(preguntaLines[i], {
+            // Si pregunta cabe en 1 línea y respuesta es corta, intentar poner juntas
+            if (
+              preguntaLines.length === 1 &&
+              respuestaText.length < 30 &&
+              (preguntaLines[0].length + respuestaText.length) * 4.5 <
+                maxColWidth
+            ) {
+              // Caben en la misma línea
+              currentPage.drawText(preguntaLines[0], {
                 x: colX,
                 y: currentY,
                 size: 8,
                 font: helveticaBold,
                 color: rgb(0, 0.239, 0.6),
               });
-              currentY -= 9;
-            }
 
-            currentY -= 2; // Pequeña separación
-
-            // Mostrar respuesta (puede ser varias líneas)
-            for (let i = 0; i < respuestaLines.length; i++) {
-              currentPage.drawText(respuestaLines[i], {
-                x: colX,
+              currentPage.drawText(respuestaText, {
+                x: colX + preguntaLines[0].length * 4.5 + 2,
                 y: currentY,
                 size: 8,
                 font: helvetica,
-                color: rgb(0.2, 0.2, 0.2),
+                color: colorRespuesta,
               });
-              currentY -= 9;
+            } else {
+              // Mostrar pregunta (puede ser varias líneas)
+              for (let i = 0; i < preguntaLines.length; i++) {
+                currentPage.drawText(preguntaLines[i], {
+                  x: colX,
+                  y: currentY,
+                  size: 8,
+                  font: helveticaBold,
+                  color: rgb(0, 0.239, 0.6),
+                });
+                currentY -= 9;
+              }
+
+              currentY -= 2; // Pequeña separación
+
+              // Mostrar respuesta (puede ser varias líneas)
+              for (let i = 0; i < respuestaLines.length; i++) {
+                currentPage.drawText(respuestaLines[i], {
+                  x: colX,
+                  y: currentY,
+                  size: 8,
+                  font: helvetica,
+                  color: colorRespuesta,
+                });
+                currentY -= 9;
+              }
             }
+
+            preguntaIndex++;
           }
 
-          preguntaIndex++;
+          yPos -= maxHeightInRow + 12;
+
+          // Nueva página si es necesario
+          if (yPos < 100) {
+            currentPage = nuevaPagina();
+            yPos = bodyTopY;
+          }
         }
+      };
 
-        yPos -= maxHeightInRow + 12;
-
-        // Nueva página si es necesario
-        if (yPos < 100) {
-          // Footer
-          currentPage.drawText(`Página ${pageNumber}`, {
-            x: pageWidth / 2 - 20,
-            y: 20,
-            size: 8,
-            font: helvetica,
-            color: rgb(0.6, 0.6, 0.6),
-          });
-
-          currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
-          pageNumber++;
-          yPos = pageHeight - 40;
+      // Dibujar los tramos en su orden real de aparición, despachando cada
+      // uno a su renderizador según el tipo — las IMAGEN/ESPACIO_FIRMA se
+      // siguen agrupando de a 2 por fila y las NORMALES en 3 columnas,
+      // pero DENTRO de cada tramo (ya no globalmente por sección), para no
+      // mezclar preguntas que en el formulario real no son consecutivas.
+      for (const tramo of tramos) {
+        if (tramo.tipo === 'NOTA') {
+          for (const notaPregunta of tramo.items) renderNota(notaPregunta);
+        } else if (tramo.tipo === 'TABLA') {
+          for (const tablaPregunta of tramo.items) renderTabla(tablaPregunta);
+        } else if (tramo.tipo === 'IMAGEN') {
+          for (let i = 0; i < tramo.items.length; i += 2) {
+            const par = [tramo.items[i], tramo.items[i + 1]].filter(Boolean);
+            await renderImagenesPar(par);
+          }
+        } else if (tramo.tipo === 'ESPACIO_FIRMA') {
+          for (let i = 0; i < tramo.items.length; i += 2) {
+            const par = [tramo.items[i], tramo.items[i + 1]].filter(Boolean);
+            renderEspacioFirmaPar(par);
+          }
+        } else {
+          renderNormales(tramo.items);
         }
       }
 
@@ -1469,12 +1422,71 @@ export class SolicitudesService {
       },
     );
 
-    currentPage.drawText(`Página ${pageNumber}`, {
-      x: pageWidth / 2 - 20,
-      y: 30,
-      size: 8,
-      font: helvetica,
-      color: rgb(0.6, 0.6, 0.6),
+    // Historial de revisiones ("CONTROL DE CAMBIOS"), al final de todo el
+    // cuerpo — cursorTabla es un objeto temporal solo para reutilizar
+    // dibujarTablaRevisionesPdf (que espera { page, y } mutable en vez de
+    // las variables sueltas currentPage/yPos que usa el resto de esta
+    // función); se sincroniza de vuelta apenas termina.
+    const cursorTabla = { page: currentPage, y: yPos };
+    dibujarTablaRevisionesPdf(
+      cursorTabla,
+      {
+        marginLeft,
+        contentWidth,
+        fontRegular: helvetica,
+        fontBold: helveticaBold,
+        checkSpace: (c, needed) => {
+          if (c.y - needed < 100) {
+            c.page = nuevaPagina();
+            c.y = bodyTopY;
+          }
+        },
+      },
+      revisionesDocumento,
+    );
+    currentPage = cursorTabla.page;
+    yPos = cursorTabla.y;
+
+    // El encabezado oficial se dibuja al final, una vez que se sabe el
+    // total real de páginas que ocupó el cuerpo — "PAGINA No. X de N"
+    // refleja la paginación real generada, no un valor fijo configurado de
+    // antemano (mismo criterio que generarFormatoOficialPdf en el frontend).
+    const totalPaginas = paginas.length;
+    // tdo_nombre suele traer el código de formato y "REV N" incluidos en el
+    // texto (ej. "F-P3-06 ... REV 10") — ambos ya se muestran en sus propias
+    // celdas del encabezado (FORMATO / REVISION), así que se recortan acá
+    // para no duplicarlos en la barra de título.
+    let tituloEncabezado =
+      tipoDocumentoFormato?.tdo_nombre || 'SOLICITUD DE VINCULACIÓN COMERCIAL';
+    const formatoCodigoValue = tipoDocumentoFormato?.tdo_formato_codigo || '';
+    if (formatoCodigoValue && tituloEncabezado.startsWith(formatoCodigoValue)) {
+      tituloEncabezado = tituloEncabezado
+        .slice(formatoCodigoValue.length)
+        .trim();
+    }
+    tituloEncabezado = tituloEncabezado
+      .replace(/[\s_-]*REV(?:ISI[OÓ]N)?\.?\s*\d+\s*$/i, '')
+      .trim();
+    paginas.forEach((pagina, idx) => {
+      dibujarEncabezadoOficialPdf(
+        pagina,
+        {
+          marginLeft,
+          contentWidth,
+          headerTopY,
+          logoImage,
+          fontRegular: helvetica,
+          fontBold: helveticaBold,
+          razonSocial: 'CARTONERA NACIONAL S.A.',
+          tituloDocumento: tituloEncabezado,
+          formatoCodigo: tipoDocumentoFormato?.tdo_formato_codigo || '-',
+          formatoCodigoSecundario:
+            tipoDocumentoFormato?.tdo_formato_codigo_secundario,
+          revision: tipoDocumentoFormato?.tdo_revision,
+        },
+        idx + 1,
+        totalPaginas,
+      );
     });
 
     const pdfBytes = await pdfDoc.save();
@@ -1501,7 +1513,7 @@ export class SolicitudesService {
   async getEtapas(): Promise<WorkflowEtapaResponseDto[]> {
     try {
       const etapas = await this.dataSource.query(
-        `SELECT wet_id AS id, wet_nombre AS nombre FROM workflow_etapas WHERE wet_activo = 1 ORDER BY wet_orden`,
+        `SELECT wet_id, wet_nombre FROM workflow_etapas WHERE wet_activo = 1 ORDER BY wet_orden`,
       );
       return etapas;
     } catch (error) {
@@ -1513,7 +1525,7 @@ export class SolicitudesService {
   async getResultados(): Promise<WorkflowResultadoResponseDto[]> {
     try {
       const resultados = await this.dataSource.query(
-        `SELECT wee_id AS id, wee_nombre AS nombre FROM workflow_estado_etapa WHERE wee_activo = 1 ORDER BY wee_id`,
+        `SELECT wee_id, wee_nombre FROM workflow_estado_etapa WHERE wee_activo = 1 ORDER BY wee_id`,
       );
       return resultados;
     } catch (error) {
