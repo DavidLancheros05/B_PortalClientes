@@ -636,6 +636,7 @@ export class SolicitudesListadosService {
         s.sol_resultado_etapa_id AS [sol_resultado_etapa_id],
         s.sol_fecha_creacion AS [sol_fecha_creacion],
         s.sol_fecha_envio AS [sol_fecha_envio],
+        s.sol_cupo_aprobado AS [sol_cupo_aprobado],
         c.cli_razon_social AS [cliente_nombre],
         c.cli_nro_identificacion AS [cliente_nit]
       FROM solicitudes s

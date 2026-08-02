@@ -30,11 +30,16 @@ parado (`git -C BACKEND status`, `git -C FRONTEND status`), nunca asumir.
   falta token/usuario.
 - **Quirk conocido**: `nest start --watch` a veces no recarga el proceso tras
   editar código — el caso más común es que revienta con
-  `Error: listen EADDRINUSE: address already in use :::3001` porque su propio
+  `Error: listen EADDRINUSE: address already in use :::<PORT>` (el puerto real
+  sale de `BACKEND/.env::PORT` — **no asumir 3001**: hay al menos un entorno
+  donde es `3003`, y el puerto 3001 puede estar ocupado por una app
+  completamente ajena a este repo; confirmar el valor de `PORT` en `.env`
+  antes de matar cualquier proceso por número de puerto) porque su propio
   intento de matar el proceso viejo falla. Cuando pase, no ir por rondas
   cortas de "esperar y revisar" — hacerlo de una sola vez:
   ```bash
-  PID=$(netstat -ano | grep LISTENING | grep ':3001' | awk '{print $5}' | head -1)
+  PORT=$(grep '^PORT=' BACKEND/.env | cut -d= -f2)
+  PID=$(netstat -ano | grep LISTENING | grep ":$PORT" | awk '{print $5}' | head -1)
   [ -n "$PID" ] && taskkill //F //PID $PID
   cd BACKEND && npm run start:dev   # run_in_background: true
   ```

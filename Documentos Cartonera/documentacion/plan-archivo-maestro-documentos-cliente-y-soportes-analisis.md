@@ -1,5 +1,53 @@
 # Archivo maestro de documentos del cliente ("documentos definitivos")
 
+> **Implementado 2026-08-02.** Las secciones 1-3 de este documento (tabla
+> `Cliente_archivo`, promoción automática en CC2, y el chequeo de vencidos
+> de Ampliación de Cupo migrado a esta tabla) ya están en código y
+> verificadas — ver `documentacion/bug-vencimiento-documentos-huecos-2026-08-02.md`
+> para el detalle de la verificación. Detalles reales que difieren de lo
+> planeado abajo:
+> - `ca_sa_id` quedó `BIGINT` (no `INT` como en el SQL de abajo) — `sa_id`
+>   en `Solicitud_archivo` es `bigint`; SQL Server exige mismo tipo para la FK.
+> - `Tipos_documentos.tdo_id` no tenía `PRIMARY KEY` (igual que le pasó a
+>   `solicitudes.sol_id` antes de la migración `20260722_fk_cascade_...`) —
+>   la migración `20260802_crear_cliente_archivo.sql` se lo agregó primero,
+>   sin eso la FK de `Cliente_archivo` no se podía crear.
+> - Se agregó un **backfill** en la misma migración (22 filas para 3
+>   clientes en la BD real al correrla): sin esto, `verificarDocumentosVencidos`
+>   habría interpretado "cero filas" como "todo vigente" para cualquier
+>   cliente aprobado antes de este cambio. Aun así, `tieneDocumentosVencidos`
+>   (`cliente-archivo.service.ts`) trata **cero filas para el cliente**
+>   (no solo cero vencidas) como vencido — conservador, no depende de que el
+>   backfill haya corrido.
+> - Sección 3 (frontend: ofrecer reutilización en "Nueva solicitud")
+>   **no se implementó** — sigue pendiente. `obtenerArchivoCliente` ya está
+>   expuesto en `GET /cliente-archivo/cliente/:clienteId`
+>   (`src/cliente-archivo/`), listo para que el frontend lo consuma cuando
+>   se construya esa pieza.
+> - El punto "fuera de alcance" de abajo (qué pasa si el cliente sube un
+>   documento *distinto* al archivado) sigue sin resolver — no se tocó.
+> - **Gap encontrado 2026-08-02, resuelto el mismo día**: `Cliente_archivo`
+>   no tenía columnas `ca_cloudinary_public_id`/`ca_resource_type`, así que
+>   `promoverDocumentos` solo podía copiar `sa_ruta_almacenamiento` — el
+>   archivo maestro del cliente terminaba apuntando al mismo asset físico
+>   que la solicitud aprobada original, sin copia propia. Riesgo real: si
+>   alguien reemplazaba/eliminaba ese documento en la solicitud original,
+>   `storageService.destroy()` lo borraba de Cloudinary y rompía también el
+>   archivo consolidado del cliente (y cualquier Ampliación de Cupo clonada
+>   desde ahí), sin aviso. **Fix**: migración
+>   `20260802_agregar_cloudinary_ids_cliente_archivo.sql` agrega las dos
+>   columnas; `promoverDocumentos` ahora usa un método nuevo
+>   `storageService.duplicate()` (`common/storage/`) que crea una copia
+>   física independiente en Cloudinary (`documentos-cliente/{cliente_id}/{tdo_id}/`)
+>   en vez de reutilizar la URL. Mismo patrón aplicado en
+>   `AmpliacionCupoService.clonarDocumentosClienteArchivo` (Camino 2 de
+>   Ampliación de Cupo) — cada nivel de reutilización tiene su propio
+>   `public_id`, ninguno depende de que los otros sigan existiendo. Detalle
+>   completo, verificación en vivo y el árbol de carpetas resultante en
+>   `documentacion/flujo-ampliacion-de-cupo.md`, corrección (18). Sin
+>   backfill: filas de `Cliente_archivo`/`Solicitud_archivo` ya creadas antes
+>   de este fix siguen compartiendo URL entre sí.
+
 ## Contexto
 
 Hoy `Solicitud_archivo` solo se relaciona con `sa_sol_id` (la solicitud) — no
@@ -105,10 +153,13 @@ documento vigente de ese tipo, mostrar una opción "Usar el que ya tienes en
 archivo (subido el DD/MM/AAAA)" vs. "Subir uno nuevo" — no auto-rellenar sin
 que el cliente confirme, para no ocultar que se está reutilizando algo viejo.
 
-### 4. Camino adicional: Ejecutivo solicita la ampliación (pendiente de decidir)
+### 4. Camino adicional: Ejecutivo solicita la ampliación
 
-Anotado 2026-07-13, **sin decidir todavía** — retomar antes de implementar
-`Cliente_archivo`:
+**Resuelto 2026-08-02**: `verificarDocumentosVencidos`
+(`ampliacion-cupo.service.ts`) ya no mira `Solicitud_archivo` — delega en
+`ClienteArchivoService.tieneDocumentosVencidos`, que consulta
+`Cliente_archivo`. Contexto que sigue vigente de cuando esto estaba
+pendiente:
 
 Una ampliación de cupo no solo puede surgir de que el cliente entre a "Nueva
 solicitud" y el sistema la auto-detecte (sección de arriba). También puede
@@ -125,10 +176,12 @@ Esto es casi exactamente lo que ya intenta hacer el módulo huérfano
 `documentacion/flujo-ampliacion-de-cupo.md`): su método
 `verificarDocumentosVencidos` ya decide si la solicitud creada por el
 Ejecutivo salta directo a Oficial de Cumplimiento (sin vencidos) o se queda
-en etapa Cliente pidiendo documentos (vencidos) — solo que hoy chequea
+en etapa Cliente pidiendo documentos (vencidos) — en 2026-07-13 chequeaba
 `Solicitud_archivo.sa_fecha_vencimiento` de la última solicitud, no
-`Cliente_archivo`, y la tabla `ampliacion_cupo` que usa no existe en la BD
-real ni la página está enlazada a ningún menú (confirmado en vivo).
+`Cliente_archivo` (que no existía), y la tabla `ampliacion_cupo` que usaba
+no existía en la BD real ni la página estaba enlazada a ningún menú. **Ya
+resuelto** (ver "Resuelto 2026-08-02" arriba y "Actualización 2026-08-01"
+en `documentacion/flujo-ampliacion-de-cupo.md` para el enlace de menú).
 
 **Decidido 2026-07-13**: se reconecta la página existente en vez de crear
 una entrada nueva — ya renombrada (`solicitud-ampliacion-cupo`, sin
@@ -151,10 +204,9 @@ Checklist de lo que falta para que esta página funcione de punta a punta:
 2. **Backend** (`AmpliacionCupoService`/`Controller`): quitar la dependencia
    del repo TypeORM/`AmpliacionCupoEntity` (ya no hay tabla propia); el
    `create()` pasa a solo insertar en `solicitudes` incluyendo esos dos
-   campos nuevos, manteniendo `verificarDocumentosVencidos` (por ahora sigue
-   chequeando `Solicitud_archivo`; se adapta a `Cliente_archivo` cuando esa
-   tabla exista — sección 1-3 de este documento, todavía no construida).
-   `findAll`/`findByCliente` pasan a ser consultas sobre `solicitudes` con
+   campos nuevos. `verificarDocumentosVencidos` ya chequea `Cliente_archivo`
+   (resuelto 2026-08-02, ver nota arriba). `findAll`/`findByCliente` pasan a
+   ser consultas sobre `solicitudes` con
    `sol_cupo_solicitado IS NOT NULL`, no sobre una tabla propia.
 3. **Selector de clientes en la página**: hoy usa `clientesService.getAll()`
    (compartido por otras 12 páginas — no se puede filtrar ahí sin
@@ -167,10 +219,10 @@ Checklist de lo que falta para que esta página funcione de punta a punta:
 4. Enlazar la página desde el menú del Ejecutivo de Negocios (hoy sigue sin
    ningún link, solo alcanzable por URL directa).
 
-`Cliente_archivo` (secciones 1-3 de este documento) sigue siendo un bloque
-aparte, más grande, todavía sin implementar — este camino EJN puede
-avanzar primero usando `Solicitud_archivo` para el chequeo de vencidos, y
-migrar a `Cliente_archivo` cuando esa tabla exista.
+`Cliente_archivo` (secciones 1-3 de este documento) ya está implementado
+(2026-08-02) y este camino EJN ya lo usa para el chequeo de vencidos —
+sigue pendiente solo la sección 3 (frontend: ofrecer reutilización en
+"Nueva solicitud").
 
 ## Fuera de alcance por ahora (anotarlo pero no implementarlo en esta pasada)
 

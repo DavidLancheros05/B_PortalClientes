@@ -23,24 +23,38 @@
 - ✅ `centros-operacion.service.ts` - ahora usa `CentroOperacionResponse`
 - ✅ Aliased old types como `@deprecated` para compatibilidad
 
-## 🔄 Pendiente
+### 4. Actualización de Componentes (2026-08-02)
+- ✅ `editar/page.tsx` - `clienteData` ya usaba `ClienteDetailResponse` vía el
+  servicio; se quitaron los `: any` sueltos en los `.map()` de centros y
+  ejecutivos, y `tiposData` pasó a tipar `TipoIdentificacionResponse[]`
+- ✅ `nuevo/page.tsx` - se quitó el `c: any` del `.map()` de centros
+- ✅ `correos-por-rol/page.tsx` - se eliminaron los tipos locales `RolBasico`/
+  `CorreoPorRol` y se importan `RolResponse`/`CorreoPorRolResponse` de
+  `api.types.ts`
+- `tsc --noEmit` sigue en 0 errores tras el cambio
 
-### Actualizar Componentes
-Los componentes siguen usando tipos locales. Necesitan actualizar:
-
-1. **editar/page.tsx** - Cambiar de tipos locales a `ClienteResponse`
-   - Usa `ClienteResponse` directamente
-   - Para `CentroOperacionResponse`, mantener la transformación a `{ id, nombre }`
-
-2. **nuevo/page.tsx** - Cambiar de tipos locales a tipos centralizados
-   - `CentroOperacionResponse` → transform a `{ id, nombre }`
-
-3. **correos-por-rol/page.tsx** - Ya usa tipos correctos después de nuestra corrección
-   - Cambiar a importar de `api.types.ts`
-
-4. **formulario-editor/hooks/usePreguntaEditor.ts** - Remover casts `as any`
-   - La raíz del problema es el type union muy amplio de `TIPOS_PREGUNTA`
-   - Necesita refactoring más profundo (no crítico ahora)
+### 5. formulario-editor/hooks/usePreguntaEditor.ts (2026-08-02)
+- Causa raíz real: no era que el union fuera "muy amplio", sino que estaba
+  **incompleto e inconsistente entre dos copias**. `hooks/types.ts::Pregunta["fp_tipo"]`
+  no incluía `SELECT_CONDICIONAL` (sí usado en preguntas reales — ver
+  `PreguntaRenderer.tsx`) y `api.types.ts::FormularioPreguntaResponse["fp_tipo"]`
+  no incluía `ESPACIO_FIRMA`. El enum real del backend
+  (`BACKEND/src/parametrizacion/formulario-preguntas/entities/formulario-pregunta.entity.ts::TipoPregunta`)
+  sí tiene los 14 valores. Se completaron ambos unions (+ el label que le
+  faltaba a `SELECT_CONDICIONAL` en `tipo-labels.ts`, exhaustivo por `Record`).
+- Aparte, `Array.prototype.includes()` en TS exige que el argumento sea
+  asignable al tipo *inferido del array literal* (el de los literales
+  listados), no al tipo completo de la variable — de ahí los `as any` en cada
+  `[TIPOS_PREGUNTA.X, ...].includes(valorDelUnionCompleto)`. Se resolvió
+  declarando los conjuntos reutilizados como constantes tipadas explícitamente
+  `Pregunta["fp_tipo"][]` (`TIPOS_CON_OPCIONES_FIJAS`, `TIPOS_CATALOGO_DOCUMENTOS`,
+  `TIPOS_SIN_REQUERIDA`, `TIPOS_CON_SINCRONIZACION_OPCIONES`,
+  `TIPOS_SELECT_MULTISELECT`) en vez de castear cada comparación.
+- Los `} as any)` sueltos en los payloads de `formularioPreguntasService.update()`
+  no hacían falta — el `Partial<FormularioPregunta>` del servicio ya aceptaba
+  esos campos sin cast.
+- Las 14 ocurrencias de `as any` quedaron en 0. `tsc --noEmit` sigue en 0
+  errores.
 
 ## Nota Sobre Transformaciones
 

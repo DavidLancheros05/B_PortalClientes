@@ -1,6 +1,7 @@
 // backend/src/app.module.ts
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
 import { UsuarioModule } from './usuarios/usuario.module';
@@ -33,6 +34,7 @@ import { UsuarioRolesModule } from './usuario-roles/usuario-roles.module';
 import { ConsecutivosModule } from './consecutivos/consecutivos.module';
 import { CartaPdfVinculacionModule } from './parametrizacion/carta-pdf-vinculacion/carta-pdf-vinculacion.module';
 import { AmpliacionCupoModule } from './ampliacion-cupo/ampliacion-cupo.module';
+import { ClienteArchivoModule } from './cliente-archivo/cliente-archivo.module';
 import { PedidosModule } from './pedidos/pedidos.module';
 import { RemisionesModule } from './remisiones/remisiones.module';
 import { FacturasModule } from './facturas/facturas.module';
@@ -43,6 +45,7 @@ import { UnoModule } from './integraciones/uno/uno.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }), // carga .env
+    ScheduleModule.forRoot(),
     TypeOrmModule.forRoot({
       type: 'mssql',
       host: process.env.DB_HOST,
@@ -93,6 +96,7 @@ import { UnoModule } from './integraciones/uno/uno.module';
     ConsecutivosModule,
     CartaPdfVinculacionModule,
     AmpliacionCupoModule,
+    ClienteArchivoModule,
     PedidosModule,
     RemisionesModule,
     FacturasModule,

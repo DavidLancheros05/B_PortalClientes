@@ -27,7 +27,8 @@ Panorama cruzado entre `BACKEND/src/` y `FRONTEND/src/app/` (ambos repos).
 
 ## 4. Documentos
 - Carga y gestión de documentos de la solicitud (`documentos`, `solicitud-documentos`, `sa_` = `Solicitud_archivo`)
-- Revisión de vencimiento de documentos: consulta de vencidos/por vencer (`mis-documentos-vencidos`) + reporte/alerta semanal por correo (`notificaciones.service.ts::procesarAlertaSemanalDocumentos`)
+- Revisión de vencimiento de documentos: consulta de vencidos/por vencer (`mis-documentos-vencidos`) + reporte/alerta semanal por correo (`notificaciones.service.ts::procesarAlertaSemanalDocumentos`, disparada por cron interno lunes 8am hora Bogotá desde 2026-08-02 — antes no tenía ningún disparador automático, ver `documentacion/bug-vencimiento-documentos-huecos-2026-08-02.md`)
+- Archivo consolidado por cliente (`Cliente_archivo`, `cliente-archivo.service.ts`): un documento vigente por (cliente, tipo), promovido automáticamente al aprobar en CC2 — ver `documentacion/plan-archivo-maestro-documentos-cliente-y-soportes-analisis.md`
 - Tres sistemas de generación de PDF (completo, carta de vinculación, plantillas con placeholders)
 
 ## 5. Notificaciones y envío de correos

@@ -16,7 +16,7 @@ import { NotificacionesModule } from '../notificaciones/notificaciones.module';
     TypeOrmModule,
     UsersModule,
     PermissionsModule,
-    NotificacionesModule,
+    forwardRef(() => NotificacionesModule),
 
     JwtModule.registerAsync({
       inject: [ConfigService],

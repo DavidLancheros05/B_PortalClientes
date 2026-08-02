@@ -46,6 +46,30 @@ export class CloudinaryStorageService implements IStorageService {
     };
   }
 
+  async duplicate(
+    sourceUrl: string,
+    options: { folder: string; filename: string; resourceType: string },
+  ): Promise<StorageUploadResult> {
+    // Cloudinary puede tomar una URL pública (incluida una propia de
+    // res.cloudinary.com) como origen y la trae del lado del servidor — no
+    // hace falta bajar el archivo por este backend y volver a subirlo.
+    // Resultado: un asset nuevo con su propio public_id, independiente del
+    // original (borrar uno no afecta al otro).
+    const result = await cloudinary.uploader.upload(sourceUrl, {
+      folder: options.folder,
+      resource_type: (options.resourceType || 'raw') as 'raw' | 'image' | 'video' | 'auto',
+      use_filename: true,
+      unique_filename: true,
+      filename_override: options.filename,
+    });
+
+    return {
+      url: result.secure_url,
+      providerId: result.public_id,
+      resourceType: result.resource_type,
+    };
+  }
+
   async destroy(providerId: string, resourceType: string): Promise<void> {
     try {
       await cloudinary.uploader.destroy(providerId, {

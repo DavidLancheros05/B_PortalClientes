@@ -18,6 +18,19 @@ export interface IStorageService {
     options: { folder: string; filename: string; mimetype?: string },
   ): Promise<StorageUploadResult>;
 
+  /**
+   * Crea una copia física independiente de un archivo ya almacenado, a
+   * partir de su URL pública — sin bajar/subir el buffer por este servidor.
+   * Usado para "reutilizar" un documento (Cliente_archivo, clonado hacia una
+   * Ampliación de Cupo) sin que dos filas de BD terminen apuntando al mismo
+   * asset: si una se reemplaza/elimina (`destroy`), la otra debe seguir
+   * intacta.
+   */
+  duplicate(
+    sourceUrl: string,
+    options: { folder: string; filename: string; resourceType: string },
+  ): Promise<StorageUploadResult>;
+
   destroy(providerId: string, resourceType: string): Promise<void>;
 
   buildDownloadUrl(

@@ -41,9 +41,19 @@ export class JwtAuthGuard implements CanActivate {
     const request = context.switchToHttp().getRequest();
     const authHeader = request.headers.authorization;
 
-    if (!authHeader) throw new UnauthorizedException('Token no provisto');
+    // Fase 1 de la migración a cookie httpOnly (ver
+    // documentacion/migracion-auth-httponly.md): acepta el header
+    // Authorization (mecanismo actual — scripts, curl, mint-jwt.mjs siguen
+    // funcionando sin cambios) y, si no viene, cae a la cookie httpOnly
+    // `pc_token` que el login ya empezó a emitir. Período de transición
+    // intencional — no retirar el soporte al header hasta que el frontend
+    // esté migrado por completo (Fase 2+).
+    const token = authHeader
+      ? authHeader.split(' ')[1]
+      : request.cookies?.pc_token;
 
-    const token = authHeader.split(' ')[1];
+    if (!token) throw new UnauthorizedException('Token no provisto');
+
     let payload: any;
     try {
       const secret = this.configService.get<string>('JWT_SECRET');

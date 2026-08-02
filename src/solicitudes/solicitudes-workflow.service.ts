@@ -5,10 +5,12 @@ import { NotificacionesService } from '../notificaciones/notificaciones.service'
 import { MailService } from '../mail/mail.service';
 import { WorkflowService } from './workflow.service';
 import { HistorialWorkflowService } from '../workflow/historial/historial-workflow.service';
+import { ClienteArchivoService } from '../cliente-archivo/cliente-archivo.service';
 import {
   IStorageService,
   STORAGE_SERVICE,
 } from '../common/storage/storage.interface';
+import { SolicitudEstadosService } from '../common/solicitud-estados/solicitud-estados.service';
 
 @Injectable()
 export class SolicitudesWorkflowService {
@@ -18,7 +20,9 @@ export class SolicitudesWorkflowService {
     private readonly mailService: MailService,
     private readonly workflowService: WorkflowService,
     private readonly historialWorkflowService: HistorialWorkflowService,
+    private readonly clienteArchivoService: ClienteArchivoService,
     @Inject(STORAGE_SERVICE) private readonly storageService: IStorageService,
+    private readonly solicitudEstadosService: SolicitudEstadosService,
   ) {}
 
   private async resolveLookupColumns() {
@@ -243,15 +247,24 @@ export class SolicitudesWorkflowService {
       // Si se está cambiando a REVISIÓN, cambiar también el resultado a PENDIENTE
       let resultadoIdActualizar: number | null = null;
 
-      if (estadoId === 3 && solicitudPrevio) {
-        // ASC = 3, RECHAZADO = 3, PENDIENTE = 1
-        const estaPendiente = estadoPrevio === 2;
-        const estaEnASC = etapaPrevia === 3;
-        const estaRechazado = resultadoPrevio === 3;
+      const estadoRevisionCheck =
+        await this.solicitudEstadosService.obtenerEstadoPorCodigo('REVISION');
+      if (estadoId === estadoRevisionCheck?.id && solicitudPrevio) {
+        const [estadoPendienteCheck, etapaASC, resultadoRechazado] =
+          await Promise.all([
+            this.solicitudEstadosService.obtenerEstadoPorCodigo('PENDIENTE'),
+            this.workflowService.obtenerEtapaPorCodigo('ASC'),
+            this.workflowService.obtenerResultadoPorCodigo('RECHAZADO'),
+          ]);
+        const estaPendiente = estadoPrevio === estadoPendienteCheck?.id;
+        const estaEnASC = etapaPrevia === etapaASC?.wet_id;
+        const estaRechazado = resultadoPrevio === resultadoRechazado?.wee_id;
 
         if (estaPendiente && estaEnASC && estaRechazado) {
           // Cambiar resultado a PENDIENTE cuando el cliente edita después de rechazo
-          resultadoIdActualizar = 1;
+          const resultadoPendienteCheck =
+            await this.workflowService.obtenerResultadoPorCodigo('PENDIENTE');
+          resultadoIdActualizar = resultadoPendienteCheck?.wee_id ?? null;
           console.log(
             `✅ Caso especial detectado: Solicitud ${solicitudId} de Pendiente+ASC+Rechazado → Revisión. Resultado: PENDIENTE`,
           );
@@ -420,12 +433,20 @@ export class SolicitudesWorkflowService {
       await queryRunner.commitTransaction();
 
       try {
-        if (estadoId === 3 || estadoId === 4) {
-          await this.notificacionesService.notificarEstadoSolicitud(
-            solicitudId,
-            estadoId,
-          );
-        } else if (
+        // NOTA: cambiarEstado() solo maneja transiciones a BORRADOR(1)/
+        // PENDIENTE(2) — ver rama de arriba ("Para estados 3+ no cambiamos
+        // la etapa"). Las transiciones reales a REVISION/APROBADA/RECHAZADA
+        // pasan por guardarConceptoGenerico/aprobarRechazarSolicitud, que ya
+        // tienen sus propias notificaciones correctas al cliente
+        // (enviarCartaVinculacionPorCorreo, notificarRechazoSolicitud). Acá
+        // había una rama que notificaba "aprobada/rechazada" cuando
+        // estadoId era 3/4 — nunca se disparaba (nada llama a este método
+        // con esos valores) y, si algún día se hubiera llamado, habría
+        // duplicado el correo que ya envían esas otras funciones. Se retiró
+        // en vez de solo corregir el número (ver
+        // documentacion/auditoria-valores-quemados-hardcodeados.md, bug #2,
+        // solución de fondo #1).
+        if (
           estadoId === 2 &&
           estadoPrevio !== 2 &&
           documentosDiferidosFaltantes.length === 0
@@ -589,15 +610,14 @@ export class SolicitudesWorkflowService {
     try {
 
       // Obtener IDs de estados desde BD (sin hardcodear)
-      const estadosRevisionResult = await queryRunner.query(
-        `SELECT ses_id FROM solicitud_estados WHERE ses_codigo = 'REVISION'`,
-      );
-      const estadoRevision = estadosRevisionResult?.[0];
-
-      const estadosPendienteResult = await queryRunner.query(
-        `SELECT ses_id FROM solicitud_estados WHERE ses_codigo = 'PENDIENTE'`,
-      );
-      const estadoPendiente = estadosPendienteResult?.[0];
+      const estadoRevision =
+        await this.solicitudEstadosService.obtenerEstadoPorCodigo(
+          'REVISION',
+        );
+      const estadoPendiente =
+        await this.solicitudEstadosService.obtenerEstadoPorCodigo(
+          'PENDIENTE',
+        );
 
       // Obtener etapa ASC (Auxiliar Servicio Cliente - la que está procesando)
       const etapaSACResult = await queryRunner.query(
@@ -606,8 +626,8 @@ export class SolicitudesWorkflowService {
       const etapaSAC = etapaSACResult?.[0];
 
       console.log('[aprobarRechazarSolicitud] Estados y etapas:', {
-        estadoRevision: estadoRevision?.ses_id,
-        estadoPendiente: estadoPendiente?.ses_id,
+        estadoRevision: estadoRevision?.id,
+        estadoPendiente: estadoPendiente?.id,
         etapaSAC: etapaSAC?.wet_id,
         modo_solucion,
       });
@@ -627,7 +647,7 @@ export class SolicitudesWorkflowService {
           `SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'OFC'`,
         );
         etapaDestId = etapaOFC.wet_id;
-        estadoId = estadoRevision.ses_id;
+        estadoId = estadoRevision!.id;
         resultadoCodigo = 'PENDIENTE';
         comentario = 'Solicitud aprobada en Auxiliar Servicio Cliente';
         observacionCliente = 'Tu solicitud se encuentra en revisión.';
@@ -638,19 +658,19 @@ export class SolicitudesWorkflowService {
         resultadoCodigo = 'RECHAZADO';
 
         if (modo_solucion === 'cliente_actualiza') {
-          estadoId = estadoPendiente.ses_id;
+          estadoId = estadoPendiente!.id;
           comentario =
             'Solicitud rechazada en Auxiliar Servicio Cliente - Cliente debe actualizar';
           observacionCliente =
             'El auxiliar de servicio al cliente rechazó tu solicitud porque algunos documentos tienen la fecha de emisión incorrecta o no corresponden. Corrige los documentos marcados en "Mis Documentos".';
         } else if (modo_solucion === 'auxiliar_actualiza') {
-          estadoId = estadoRevision.ses_id;
+          estadoId = estadoRevision!.id;
           comentario =
             'Solicitud rechazada en Auxiliar Servicio Cliente - Auxiliar debe actualizar';
           observacionCliente =
             'Tu solicitud está en revisión. Te avisaremos por correo cuando haya una decisión.';
         } else {
-          estadoId = estadoPendiente.ses_id;
+          estadoId = estadoPendiente!.id;
           comentario = 'Solicitud rechazada en Auxiliar Servicio Cliente';
           observacionCliente =
             'Tu solicitud fue rechazada por el auxiliar de servicio al cliente.';
@@ -872,10 +892,11 @@ export class SolicitudesWorkflowService {
         );
       }
 
-      const estadoRevision = await this.dataSource.query(
-        `SELECT ses_id FROM solicitud_estados WHERE ses_codigo = 'REVISION'`,
-      );
-      const estadoRevisionId = estadoRevision?.[0]?.ses_id;
+      const estadoRevision =
+        await this.solicitudEstadosService.obtenerEstadoPorCodigo(
+          'REVISION',
+        );
+      const estadoRevisionId = estadoRevision?.id;
 
       const resultado = await this.workflowService.cambiarEtapa(
         sa_sol_id,
@@ -973,7 +994,7 @@ export class SolicitudesWorkflowService {
 
     try {
       const [solicitudActual] = await queryRunner.query(
-        `SELECT s.sol_etapa_actual_id, we.wet_codigo
+        `SELECT s.sol_etapa_actual_id, s.sol_cliente_id, we.wet_codigo
          FROM solicitudes s
          LEFT JOIN workflow_etapas we ON we.wet_id = s.sol_etapa_actual_id
          WHERE s.sol_id = @0`,
@@ -981,16 +1002,20 @@ export class SolicitudesWorkflowService {
       );
       const etapaActualId = solicitudActual?.sol_etapa_actual_id;
       const etapaActualCodigo = solicitudActual?.wet_codigo;
+      const clienteIdSolicitud = solicitudActual?.sol_cliente_id;
 
-      const [estadoRevision] = await queryRunner.query(
-        `SELECT ses_id FROM solicitud_estados WHERE ses_codigo = 'REVISION'`,
-      );
-      const [estadoAprobada] = await queryRunner.query(
-        `SELECT ses_id FROM solicitud_estados WHERE ses_codigo = 'APROBADA'`,
-      );
-      const [estadoRechazada] = await queryRunner.query(
-        `SELECT ses_id FROM solicitud_estados WHERE ses_codigo = 'RECHAZADA'`,
-      );
+      const estadoRevision =
+        await this.solicitudEstadosService.obtenerEstadoPorCodigo(
+          'REVISION',
+        );
+      const estadoAprobada =
+        await this.solicitudEstadosService.obtenerEstadoPorCodigo(
+          'APROBADA',
+        );
+      const estadoRechazada =
+        await this.solicitudEstadosService.obtenerEstadoPorCodigo(
+          'RECHAZADA',
+        );
 
       let etapaDestId: number;
       let estadoId: number;
@@ -1000,7 +1025,7 @@ export class SolicitudesWorkflowService {
 
       if (!aprobado) {
         etapaDestId = etapaActualId;
-        estadoId = estadoRechazada.ses_id;
+        estadoId = estadoRechazada!.id;
         resultadoCodigo = 'RECHAZADO';
         observacionCliente = `Solicitud rechazada de forma definitiva${
           etapaActualCodigo === 'OFC' ? ' por Cumplimiento' : ''
@@ -1011,12 +1036,12 @@ export class SolicitudesWorkflowService {
           [etapa_codigo_siguiente],
         );
         etapaDestId = etapaSiguiente.wet_id;
-        estadoId = estadoRevision.ses_id;
+        estadoId = estadoRevision!.id;
         resultadoCodigo = 'PENDIENTE';
         observacionCliente = 'Tu solicitud se encuentra en revisión.';
       } else {
         etapaDestId = etapaActualId;
-        estadoId = estadoAprobada.ses_id;
+        estadoId = estadoAprobada!.id;
         resultadoCodigo = 'APROBADO';
         observacionCliente =
           '¡Tu solicitud fue aprobada! Ya puedes operar con el cupo asignado.';
@@ -1145,6 +1170,19 @@ export class SolicitudesWorkflowService {
         );
       }
 
+      // Promoción a Cliente_archivo: solo cuando la solicitud queda
+      // APROBADA en CC2 (no antes) — un prospecto rechazado nunca llega a
+      // ser "cliente creado", así que no debe archivar documentos para
+      // reutilizar. Misma transacción/queryRunner que el resto de la
+      // aprobación: si esto falla, se revierte junto con todo lo demás.
+      if (aprobado && etapaActualCodigo === 'CC2' && clienteIdSolicitud) {
+        await this.clienteArchivoService.promoverDocumentos(
+          clienteIdSolicitud,
+          sa_sol_id,
+          queryRunner,
+        );
+      }
+
       const mensajeHistorial = aprobado
         ? `Aprobado en etapa ${etapaActualCodigo}`
         : `Rechazado en etapa ${etapaActualCodigo}`;
@@ -1259,10 +1297,9 @@ export class SolicitudesWorkflowService {
       throw new Error('Solicitud no encontrada');
     }
 
-    const [estadoRechazada] = await this.dataSource.query(
-      `SELECT ses_id FROM solicitud_estados WHERE ses_codigo = 'RECHAZADA'`,
-    );
-    if (solicitud.sol_estado_id !== estadoRechazada.ses_id) {
+    const estadoRechazada =
+      await this.solicitudEstadosService.obtenerEstadoPorCodigo('RECHAZADA');
+    if (solicitud.sol_estado_id !== estadoRechazada?.id) {
       throw new Error(
         'Solo se puede finalizar la gestión sobre una solicitud rechazada',
       );
@@ -1544,9 +1581,10 @@ export class SolicitudesWorkflowService {
       const [etapaSiguiente] = await queryRunner.query(
         `SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'CC2'`,
       );
-      const [estadoRevision] = await queryRunner.query(
-        `SELECT ses_id FROM solicitud_estados WHERE ses_codigo = 'REVISION'`,
-      );
+      const estadoRevision =
+        await this.solicitudEstadosService.obtenerEstadoPorCodigo(
+          'REVISION',
+        );
       const [resultadoPendiente] = await queryRunner.query(
         `SELECT wee_id FROM workflow_estado_etapa WHERE wee_codigo = 'PENDIENTE'`,
       );
@@ -1562,7 +1600,7 @@ export class SolicitudesWorkflowService {
           sol_observacion_cliente = @5
         WHERE sol_id = @4`,
         [
-          estadoRevision.ses_id,
+          estadoRevision!.id,
           etapaSiguiente.wet_id,
           resultadoPendiente.wee_id,
           usuario_modifica,
@@ -1619,10 +1657,10 @@ export class SolicitudesWorkflowService {
     usuario_modifica: number,
   ) {
     try {
-      const [estadoResult] = await this.dataSource.query(
-        `SELECT ses_id FROM solicitud_estados WHERE ses_codigo = @0`,
-        [estadoCodigo],
-      );
+      const estadoResult =
+        await this.solicitudEstadosService.obtenerEstadoPorCodigo(
+          estadoCodigo,
+        );
       const [etapaResult] = await this.dataSource.query(
         `SELECT wet_id FROM workflow_etapas WHERE wet_codigo = @0`,
         [etapaCodigo],
@@ -1640,7 +1678,7 @@ export class SolicitudesWorkflowService {
 
       return this.actualizarEstadoFlujo(
         sa_sol_id,
-        estadoResult.ses_id,
+        estadoResult!.id,
         etapaResult.wet_id,
         resultadoResult.wee_id,
         usuario_modifica,

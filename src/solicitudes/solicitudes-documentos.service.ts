@@ -129,7 +129,50 @@ export class SolicitudesDocumentosService {
     `;
 
     try {
-      return await this.dataSource.query(sql, [solicitudId]);
+      const documentos = await this.dataSource.query(sql, [solicitudId]);
+      if (documentos.length > 0) return documentos;
+
+      // Una ampliación de cupo creada por el Ejecutivo (Camino 2, ver
+      // documentacion/flujo-ampliacion-de-cupo.md) nunca hace que el cliente
+      // vuelva a subir documentos — por diseño, reutiliza los ya verificados.
+      // Sin este fallback, Solicitud_archivo para este sol_id sale vacío y la
+      // pantalla de revisión muestra "sin documentos", aunque el cliente sí
+      // tenga papeles vigentes en su archivo consolidado (Cliente_archivo).
+      // sa_id/fp_id quedan NULL a propósito: no existen como Solicitud_archivo
+      // de ESTA solicitud, así que no se pueden pedir por
+      // GET /solicitudes/:id/respuestas/archivo/:saId (ese endpoint exige
+      // sa_sol_id = :id). sa_origen le indica al frontend
+      // (getArchivoPreviewUrl) que use sa_ruta_almacenamiento directo en vez
+      // de armar esa URL.
+      const [solicitud] = await this.dataSource.query(
+        `SELECT sol_cliente_id, sol_cupo_solicitado FROM solicitudes WHERE sol_id = @0`,
+        [solicitudId],
+      );
+      if (!solicitud || solicitud.sol_cupo_solicitado == null) {
+        return documentos;
+      }
+
+      return await this.dataSource.query(
+        `SELECT ca.ca_id AS sa_id, CAST(NULL AS INT) AS sa_sol_id, CAST(NULL AS INT) AS fp_id,
+                ca.ca_nombre_original AS sa_nombre_original, CAST(NULL AS NVARCHAR(255)) AS sa_nombre_guardado,
+                CAST(NULL AS BIGINT) AS sa_tamaño_bytes, ca.ca_tipo_mime AS sa_tipo_mime,
+                ca.ca_ruta_almacenamiento AS sa_ruta_almacenamiento, CAST(NULL AS INT) AS sa_cargado_por,
+                'activo' AS sa_estado, ca.ca_created_at AS fecha_carga,
+                ca.ca_fecha_emision AS sd_fecha_emision, ca.ca_fecha_vencimiento AS sd_fecha_vencimiento,
+                CAST(0 AS BIT) AS sd_requiere_cambio, 'cliente_archivo' AS sa_origen,
+                td.tdo_id, td.tdo_nombre, td.tdo_vigencia_dias,
+                td.tdo_regla_vigencia, td.tdo_anios_atras_permitidos,
+                td.tdo_tiene_plantilla, td.tdo_plantilla_contenido, td.tdo_tipo_plantilla,
+                td.tdo_formato_codigo, td.tdo_formato_codigo_secundario,
+                td.tdo_revision, td.tdo_paginas_total, td.tdo_permite_vencimiento,
+                td.tdo_encabezado_tipo, td.tdo_encabezado_imagen_url,
+                td.tdo_pie_pagina_tipo, td.tdo_pie_pagina_texto, td.tdo_pie_pagina_imagen_url
+         FROM Cliente_archivo ca
+         JOIN Tipos_documentos td ON td.tdo_id = ca.ca_tdo_id
+         WHERE ca.ca_cli_id = @0
+         ORDER BY td.tdo_nombre ASC`,
+        [solicitud.sol_cliente_id],
+      );
     } catch (error) {
       console.error('Error obteniendo documentos con vigencia:', error);
       throw error;

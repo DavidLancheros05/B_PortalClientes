@@ -16,6 +16,40 @@ export class SolicitudesRespuestasService {
     @Inject(STORAGE_SERVICE) private readonly storageService: IStorageService,
   ) {}
 
+  /**
+   * Fecha de vencimiento de un documento según la regla de vigencia de su
+   * tipo. 'DIAS' (tdo_vigencia_dias) es fecha_emision + N días. 'ANIO'
+   * (tdo_anios_atras_permitidos, ej. RUT/Estados GYP) no tiene vigencia_dias
+   * — antes de este fix esto hacía que sa_fecha_vencimiento quedara NULL
+   * para siempre en esos documentos, que por eso nunca aparecían en la
+   * alerta semanal ni en el chequeo de "documentos vencidos" de Ampliación
+   * de Cupo. Mismo criterio que calcularEstadoAnioDocumento en el frontend
+   * (documentos-vigencia.util.ts): el documento es válido mientras
+   * anioActual - anioEmision <= aniosAtrasPermitidos, es decir, vence el 31
+   * de diciembre de (anioEmision + aniosAtrasPermitidos).
+   */
+  private calcularFechaVencimiento(
+    fechaEmision: string,
+    tdoVigenciaDias?: number | null,
+    tdoReglaVigencia?: string | null,
+    tdoAniosAtrasPermitidos?: number | null,
+  ): Date | null {
+    const [year, month, day] = fechaEmision.split('-').map(Number);
+    if (!year || !month || !day) return null;
+
+    if (tdoVigenciaDias) {
+      const fechaVencimiento = new Date(year, month - 1, day);
+      fechaVencimiento.setDate(fechaVencimiento.getDate() + tdoVigenciaDias);
+      return fechaVencimiento;
+    }
+
+    if (tdoReglaVigencia === 'ANIO' && tdoAniosAtrasPermitidos != null) {
+      return new Date(year + tdoAniosAtrasPermitidos, 11, 31);
+    }
+
+    return null;
+  }
+
   async obtenerRespuestas(
     solicitudId: number,
   ): Promise<SolicitudRespuestaDto[]> {
@@ -369,28 +403,25 @@ export class SolicitudesRespuestasService {
 
         if (tdo_tipo_documento_id) {
           const getDocumentoSQL = `
-            SELECT ${COLUMNAS.TIPOS_DOCUMENTOS.vigencia}
+            SELECT ${COLUMNAS.TIPOS_DOCUMENTOS.vigencia}, tdo_regla_vigencia, tdo_anios_atras_permitidos
             FROM ${TABLAS.TIPOS_DOCUMENTOS}
             WHERE ${COLUMNAS.TIPOS_DOCUMENTOS.id} = @0
           `;
           const docResult = await queryRunner.query(getDocumentoSQL, [
             tdo_tipo_documento_id,
           ]);
-          const tdo_vigencia_dias =
-            docResult?.[0]?.[COLUMNAS.TIPOS_DOCUMENTOS.vigencia];
+          const tipoDocumento = docResult?.[0];
 
           fechaEmisionValue = fechaEmision;
-          if (tdo_vigencia_dias) {
-            const [year, month, day] = fechaEmision.split('-').map(Number);
-            const fechaBase = new Date(year, month - 1, day);
-            const fechaVencimiento = new Date(fechaBase);
-            fechaVencimiento.setDate(
-              fechaVencimiento.getDate() + tdo_vigencia_dias,
-            );
-            fechaVencimientoValue = fechaVencimiento
-              .toISOString()
-              .split('T')[0];
-          }
+          const fechaVencimiento = this.calcularFechaVencimiento(
+            fechaEmision,
+            tipoDocumento?.[COLUMNAS.TIPOS_DOCUMENTOS.vigencia],
+            tipoDocumento?.tdo_regla_vigencia,
+            tipoDocumento?.tdo_anios_atras_permitidos,
+          );
+          fechaVencimientoValue = fechaVencimiento
+            ? fechaVencimiento.toISOString().split('T')[0]
+            : null;
         } else {
           console.warn(
             '⚠️  [guardarRespuestaArchivo] No se encontró fp_tipo_documento_id para fp_id:',
@@ -488,28 +519,24 @@ export class SolicitudesRespuestasService {
         throw new Error(`No se encontró tipo de documento para fp_id ${fpId}`);
       }
 
-      // 2. Obtener tdo_vigencia_dias
+      // 2. Obtener regla de vigencia del tipo de documento
       const getDocumentoSQL = `
-        SELECT ${COLUMNAS.TIPOS_DOCUMENTOS.vigencia}
+        SELECT ${COLUMNAS.TIPOS_DOCUMENTOS.vigencia}, tdo_regla_vigencia, tdo_anios_atras_permitidos
         FROM ${TABLAS.TIPOS_DOCUMENTOS}
         WHERE ${COLUMNAS.TIPOS_DOCUMENTOS.id} = @0
       `;
       const docResult = await queryRunner.query(getDocumentoSQL, [
         tdo_tipo_documento_id,
       ]);
-      const tdo_vigencia_dias =
-        docResult?.[0]?.[COLUMNAS.TIPOS_DOCUMENTOS.vigencia];
+      const tipoDocumento = docResult?.[0];
 
       // 3. Calcular fecha de vencimiento
-      let fechaVencimiento = null;
-      if (tdo_vigencia_dias) {
-        const [year, month, day] = fechaEmision.split('-').map(Number);
-        const fechaBase = new Date(year, month - 1, day);
-        fechaVencimiento = new Date(fechaBase);
-        fechaVencimiento.setDate(
-          fechaVencimiento.getDate() + tdo_vigencia_dias,
-        );
-      }
+      const fechaVencimiento = this.calcularFechaVencimiento(
+        fechaEmision,
+        tipoDocumento?.[COLUMNAS.TIPOS_DOCUMENTOS.vigencia],
+        tipoDocumento?.tdo_regla_vigencia,
+        tipoDocumento?.tdo_anios_atras_permitidos,
+      );
 
       // 4. Actualizar la fecha en Solicitud_archivo (por archivo, no por tipo)
       const updateSQL = `

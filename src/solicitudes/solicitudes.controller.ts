@@ -244,6 +244,7 @@ export class SolicitudesController {
       sol_estado_id: Number(ultima.sol_estado_id),
       sol_fecha_creacion: ultima.sol_fecha_creacion,
       sol_fecha_envio: ultima.sol_fecha_envio,
+      sol_cupo_aprobado: ultima.sol_cupo_aprobado,
       respuestas,
     };
   }
@@ -259,7 +260,8 @@ export class SolicitudesController {
       borradores: solicitudes.filter((s) => s.sol_estado_id === 1).length,
       pendientes: solicitudes.filter((s) => s.sol_estado_id === 2).length,
       en_revision: solicitudes.filter((s) => s.sol_estado_id === 3).length,
-      completadas: solicitudes.filter((s) => s.sol_estado_id === 4).length,
+      aprobadas: solicitudes.filter((s) => s.sol_estado_id === 5).length,
+      rechazadas: solicitudes.filter((s) => s.sol_estado_id === 6).length,
       consumo_promedio:
         solicitudes.length > 0
           ? solicitudes.reduce(

@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { DataSource } from 'typeorm';
 import { MailService } from '../mail/mail.service';
 
@@ -354,15 +355,6 @@ export class NotificacionesService {
     return result?.[0] || null;
   }
 
-  private getEstadoLabel(estadoId: number) {
-    if (estadoId === 1) return 'Pendiente';
-    if (estadoId === 2) return 'Revisión Comercial';
-    if (estadoId === 3) return 'Aprobada';
-    if (estadoId === 4) return 'Rechazada';
-    if (estadoId === 5) return 'Borrador';
-    return 'Desconocido';
-  }
-
   private async enviarConPlantilla(
     codigoEvento: string,
     variables: Record<string, any>,
@@ -632,31 +624,6 @@ export class NotificacionesService {
     );
   }
 
-  async notificarEstadoSolicitud(solicitudId: number, estadoId: number) {
-    const solicitud = await this.getSolicitudData(solicitudId);
-    if (!solicitud || !solicitud.cliente_email) {
-      return { ok: false, mensaje: 'Solicitud o correo cliente no encontrado' };
-    }
-
-    const estado = this.getEstadoLabel(estadoId);
-    const variables = {
-      numero_solicitud: solicitud.numero_solicitud,
-      cliente_nombre: solicitud.cliente_nombre || 'Cliente',
-      estado_solicitud: estado,
-      detalle_estado:
-        estadoId === 3
-          ? 'Tu solicitud fue aprobada.'
-          : estadoId === 4
-            ? 'Tu solicitud fue rechazada.'
-            : `La solicitud cambió a estado ${estado}.`,
-      portal_url: this.construirPortalUrl(`/solicitudes/${solicitudId}`),
-    };
-
-    return this.enviarConPlantilla('SOLICITUD_ESTADO_CLIENTE', variables, [
-      String(solicitud.cliente_email),
-    ]);
-  }
-
   async notificarRechazoSolicitud(
     solicitudId: number,
     motivoDescripcion: string | null,
@@ -793,6 +760,29 @@ export class NotificacionesService {
     );
 
     return { ok: true };
+  }
+
+  // Antes nada llamaba a procesarAlertaSemanalDocumentos automáticamente —
+  // el endpoint POST /notificaciones/alertas-documentos/procesar existía,
+  // pero sin nada que lo disparara, la "alerta semanal" nunca salía sola.
+  // Lunes 8am hora Bogotá; se pasa forzar=true porque el cron ya garantiza
+  // que es lunes, sin depender de que la zona horaria del proceso (Render)
+  // coincida con el chequeo interno de día de la semana.
+  @Cron('0 8 * * 1', {
+    name: 'alertaSemanalDocumentosVencidos',
+    timeZone: 'America/Bogota',
+  })
+  async ejecutarAlertaSemanalDocumentosProgramada() {
+    try {
+      const resultado = await this.procesarAlertaSemanalDocumentos(true);
+      this.logger.log(
+        `[cron alertaSemanalDocumentos] Procesado: ${JSON.stringify(resultado)}`,
+      );
+    } catch (error: any) {
+      this.logger.error(
+        `[cron alertaSemanalDocumentos] Error: ${error?.message}`,
+      );
+    }
   }
 
   async procesarAlertaSemanalDocumentos(forzar: boolean = false) {

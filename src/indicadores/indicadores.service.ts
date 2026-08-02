@@ -75,14 +75,15 @@ export class IndicadoresService {
     const sql = `
       SELECT
         COUNT(*) AS total_solicitudes,
-        SUM(CASE WHEN sol_estado_id = 3 THEN 1 ELSE 0 END) AS aprobadas,
-        SUM(CASE WHEN sol_estado_id = 4 THEN 1 ELSE 0 END) AS rechazadas,
-        SUM(CASE WHEN sol_estado_id IN (2) THEN 1 ELSE 0 END) AS pendientes
-      FROM solicitudes
-      WHERE sol_estado_id != 1
-        AND (@0 IS NULL OR sol_fecha_envio >= @0)
-        AND (@1 IS NULL OR sol_fecha_envio <= @1)
-        AND (@2 IS NULL OR sol_co_id = @2)
+        SUM(CASE WHEN se.ses_codigo = 'APROBADA' THEN 1 ELSE 0 END) AS aprobadas,
+        SUM(CASE WHEN se.ses_codigo = 'RECHAZADA' THEN 1 ELSE 0 END) AS rechazadas,
+        SUM(CASE WHEN se.ses_codigo IN ('PENDIENTE', 'REVISION') THEN 1 ELSE 0 END) AS pendientes
+      FROM solicitudes s
+      JOIN solicitud_estados se ON se.ses_id = s.sol_estado_id
+      WHERE se.ses_codigo != 'BORRADOR'
+        AND (@0 IS NULL OR s.sol_fecha_envio >= @0)
+        AND (@1 IS NULL OR s.sol_fecha_envio <= @1)
+        AND (@2 IS NULL OR s.sol_co_id = @2)
     `;
     const rows = await this.dataSource.query(sql, [
       fechaDesde,
@@ -457,16 +458,17 @@ export class IndicadoresService {
   private async queryPorMes(coId: number | null): Promise<MesTendencia[]> {
     const sql = `
       SELECT
-        FORMAT(sol_fecha_envio, 'yyyy-MM') AS mes,
+        FORMAT(s.sol_fecha_envio, 'yyyy-MM') AS mes,
         COUNT(*) AS total,
-        SUM(CASE WHEN sol_estado_id = 3 THEN 1 ELSE 0 END) AS aprobadas,
-        SUM(CASE WHEN sol_estado_id = 4 THEN 1 ELSE 0 END) AS rechazadas
-      FROM solicitudes
-      WHERE sol_estado_id != 1
-        AND sol_fecha_envio IS NOT NULL
-        AND sol_fecha_envio >= DATEADD(month, -6, GETDATE())
-        AND (@0 IS NULL OR sol_co_id = @0)
-      GROUP BY FORMAT(sol_fecha_envio, 'yyyy-MM')
+        SUM(CASE WHEN se.ses_codigo = 'APROBADA' THEN 1 ELSE 0 END) AS aprobadas,
+        SUM(CASE WHEN se.ses_codigo = 'RECHAZADA' THEN 1 ELSE 0 END) AS rechazadas
+      FROM solicitudes s
+      JOIN solicitud_estados se ON se.ses_id = s.sol_estado_id
+      WHERE se.ses_codigo != 'BORRADOR'
+        AND s.sol_fecha_envio IS NOT NULL
+        AND s.sol_fecha_envio >= DATEADD(month, -6, GETDATE())
+        AND (@0 IS NULL OR s.sol_co_id = @0)
+      GROUP BY FORMAT(s.sol_fecha_envio, 'yyyy-MM')
       ORDER BY mes
     `;
     const rows = await this.dataSource.query(sql, [coId]);

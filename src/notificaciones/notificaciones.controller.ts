@@ -1,15 +1,32 @@
-import { Body, Controller, Get, Param, Post, Put, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Put,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { NotificacionesService } from './notificaciones.service';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from '../auth/roles.decorator';
 
+@UseGuards(JwtAuthGuard)
 @Controller('notificaciones')
 export class NotificacionesController {
   constructor(private readonly notificacionesService: NotificacionesService) {}
 
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN')
   @Get('plantillas')
   async listarPlantillas() {
     return this.notificacionesService.listarPlantillas();
   }
 
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN')
   @Put('plantillas/:codigo')
   async actualizarPlantilla(
     @Param('codigo') codigo: string,
@@ -26,6 +43,8 @@ export class NotificacionesController {
     return this.notificacionesService.actualizarPlantilla(codigo, body);
   }
 
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN')
   @Post('alertas-documentos/procesar')
   async procesarAlertaDocumentos(@Query('forzar') forzar?: string) {
     return this.notificacionesService.procesarAlertaSemanalDocumentos(

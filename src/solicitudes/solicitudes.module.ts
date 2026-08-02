@@ -18,6 +18,8 @@ import { WorkflowModule } from '../workflow/workflow.module';
 import { WorkflowService } from './workflow.service';
 import { StorageModule } from '../common/storage/storage.module';
 import { PermissionsModule } from '../permissions/permissions.module';
+import { ClienteArchivoModule } from '../cliente-archivo/cliente-archivo.module';
+import { SolicitudEstadosModule } from '../common/solicitud-estados/solicitud-estados.module';
 
 @Module({
   imports: [
@@ -28,6 +30,8 @@ import { PermissionsModule } from '../permissions/permissions.module';
     WorkflowModule,
     StorageModule,
     PermissionsModule,
+    ClienteArchivoModule,
+    SolicitudEstadosModule,
   ],
   controllers: [SolicitudesController], // <-- esto es clave
   providers: [
