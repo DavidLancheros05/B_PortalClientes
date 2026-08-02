@@ -65,86 +65,25 @@ export class FormularioRenderizableService {
   async obtenerFormularioRenderizable(
     solicitudId: number,
   ): Promise<FormularioRenderable> {
-    // 1. Obtener información de la solicitud
-    const solicitud = await this.dataSource.query(
-      `SELECT
-        sol_id, sol_numero_solicitud, cli_razon_social, cop_nombre, sol_fecha_envio
+    // 1. Obtener información de la solicitud (incluye versión del formulario
+    // en la misma query — antes era un round-trip aparte a la misma tabla).
+    // En paralelo, lanzar ya las queries de respuestas/archivos: solo
+    // dependen de solicitudId, no de la versión/formularioId resuelta más
+    // abajo, así que no hay razón para esperarlas en serie.
+    const [solicitud, respuestas, archivosResult] = await Promise.all([
+      this.dataSource.query(
+        `SELECT
+        sol_id, sol_numero_solicitud, cli_razon_social, cop_nombre, sol_fecha_envio,
+        sol_formulario_version
       FROM solicitudes s
       LEFT JOIN Clientes c ON c.cli_id = s.sol_cliente_id
       LEFT JOIN Centro_operacion co ON co.cop_id = s.sol_co_id
       WHERE s.sol_id = @0`,
-      [solicitudId],
-    );
-
-    if (!solicitud || solicitud.length === 0) {
-      throw new Error('Solicitud no encontrada');
-    }
-
-    const {
-      sol_numero_solicitud,
-      cli_razon_social,
-      cop_nombre,
-      sol_fecha_envio,
-    } = solicitud[0];
-
-    // 2. Obtener versión del formulario
-    const formularioVersion = await this.dataSource.query(
-      `SELECT sol_formulario_version FROM solicitudes WHERE sol_id = @0`,
-      [solicitudId],
-    );
-    const version = formularioVersion[0]?.sol_formulario_version || 1;
-
-    // 3. Obtener formulario ID y nombre
-    const formResult = await this.dataSource.query(
-      `SELECT fv_frm_id FROM Formulario_versiones
-       WHERE fv_numero = @0 AND fv_frm_id IN (
-         SELECT frm_id FROM formularios WHERE frm_activo = 1
-       )`,
-      [version],
-    );
-    const formularioId = formResult[0]?.fv_frm_id;
-
-    // Obtener nombre del formulario
-    let formularioNombre = 'Formulario';
-    if (formularioId) {
-      const formNameResult = await this.dataSource.query(
-        `SELECT frm_nombre FROM formularios WHERE frm_id = @0`,
-        [formularioId],
-      );
-      const rawNombre = formNameResult[0]?.frm_nombre || 'Formulario';
-      // Limpiar: tomar solo la primera línea y remover espacios extras
-      formularioNombre = rawNombre.split('\n')[0].trim();
-    }
-
-    // 4. Obtener preguntas CON campos de dependencia
-    const preguntas = await this.dataSource.query(
-      `SELECT
-        fp.fp_id,
-        fp.seccion_id,
-        fp.fp_descripcion,
-        fp.fp_descripcion_adicional,
-        fp.fp_tipo,
-        fp.fp_orden,
-        fp.fp_requerida,
-        fp.fp_pregunta_padre_id,
-        fp.fp_valor_padre_disparador,
-        fp.fp_catalogo_tabla,
-        fp.fp_catalogo_columna,
-        fp.fp_catalogo_pk_column,
-        fp.fp_tabla_columnas,
-        fp.fp_maximo,
-        fp.fp_codigo
-      FROM Formulario_pregunta fp
-      WHERE fp.formulario_id = @0
-        AND fp.fp_estado = 1
-        AND fp.fp_version = @1
-      ORDER BY fp.seccion_id, fp.fp_orden`,
-      [formularioId, version],
-    );
-
-    // 5. Obtener respuestas
-    const respuestas = await this.dataSource.query(
-      `SELECT
+        [solicitudId],
+      ),
+      // 5. Obtener respuestas
+      this.dataSource.query(
+        `SELECT
         fr.fr_fp_id,
         fr.fr_valor_texto,
         fr.fr_valor_numero,
@@ -170,15 +109,14 @@ export class FormularioRenderizableService {
       ) fr
       LEFT JOIN Formulario_pregunta fp ON fr.fr_fp_id = fp.fp_id
       WHERE fr.rn = 1`,
-      [solicitudId],
-    );
-
-    // 5.5 Obtener archivos cargados por pregunta — cubre tanto fp_tipo ===
-    // 'IMAGEN' (imagenesMap) como 'ARCHIVO'/'DOCUMENTOS_TABLA'
-    // (archivosDocMap): en ambos casos el archivo real vive en
-    // Solicitud_archivo, nunca en Formulario_respuesta.
-    const archivosResult = await this.dataSource.query(
-      `
+        [solicitudId],
+      ),
+      // 5.5 Obtener archivos cargados por pregunta — cubre tanto fp_tipo ===
+      // 'IMAGEN' (imagenesMap) como 'ARCHIVO'/'DOCUMENTOS_TABLA'
+      // (archivosDocMap): en ambos casos el archivo real vive en
+      // Solicitud_archivo, nunca en Formulario_respuesta.
+      this.dataSource.query(
+        `
       SELECT sa.sa_fp_id, sa.sa_ruta_almacenamiento, sa.sa_tipo_mime,
         sa.sa_nombre_original, sa.sa_fecha_emision
       FROM (
@@ -190,8 +128,73 @@ export class FormularioRenderizableService {
       ) sa
       WHERE sa.rn = 1
       `,
-      [solicitudId],
+        [solicitudId],
+      ),
+    ]);
+
+    if (!solicitud || solicitud.length === 0) {
+      throw new Error('Solicitud no encontrada');
+    }
+
+    const {
+      sol_numero_solicitud,
+      cli_razon_social,
+      cop_nombre,
+      sol_fecha_envio,
+      sol_formulario_version,
+    } = solicitud[0];
+    const version = sol_formulario_version || 1;
+
+    // 3. Obtener formulario ID
+    const formResult = await this.dataSource.query(
+      `SELECT fv_frm_id FROM Formulario_versiones
+       WHERE fv_numero = @0 AND fv_frm_id IN (
+         SELECT frm_id FROM formularios WHERE frm_activo = 1
+       )`,
+      [version],
     );
+    const formularioId = formResult[0]?.fv_frm_id;
+
+    // 4. Nombre del formulario y preguntas (ambas solo dependen de
+    // formularioId/version, ya resueltos arriba — en paralelo).
+    let formularioNombre = 'Formulario';
+    let preguntas: any[] = [];
+    if (formularioId) {
+      const [formNameResult, preguntasResult] = await Promise.all([
+        this.dataSource.query(
+          `SELECT frm_nombre FROM formularios WHERE frm_id = @0`,
+          [formularioId],
+        ),
+        this.dataSource.query(
+          `SELECT
+            fp.fp_id,
+            fp.seccion_id,
+            fp.fp_descripcion,
+            fp.fp_descripcion_adicional,
+            fp.fp_tipo,
+            fp.fp_orden,
+            fp.fp_requerida,
+            fp.fp_pregunta_padre_id,
+            fp.fp_valor_padre_disparador,
+            fp.fp_catalogo_tabla,
+            fp.fp_catalogo_columna,
+            fp.fp_catalogo_pk_column,
+            fp.fp_tabla_columnas,
+            fp.fp_maximo,
+            fp.fp_codigo
+          FROM Formulario_pregunta fp
+          WHERE fp.formulario_id = @0
+            AND fp.fp_estado = 1
+            AND fp.fp_version = @1
+          ORDER BY fp.seccion_id, fp.fp_orden`,
+          [formularioId, version],
+        ),
+      ]);
+      // Limpiar: tomar solo la primera línea y remover espacios extras
+      const rawNombre = formNameResult[0]?.frm_nombre || 'Formulario';
+      formularioNombre = rawNombre.split('\n')[0].trim();
+      preguntas = preguntasResult;
+    }
     const imagenesMap = new Map<
       number,
       { sa_ruta_almacenamiento: string; sa_tipo_mime: string }
@@ -214,11 +217,17 @@ export class FormularioRenderizableService {
     }
 
     // 6. Crear mapa de respuestas resueltas
+    // Resueltas en paralelo (no una por una): SELECT/SELECT_TABLA/archivo
+    // disparan una query adicional por respuesta en resolverValorRespuesta,
+    // y con el round-trip a la BD remota (SQL8020.site4now.net) resolverlas
+    // en serie era la principal causa de la demora al abrir esta página.
     const respuestasMap = new Map<number, string>();
     const tablaFilasMap = new Map<number, Record<string, string>[]>();
-    for (const respuesta of respuestas) {
-      const valor = await this.resolverValorRespuesta(respuesta);
-      respuestasMap.set(respuesta.fr_fp_id, valor);
+    const valoresResueltos = await Promise.all(
+      respuestas.map((respuesta) => this.resolverValorRespuesta(respuesta)),
+    );
+    respuestas.forEach((respuesta, i) => {
+      respuestasMap.set(respuesta.fr_fp_id, valoresResueltos[i]);
 
       if (respuesta.fp_tipo === 'TABLA' && respuesta.fr_valor_texto) {
         try {
@@ -230,7 +239,7 @@ export class FormularioRenderizableService {
           // Ignorar JSON inválido; se usará el fallback de texto plano
         }
       }
-    }
+    });
 
     // 7. Crear mapa de visibilidad (condicionales)
     const visibilidadMap = new Map<number, boolean>();

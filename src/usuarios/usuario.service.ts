@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import { UsuarioEntity } from './entities/usuario.entity';
 import { UsuariosCentrosEntity } from './entities/usuarios-centros.entity';
 import { CentroOperacionEntity } from '../centros-operacion/entities/centro-operacion.entity';
-import * as bcrypt from 'bcrypt';
+import { hashPassword, passwordCoincide } from '../common/utils/password.util';
 import {
   AssignCentroDto,
   AssignMultipleCentrosDto,
@@ -34,7 +34,7 @@ export class UsuarioService {
     user: UsuarioEntity,
     password: string,
   ): Promise<boolean> {
-    return bcrypt.compare(password, user.usr_password);
+    return passwordCoincide(password, user.usr_password);
   }
 
   async changePassword(
@@ -50,8 +50,7 @@ export class UsuarioService {
     const valid = await this.validatePassword(user, currentPassword);
     if (!valid) throw new Error('Contraseña actual incorrecta');
 
-    const salt = await bcrypt.genSalt(10);
-    user.usr_password = await bcrypt.hash(newPassword, salt);
+    user.usr_password = await hashPassword(newPassword);
 
     await this.usuarioRepository.save(user);
     return { message: 'Contraseña actualizada correctamente' };
@@ -285,15 +284,17 @@ export class UsuarioService {
       );
     }
 
-    // El login (auth.service.ts) compara la contraseña en texto plano,
-    // igual que se hace para los clientes: se guarda sin hash para que
-    // el usuario recién creado pueda autenticarse.
+    // Hasheado con bcrypt, igual que updateUser/changePassword — el login
+    // (auth.service.ts) acepta tanto hash bcrypt como texto plano legado,
+    // así que esto no rompe cuentas creadas antes de esta migración.
+    const passwordHasheada = await hashPassword(dto.usuario_password);
+
     const usuario = this.usuarioRepository.create({
       usr_id_usuario: dto.usr_usuario,
       usr_usuario: dto.usr_usuario,
       usr_nombre: dto.usr_nombre,
       usr_correo: dto.usr_correo,
-      usr_password: dto.usuario_password,
+      usr_password: passwordHasheada,
       usr_inactivar: false,
       usr_estado: 'A',
       usr_fecha_usr: new Date(),
@@ -357,11 +358,7 @@ export class UsuarioService {
     }
 
     if (dto.usuario_password) {
-      const salt = await bcrypt.genSalt(10);
-      usuario.usr_password = await bcrypt.hash(
-        dto.usuario_password,
-        salt,
-      );
+      usuario.usr_password = await hashPassword(dto.usuario_password);
     }
 
     await this.usuarioRepository.save(usuario);

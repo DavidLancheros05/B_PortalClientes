@@ -108,6 +108,15 @@ export class SolicitudEntity {
   })
   sol_consumo_mensual_proyectado: number | null;
 
+  @Column({
+    name: 'sol_toneladas_proyectadas',
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    nullable: true,
+  })
+  sol_toneladas_proyectadas: number | null;
+
   @Column({ name: 'sol_motivo_rechazo_id', type: 'int', nullable: true })
   sol_motivo_rechazo_id: number | null;
 

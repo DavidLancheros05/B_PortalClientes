@@ -14,14 +14,24 @@ export class OpcionesService {
     private readonly repo: Repository<FormularioPreguntaOpcion>,
   ) {}
 
-  create(dto: CreateFormularioPreguntaOpcionDto) {
+  async create(dto: CreateFormularioPreguntaOpcionDto) {
     const normalizedDto = {
       ...dto,
       fpo_valor: normalizeMojibake(dto.fpo_valor),
       fpo_estado: dto.fpo_estado ?? true,
     };
 
-    return this.repo.save(normalizedDto);
+    const creada = await this.repo.save(normalizedDto);
+
+    // Misma razón que FormularioPreguntasService.create: no hay forma en el
+    // editor de asignar fpo_codigo a mano, así que se genera solo para que
+    // la opción tenga identidad estable entre versiones desde que nace.
+    if (!creada.fpo_codigo) {
+      creada.fpo_codigo = `AUTO_O${creada.fpo_id}`;
+      await this.repo.update(creada.fpo_id, { fpo_codigo: creada.fpo_codigo });
+    }
+
+    return creada;
   }
 
   async findByPregunta(fp_id: number) {

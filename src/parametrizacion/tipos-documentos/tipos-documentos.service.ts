@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -9,6 +10,10 @@ import { TipoDocumento } from './entities/tipo-documento.entity';
 import { CreateTipoDocumentoDto } from './dto/create-tipo-documento.dto';
 import { UpdateTipoDocumentoDto } from './dto/update-tipo-documento.dto';
 import { TiposVigenciaService } from '../tipos-vigencia/tipos-vigencia.service';
+import {
+  IStorageService,
+  STORAGE_SERVICE,
+} from '../../common/storage/storage.interface';
 
 @Injectable()
 export class TiposDocumentosService {
@@ -16,6 +21,7 @@ export class TiposDocumentosService {
     @InjectRepository(TipoDocumento)
     private readonly tiposDocumentoRepository: Repository<TipoDocumento>,
     private readonly tiposVigenciaService: TiposVigenciaService,
+    @Inject(STORAGE_SERVICE) private readonly storageService: IStorageService,
   ) {}
 
   async findAll(onlyActive?: boolean): Promise<TipoDocumento[]> {
@@ -71,11 +77,21 @@ export class TiposDocumentosService {
       formatoCodigoSecundario: createDto.formatoCodigoSecundario ?? null,
       revision: createDto.revision ?? null,
       paginasTotal: createDto.paginasTotal ?? null,
+      origen: createDto.origen ?? 'CLIENTE',
+      encabezadoTipo: createDto.encabezadoTipo ?? 'NINGUNO',
+      piePaginaTipo: createDto.piePaginaTipo ?? 'NINGUNO',
+      piePaginaTexto: createDto.piePaginaTexto ?? null,
       createdBy: null,
       updatedBy: null,
     });
 
-    return this.tiposDocumentoRepository.save(entity);
+    const guardado = await this.tiposDocumentoRepository.save(entity);
+
+    if (guardado.origen === 'CARTA_APROBACION' && guardado.estado) {
+      await this.desactivarOtrasCartasAprobacion(guardado.tipoDocumentoId);
+    }
+
+    return guardado;
   }
 
   async update(
@@ -132,6 +148,16 @@ export class TiposDocumentosService {
       ...(updateDto.paginasTotal !== undefined
         ? { paginasTotal: updateDto.paginasTotal }
         : {}),
+      ...(updateDto.origen !== undefined ? { origen: updateDto.origen } : {}),
+      ...(updateDto.encabezadoTipo !== undefined
+        ? { encabezadoTipo: updateDto.encabezadoTipo }
+        : {}),
+      ...(updateDto.piePaginaTipo !== undefined
+        ? { piePaginaTipo: updateDto.piePaginaTipo }
+        : {}),
+      ...(updateDto.piePaginaTexto !== undefined
+        ? { piePaginaTexto: updateDto.piePaginaTexto }
+        : {}),
     };
 
     await this.validateBusinessRules({
@@ -170,12 +196,72 @@ export class TiposDocumentosService {
     merged.updatedAt = new Date();
 
     Object.assign(tipo, merged);
-    return this.tiposDocumentoRepository.save(tipo);
+    const guardado = await this.tiposDocumentoRepository.save(tipo);
+
+    if (guardado.origen === 'CARTA_APROBACION' && guardado.estado) {
+      await this.desactivarOtrasCartasAprobacion(guardado.tipoDocumentoId);
+    }
+
+    return guardado;
   }
 
   async remove(id: number): Promise<void> {
     const tipo = await this.findOne(id);
     await this.tiposDocumentoRepository.remove(tipo);
+  }
+
+  // La Carta de Vinculación (origen CARTA_APROBACION) se elige en
+  // enviarCartaVinculacionPorCorreo con "la única activa" — sin esta regla,
+  // dos filas activas a la vez vuelven no determinista cuál se envía de
+  // verdad por correo (bug real que tenía param_carta_pdf_vinculacion antes
+  // de esta migración, con SELECT TOP 1 sin ORDER BY). Activar una desactiva
+  // cualquier otra automáticamente, como un radio button.
+  private async desactivarOtrasCartasAprobacion(
+    idActivo: number,
+  ): Promise<void> {
+    await this.tiposDocumentoRepository
+      .createQueryBuilder()
+      .update(TipoDocumento)
+      .set({ estado: false })
+      .where('tdo_origen = :origen', { origen: 'CARTA_APROBACION' })
+      .andWhere('tdo_id <> :idActivo', { idActivo })
+      .execute();
+  }
+
+  async subirEncabezadoImagen(
+    id: number,
+    file: { buffer: Buffer; originalname: string; mimetype: string },
+  ): Promise<TipoDocumento> {
+    const tipo = await this.findOne(id);
+
+    const subida = await this.storageService.upload(file.buffer, {
+      folder: 'parametrizacion/tipos-documentos/encabezados',
+      filename: `${Date.now()}_${file.originalname}`,
+      mimetype: file.mimetype,
+    });
+
+    tipo.encabezadoTipo = 'IMAGEN';
+    tipo.encabezadoImagenUrl = subida.url;
+    tipo.updatedAt = new Date();
+    return this.tiposDocumentoRepository.save(tipo);
+  }
+
+  async subirPiePaginaImagen(
+    id: number,
+    file: { buffer: Buffer; originalname: string; mimetype: string },
+  ): Promise<TipoDocumento> {
+    const tipo = await this.findOne(id);
+
+    const subida = await this.storageService.upload(file.buffer, {
+      folder: 'parametrizacion/tipos-documentos/pie-pagina',
+      filename: `${Date.now()}_${file.originalname}`,
+      mimetype: file.mimetype,
+    });
+
+    tipo.piePaginaTipo = 'IMAGEN';
+    tipo.piePaginaImagenUrl = subida.url;
+    tipo.updatedAt = new Date();
+    return this.tiposDocumentoRepository.save(tipo);
   }
 
   private async validateBusinessRules(input: {

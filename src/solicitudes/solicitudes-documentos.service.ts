@@ -100,7 +100,9 @@ export class SolicitudesDocumentosService {
              td.tdo_regla_vigencia, td.tdo_anios_atras_permitidos,
              td.tdo_tiene_plantilla, td.tdo_plantilla_contenido, td.tdo_tipo_plantilla,
              td.tdo_formato_codigo, td.tdo_formato_codigo_secundario,
-             td.tdo_revision, td.tdo_paginas_total, td.tdo_permite_vencimiento
+             td.tdo_revision, td.tdo_paginas_total, td.tdo_permite_vencimiento,
+             td.tdo_encabezado_tipo, td.tdo_encabezado_imagen_url,
+             td.tdo_pie_pagina_tipo, td.tdo_pie_pagina_texto, td.tdo_pie_pagina_imagen_url
       FROM Solicitud_archivo sa
       LEFT JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
       LEFT JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tipo_documento_id
@@ -117,7 +119,9 @@ export class SolicitudesDocumentosService {
              CAST(NULL AS VARCHAR(20)), CAST(NULL AS INT),
              CAST(0 AS BIT), CAST(NULL AS NVARCHAR(MAX)), CAST(NULL AS VARCHAR(20)),
              CAST(NULL AS NVARCHAR(30)), CAST(NULL AS NVARCHAR(30)),
-             CAST(NULL AS NVARCHAR(10)), CAST(NULL AS INT), CAST(0 AS BIT)
+             CAST(NULL AS NVARCHAR(10)), CAST(NULL AS INT), CAST(0 AS BIT),
+             CAST('NINGUNO' AS VARCHAR(20)), CAST(NULL AS NVARCHAR(500)),
+             CAST('NINGUNO' AS VARCHAR(20)), CAST(NULL AS NVARCHAR(300)), CAST(NULL AS NVARCHAR(500))
       FROM Solicitud_carta_vinculacion scv
       WHERE scv.scv_sol_id = @0
 

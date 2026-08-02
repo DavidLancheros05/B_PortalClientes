@@ -99,4 +99,21 @@ export class CreateTipoDocumentoDto {
   @Min(1)
   @Type(() => Number)
   paginasTotal?: number;
+
+  @IsOptional()
+  @IsIn(['CLIENTE', 'CARTA_APROBACION'])
+  origen?: 'CLIENTE' | 'CARTA_APROBACION';
+
+  @IsOptional()
+  @IsIn(['NINGUNO', 'IMAGEN', 'FORMATO_OFICIAL'])
+  encabezadoTipo?: 'NINGUNO' | 'IMAGEN' | 'FORMATO_OFICIAL';
+
+  @IsOptional()
+  @IsIn(['NINGUNO', 'TEXTO', 'IMAGEN'])
+  piePaginaTipo?: 'NINGUNO' | 'TEXTO' | 'IMAGEN';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  piePaginaTexto?: string;
 }

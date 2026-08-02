@@ -19,6 +19,27 @@ export class MaestrosService {
     return value.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
   }
 
+  // Busca una columna tipo "ciu_estado"/"pai_activo"/"estado" en la tabla
+  // sin traer todo INFORMATION_SCHEMA — un solo query liviano, priorizando
+  // nombres que terminen en "_estado" (convención real de este esquema)
+  // sobre "_activo" (nunca se usa, pero por si acaso).
+  private async detectarColumnaEstado(
+    targetDb: string,
+    tabla: string,
+  ): Promise<string | null> {
+    const rows = await this.dataSource.query(
+      `
+      SELECT COLUMN_NAME
+      FROM [${targetDb}].INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = @0
+        AND (LOWER(COLUMN_NAME) LIKE '%estado%' OR LOWER(COLUMN_NAME) LIKE '%activo%')
+      ORDER BY CASE WHEN LOWER(COLUMN_NAME) LIKE '%estado%' THEN 0 ELSE 1 END
+      `,
+      [tabla],
+    );
+    return rows?.[0]?.COLUMN_NAME ? String(rows[0].COLUMN_NAME) : null;
+  }
+
   private resolveColumns(tableName: string, columns: ColumnInfo[]) {
     const normalizedTable = this.normalize(tableName).replace(/s$/, '');
     const normalizedCols = columns.map((col) => ({
@@ -217,12 +238,26 @@ export class MaestrosService {
     const targetDb = baseDatos || currentDb;
 
     // Si ya nos dan columna de valor Y columna llave explícitas, no hace
-    // falta consultar INFORMATION_SCHEMA para adivinarlas (nos ahorramos
-    // una ida y vuelta completa a la base de datos remota por cada catálogo).
+    // falta consultar INFORMATION_SCHEMA completo para adivinarlas (nos
+    // ahorramos esa ida y vuelta) — pero sí buscamos puntualmente una
+    // columna de estado/activo para no traer catálogos con filas dadas de
+    // baja (ej. Ciudads tiene ciu_id duplicados donde el viejo quedó con
+    // ciu_estado='I' al crear el nuevo — sin este filtro aparecían los dos
+    // en el selector, ver documentacion/).
     if (columnaDescripcion && columnaId) {
-      const whereFiltroDirecto = columnaFiltro
-        ? `WHERE [${columnaFiltro}] = @0`
-        : '';
+      const estadoCol = await this.detectarColumnaEstado(targetDb, tabla);
+      const condicionesDirecto: string[] = [];
+      if (estadoCol) {
+        condicionesDirecto.push(
+          `(TRY_CONVERT(BIT, [${estadoCol}]) = 1 OR UPPER(LTRIM(RTRIM(CAST([${estadoCol}] AS NVARCHAR(20))))) IN ('TRUE', 'ACTIVO', 'A', 'SI', 'S'))`,
+        );
+      }
+      if (columnaFiltro) condicionesDirecto.push(`[${columnaFiltro}] = @0`);
+      const whereFiltroDirecto =
+        condicionesDirecto.length > 0
+          ? `WHERE ${condicionesDirecto.join(' AND ')}`
+          : '';
+
       const dataQueryDirecta = `
         SELECT
           TRY_CONVERT(INT, [${columnaId}]) AS op_id,

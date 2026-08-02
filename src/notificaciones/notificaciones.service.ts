@@ -21,6 +21,18 @@ export class NotificacionesService {
     private readonly mailService: MailService,
   ) {}
 
+  // Arma un link absoluto al portal a partir de PORTAL_CLIENTES_URL, que en
+  // .env viene con el sufijo "/login" (ej. http://localhost:3002/login) —
+  // mismo criterio que auth.service.ts al construir el link de reset de
+  // contraseña, para que los correos de etapa lleven al usuario directo a
+  // la solicitud en vez de a la pantalla de login genérica.
+  private construirPortalUrl(ruta: string): string {
+    const base = (process.env.PORTAL_CLIENTES_URL || '')
+      .replace(/\/login\/?$/, '')
+      .replace(/\/$/, '');
+    return `${base}${ruta}`;
+  }
+
   private async ensurePlantillasTable() {
     await this.dataSource.query(`
       IF OBJECT_ID('dbo.Param_formato_correos_enviar', 'U') IS NULL
@@ -55,6 +67,15 @@ export class NotificacionesService {
           'Nueva solicitud pendiente de {{cliente_nombre}}: {{numero_solicitud}}',
         cuerpo_html:
           '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6fb;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;"><tr><td align="center"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;"><tr><td style="background-color:#003d99;padding:28px 32px;text-align:center;"><p style="margin:0;color:#ffffff;font-size:19px;font-weight:bold;letter-spacing:0.5px;">CARTONERA NACIONAL S.A.</p><p style="margin:6px 0 0;color:#a9c2f0;font-size:13px;">Portal de Clientes</p></td></tr><tr><td style="padding:32px;"><p style="margin:0 0 16px;color:#1f2937;font-size:15px;">Hola <b>{{ejecutivo_nombre}}</b>,</p><p style="margin:0 0 20px;color:#374151;font-size:14px;line-height:1.6;">Tienes una nueva solicitud pendiente de revisar:</p><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef4ff;border-radius:8px;border:1px solid #d6e4ff;margin-bottom:24px;"><tr><td style="padding:18px 20px;"><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">No. Solicitud</p><p style="margin:0 0 14px;color:#003d99;font-size:15px;font-weight:bold;">{{numero_solicitud}}</p><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Cliente</p><p style="margin:0 0 14px;color:#003d99;font-size:15px;font-weight:bold;">{{cliente_nombre}}</p><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Centro de Operacion</p><p style="margin:0 0 14px;color:#003d99;font-size:15px;font-weight:bold;">{{centro_operacion_nombre}}</p><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Fecha</p><p style="margin:0 0 0;color:#003d99;font-size:15px;font-weight:bold;">{{fecha_creacion}}</p></td></tr></table><table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 4px;"><tr><td style="border-radius:8px;background-color:#0052cc;"><a href="{{portal_url}}" style="display:inline-block;padding:12px 36px;color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;">Revisar solicitud</a></td></tr></table></td></tr><tr><td style="background-color:#f9fafc;padding:16px 32px;text-align:center;border-top:1px solid #eef1f6;"><p style="margin:0;color:#9aa4b5;font-size:11px;">Este es un mensaje automatico, por favor no respondas a este correo.</p></td></tr></table></td></tr></table>',
+        activa: true,
+      },
+      {
+        codigo: 'SOLICITUD_RECHAZADA_GESTION_EJECUTIVO',
+        nombre: 'Solicitud rechazada (OFC/CC2) - Ejecutivo de Negocios',
+        asunto:
+          'Solicitud {{numero_solicitud}} rechazada en {{etapa_rechazo}} — requiere tu gestión',
+        cuerpo_html:
+          '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6fb;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;"><tr><td align="center"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;"><tr><td style="background-color:#b42318;padding:28px 32px;text-align:center;"><p style="margin:0;color:#ffffff;font-size:19px;font-weight:bold;letter-spacing:0.5px;">CARTONERA NACIONAL S.A.</p><p style="margin:6px 0 0;color:#f3c6c2;font-size:13px;">Portal de Clientes</p></td></tr><tr><td style="padding:32px;"><p style="margin:0 0 16px;color:#1f2937;font-size:15px;">Hola <b>{{ejecutivo_nombre}}</b>,</p><p style="margin:0 0 20px;color:#374151;font-size:14px;line-height:1.6;">Una solicitud fue rechazada de forma definitiva en <b>{{etapa_rechazo}}</b>. El cliente no fue notificado automaticamente — te corresponde gestionar el seguimiento con el directamente.</p><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#fdecea;border-radius:8px;border:1px solid #f5c2c0;margin-bottom:24px;"><tr><td style="padding:18px 20px;"><p style="margin:0 0 4px;color:#8a5a56;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">No. Solicitud</p><p style="margin:0 0 14px;color:#b42318;font-size:15px;font-weight:bold;">{{numero_solicitud}}</p><p style="margin:0 0 4px;color:#8a5a56;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Cliente</p><p style="margin:0 0 14px;color:#b42318;font-size:15px;font-weight:bold;">{{cliente_nombre}}</p><p style="margin:0 0 4px;color:#8a5a56;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Centro de Operacion</p><p style="margin:0 0 14px;color:#b42318;font-size:15px;font-weight:bold;">{{centro_operacion_nombre}}</p><p style="margin:0 0 4px;color:#8a5a56;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Motivo de rechazo</p><p style="margin:0 0 14px;color:#b42318;font-size:15px;font-weight:bold;">{{motivo_rechazo}}</p><p style="margin:0 0 4px;color:#8a5a56;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Comentario</p><p style="margin:0 0 0;color:#b42318;font-size:15px;font-weight:bold;">{{comentario}}</p></td></tr></table><table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 4px;"><tr><td style="border-radius:8px;background-color:#0052cc;"><a href="{{portal_url}}" style="display:inline-block;padding:12px 36px;color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;">Ver solicitudes rechazadas</a></td></tr></table></td></tr><tr><td style="background-color:#f9fafc;padding:16px 32px;text-align:center;border-top:1px solid #eef1f6;"><p style="margin:0;color:#9aa4b5;font-size:11px;">Este es un mensaje automatico, por favor no respondas a este correo.</p></td></tr></table></td></tr></table>',
         activa: true,
       },
       {
@@ -145,6 +166,14 @@ export class NotificacionesService {
           '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6fb;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;"><tr><td align="center"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;"><tr><td style="background-color:#003d99;padding:28px 32px;text-align:center;"><p style="margin:0;color:#ffffff;font-size:19px;font-weight:bold;letter-spacing:0.5px;">CARTONERA NACIONAL S.A.</p><p style="margin:6px 0 0;color:#a9c2f0;font-size:13px;">Vinculación Comercial</p></td></tr><tr><td style="padding:32px;"><p style="margin:0 0 16px;color:#1f2937;font-size:15px;">Estimado <b>{{cliente_nombre}}</b>,</p><p style="margin:0 0 20px;color:#374151;font-size:14px;line-height:1.6;">Adjuntamos la <b>Carta de Vinculación Comercial</b> correspondiente a tu solicitud <b>{{numero_solicitud}}</b>, que fue aprobada.</p><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef4ff;border-radius:8px;border:1px solid #d6e4ff;margin-bottom:24px;"><tr><td style="padding:18px 20px;"><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Cupo aprobado</p><p style="margin:0 0 14px;color:#003d99;font-size:15px;font-weight:bold;">{{cupo_aprobado}}</p><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Plazo de pago</p><p style="margin:0 0 14px;color:#003d99;font-size:15px;font-weight:bold;">{{plazo_pago}}</p><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Forma de pago</p><p style="margin:0;color:#003d99;font-size:15px;font-weight:bold;">{{forma_pago}}</p></td></tr></table><p style="margin:0;color:#8a94a6;font-size:12px;line-height:1.5;">Cordialmente,<br/>Equipo de Vinculación Comercial</p></td></tr><tr><td style="background-color:#f9fafc;padding:16px 32px;text-align:center;border-top:1px solid #eef1f6;"><p style="margin:0;color:#9aa4b5;font-size:11px;">Este es un mensaje automatico, por favor no respondas a este correo.</p></td></tr></table></td></tr></table>',
         activa: true,
       },
+      {
+        codigo: 'RESET_PASSWORD',
+        nombre: 'Recuperación de contraseña',
+        asunto: 'Recuperación de contraseña - Portal de Clientes',
+        cuerpo_html:
+          '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6fb;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;"><tr><td align="center"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;"><tr><td style="background-color:#003d99;padding:28px 32px;text-align:center;"><p style="margin:0;color:#ffffff;font-size:19px;font-weight:bold;letter-spacing:0.5px;">CARTONERA NACIONAL S.A.</p><p style="margin:6px 0 0;color:#a9c2f0;font-size:13px;">Portal de Clientes</p></td></tr><tr><td style="padding:32px;"><p style="margin:0 0 16px;color:#1f2937;font-size:15px;">Hola <b>{{nombre}}</b>,</p><p style="margin:0 0 20px;color:#374151;font-size:14px;line-height:1.6;">Recibimos una solicitud para restablecer tu contraseña. Si fuiste tú, hace clic en el boton de abajo (el link vence en 1 hora):</p><table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 20px;"><tr><td style="border-radius:8px;background-color:#0052cc;"><a href="{{reset_url}}" style="display:inline-block;padding:12px 36px;color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;">Restablecer contraseña</a></td></tr></table><p style="margin:0;color:#8a94a6;font-size:12px;line-height:1.5;">Si no fuiste tú quien solicitó esto, ignora este correo — tu contraseña actual sigue funcionando.</p></td></tr><tr><td style="background-color:#f9fafc;padding:16px 32px;text-align:center;border-top:1px solid #eef1f6;"><p style="margin:0;color:#9aa4b5;font-size:11px;">Este es un mensaje automatico, por favor no respondas a este correo.</p></td></tr></table></td></tr></table>',
+        activa: true,
+      },
     ];
 
     for (const item of defaults) {
@@ -164,10 +193,33 @@ export class NotificacionesService {
     }
   }
 
+  // Las columnas SQL `datetime`/`datetime2` llegan como objeto Date crudo
+  // desde el driver — sin esto, {{variable}} en la plantilla queda como
+  // "Fri Jul 24 2026 22:19:28 GMT-0500 (...)" (Date.toString() de JS).
+  // Las columnas `date` (sin hora real) llegan como medianoche UTC: se leen
+  // en UTC (no en hora de Bogotá) para no desfasarse un día, mismo criterio
+  // que ya usa business-days.util.ts para este mismo problema.
+  private formatearValorPlantilla(value: any): string {
+    if (value === null || value === undefined) return '';
+    if (value instanceof Date) {
+      const esFechaSinHora =
+        value.getUTCHours() === 0 &&
+        value.getUTCMinutes() === 0 &&
+        value.getUTCSeconds() === 0 &&
+        value.getUTCMilliseconds() === 0;
+
+      return new Intl.DateTimeFormat('es-CO', {
+        timeZone: esFechaSinHora ? 'UTC' : 'America/Bogota',
+        dateStyle: 'long',
+        ...(esFechaSinHora ? {} : { timeStyle: 'short' }),
+      }).format(value);
+    }
+    return String(value);
+  }
+
   private renderTemplate(content: string, variables: Record<string, any>) {
     return content.replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_m, key) => {
-      const value = variables[key];
-      return value === null || value === undefined ? '' : String(value);
+      return this.formatearValorPlantilla(variables[key]);
     });
   }
 
@@ -367,7 +419,7 @@ export class NotificacionesService {
       mensaje_cambios: huboCambiosDatos
         ? 'Se detectaron cambios en los datos registrados para actualización.'
         : 'No se detectaron cambios en datos registrados.',
-      portal_url: process.env.PORTAL_CLIENTES_URL || '',
+      portal_url: this.construirPortalUrl(`/solicitudes/${solicitudId}`),
     };
 
     if (solicitud.cliente_email) {
@@ -437,6 +489,20 @@ export class NotificacionesService {
       return { ok: true, enviados: 0, total: 0 };
     }
 
+    // Ruta de gestión en el frontend por rol destino (F_PortalClientes/src/app/solicitudes/**).
+    const rutaPorRol: Record<string, string> = {
+      ASC: 'gestion-auxiliar-servicio-al-cliente',
+      OC: 'gestion-oficial-de-cumplimiento',
+      CC1: 'gestion-comite-credito-1',
+      CC2: 'gestion-comite-credito-2',
+    };
+    const segmentoRol = rutaPorRol[rolCodigo];
+    const portalUrl = segmentoRol
+      ? this.construirPortalUrl(
+          `/solicitudes/${segmentoRol}/${solicitudId}/gestionar`,
+        )
+      : this.construirPortalUrl('/inicio');
+
     let enviados = 0;
     for (const destinatario of destinatarios) {
       const variables = {
@@ -444,7 +510,7 @@ export class NotificacionesService {
         numero_solicitud: solicitud.numero_solicitud,
         cliente_nombre: solicitud.cliente_nombre || 'Cliente',
         centro_operacion_nombre: solicitud.centro_operacion_nombre || '-',
-        portal_url: process.env.PORTAL_CLIENTES_URL || '',
+        portal_url: portalUrl,
       };
 
       const resultado = await this.enviarConPlantilla(codigoEvento, variables, [
@@ -492,11 +558,75 @@ export class NotificacionesService {
       centro_operacion_nombre: solicitud.centro_operacion_nombre || '-',
       fecha_creacion: solicitud.fecha_creacion,
       ejecutivo_nombre: solicitud.ejecutivo_nombre || 'Ejecutivo',
-      portal_url: process.env.PORTAL_CLIENTES_URL || '',
+      portal_url: this.construirPortalUrl(
+        `/solicitudes/gestion-ejecutivo-negocios/${solicitud.sol_id}/registrar`,
+      ),
     };
 
     return this.enviarConPlantilla(
       'SOLICITUD_REGISTRADA_EJECUTIVO',
+      variables,
+      [String(solicitud.ejecutivo_email)],
+    );
+  }
+
+  // Rechazo definitivo de OFC/CC2: ya no se le avisa al cliente (ver
+  // guardarConceptoGenerico), el ejecutivo asignado es quien se entera y
+  // gestiona el seguimiento manual con el cliente. Mismo criterio de
+  // resolución de correo que notificarSolicitudPendienteAlEjecutivo.
+  async notificarRechazoAlEjecutivo(
+    solicitudId: number,
+    etapaCodigo: string,
+    comentario: string | null,
+  ) {
+    const result = await this.dataSource.query(
+      `
+      SELECT TOP 1
+        s.sol_id,
+        s.sol_numero_solicitud AS numero_solicitud,
+        c.cli_razon_social AS cliente_nombre,
+        co.cop_nombre AS centro_operacion_nombre,
+        u.usr_correo AS ejecutivo_email,
+        u.usr_nombre AS ejecutivo_nombre,
+        mr.mrs_descripcion AS motivo_rechazo
+      FROM solicitudes s
+      LEFT JOIN clientes c ON c.cli_id = s.sol_cliente_id
+      LEFT JOIN Centro_operacion co ON co.cop_id = s.sol_co_id
+      LEFT JOIN usuarios u ON u.ejng_id = s.sol_ejecutivo_id
+      LEFT JOIN pc_usuario_rol ur ON ur.ur_usuario_id = u.usr_id AND ur.ur_activo = 1
+      LEFT JOIN pc_roles r ON r.rol_id = ur.ur_rol_id AND r.rol_nombre = 'EJECUTIVO'
+      LEFT JOIN Motivos_rechazo_solicitud mr ON mr.mrs_id = s.sol_motivo_rechazo_id
+      WHERE s.sol_id = @0 AND r.rol_id IS NOT NULL
+      `,
+      [solicitudId],
+    );
+
+    const solicitud = result?.[0];
+    if (!solicitud || !solicitud.ejecutivo_email) {
+      this.logger.debug(
+        `No hay ejecutivo asignado para la solicitud ${solicitudId} (rechazo)`,
+      );
+      return { sent: false, reason: 'Sin ejecutivo asignado' };
+    }
+
+    const etapaNombre =
+      etapaCodigo === 'OFC' ? 'Oficial de Cumplimiento' : 'Comité de Crédito 2';
+
+    const variables = {
+      numero_solicitud: solicitud.numero_solicitud,
+      cliente_nombre: solicitud.cliente_nombre || 'Cliente',
+      centro_operacion_nombre: solicitud.centro_operacion_nombre || '-',
+      ejecutivo_nombre: solicitud.ejecutivo_nombre || 'Ejecutivo',
+      etapa_rechazo: etapaNombre,
+      motivo_rechazo: solicitud.motivo_rechazo || 'No se indicó un motivo adicional',
+      comentario: comentario || 'Sin comentario adicional',
+      portal_url: this.construirPortalUrl(
+        `/solicitudes/rechazadas-ejecutivo/${solicitud.sol_id}`,
+      ),
+    };
+
+    return this.enviarConPlantilla(
+      'SOLICITUD_RECHAZADA_GESTION_EJECUTIVO',
       variables,
       [String(solicitud.ejecutivo_email)],
     );
@@ -519,7 +649,7 @@ export class NotificacionesService {
           : estadoId === 4
             ? 'Tu solicitud fue rechazada.'
             : `La solicitud cambió a estado ${estado}.`,
-      portal_url: process.env.PORTAL_CLIENTES_URL || '',
+      portal_url: this.construirPortalUrl(`/solicitudes/${solicitudId}`),
     };
 
     return this.enviarConPlantilla('SOLICITUD_ESTADO_CLIENTE', variables, [
@@ -547,7 +677,7 @@ export class NotificacionesService {
       cliente_nombre: solicitud.cliente_nombre || 'Cliente',
       motivo_rechazo: motivoDescripcion || 'Corrija los documentos indicados',
       documentos_html: documentosHtml,
-      portal_url: process.env.PORTAL_CLIENTES_URL || '',
+      portal_url: this.construirPortalUrl(`/solicitudes/${solicitudId}`),
     };
 
     return this.enviarConPlantilla('SOLICITUD_RECHAZADA_CLIENTE', variables, [
@@ -571,7 +701,7 @@ export class NotificacionesService {
       numero_solicitud: solicitud.numero_solicitud,
       cliente_nombre: solicitud.cliente_nombre || 'Cliente',
       motivo_rechazo: motivoDescripcion || 'No se indicó un motivo adicional',
-      portal_url: process.env.PORTAL_CLIENTES_URL || '',
+      portal_url: this.construirPortalUrl(`/solicitudes/${solicitudId}`),
     };
 
     return this.enviarConPlantilla(
@@ -646,7 +776,7 @@ export class NotificacionesService {
     const variables = {
       numero_solicitud: solicitud.numero_solicitud,
       cliente_nombre: solicitud.cliente_nombre || 'Cliente',
-      portal_url: process.env.PORTAL_CLIENTES_URL || '',
+      portal_url: this.construirPortalUrl(`/solicitudes/${solicitudId}`),
     };
 
     await this.enviarConPlantilla(
@@ -711,7 +841,7 @@ export class NotificacionesService {
       .slice(0, 100)
       .map((r: any) => {
         const colorEstado = r.estado === 'VENCIDO' ? '#b91c1c' : '#c2620a';
-        return `<tr><td style="${celda}">${r.numero_solicitud}</td><td style="${celda}">${r.cliente_nombre}</td><td style="${celda}">${r.sa_nombre_original}</td><td style="${celda}">${r.sa_fecha_vencimiento}</td><td style="${celda}font-weight:bold;color:${colorEstado};">${r.estado}</td></tr>`;
+        return `<tr><td style="${celda}">${r.numero_solicitud}</td><td style="${celda}">${r.cliente_nombre}</td><td style="${celda}">${r.sa_nombre_original}</td><td style="${celda}">${this.formatearValorPlantilla(r.sa_fecha_vencimiento)}</td><td style="${celda}font-weight:bold;color:${colorEstado};">${r.estado}</td></tr>`;
       })
       .join('');
 
@@ -776,6 +906,35 @@ export class NotificacionesService {
         reason: 'error-envio',
         mensaje,
       };
+    }
+  }
+
+  async notificarResetPassword(payload: {
+    nombre: string;
+    email: string;
+    reset_url: string;
+  }) {
+    const email = String(payload.email || '').trim();
+    if (!email) {
+      return { ok: false, mensaje: 'Correo no proporcionado' };
+    }
+
+    const variables = {
+      nombre: String(payload.nombre || 'Usuario').trim(),
+      reset_url: String(payload.reset_url || '').trim(),
+    };
+
+    try {
+      const result = await this.enviarConPlantilla('RESET_PASSWORD', variables, [
+        email,
+      ]);
+      return { ok: !!result?.sent, ...result };
+    } catch (error: any) {
+      const mensaje =
+        String(error?.message || '').trim() ||
+        'No se pudo enviar el correo de recuperación';
+      this.logger.error(`[RESET_PASSWORD] Error enviando correo: ${mensaje}`);
+      return { ok: false, sent: false, reason: 'error-envio', mensaje };
     }
   }
 }

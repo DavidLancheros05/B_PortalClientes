@@ -98,6 +98,74 @@ export class TipoDocumento {
   @Column({ name: 'tdo_paginas_total', type: 'int', nullable: true })
   paginasTotal: number | null;
 
+  // 'CLIENTE' (default, documento que el cliente sube/descarga-firma-sube
+  // durante el formulario) | 'CARTA_APROBACION' (el sistema lo genera y
+  // envía solo al aprobar el Comité de Crédito 2 — ver
+  // solicitudes-workflow.service.ts::enviarCartaVinculacionPorCorreo). No
+  // tiene Formulario_pregunta asociada ni tiene sentido en el flujo del
+  // cliente, por eso vive como un origen distinto en la misma tabla en vez
+  // de una tabla aparte (que es justo lo que reemplazó esta migración,
+  // ver 20260727_unificar_carta_vinculacion_en_tipos_documentos.sql).
+  @Column({
+    name: 'tdo_origen',
+    type: 'varchar',
+    length: 20,
+    default: 'CLIENTE',
+  })
+  origen: 'CLIENTE' | 'CARTA_APROBACION';
+
+  // Encabezado que se dibuja arriba de cada página del PDF de este
+  // documento. Para origen CARTA_APROBACION lo dibuja el backend (pdfkit,
+  // solicitudes-workflow.service.ts) y solo soporta 'NINGUNO'/'IMAGEN' —
+  // 'FORMATO_OFICIAL' (tabla logo/código de FORMATO/página/revisión) sigue
+  // reservado sin implementar ahí. Para origen CLIENTE con
+  // tipoPlantilla='TEXTO' lo dibuja el frontend (pdf-lib,
+  // carta-pdf.util.ts), donde sí soporta los 3 valores.
+  @Column({
+    name: 'tdo_encabezado_tipo',
+    type: 'varchar',
+    length: 20,
+    default: 'NINGUNO',
+  })
+  encabezadoTipo: 'NINGUNO' | 'IMAGEN' | 'FORMATO_OFICIAL';
+
+  @Column({
+    name: 'tdo_encabezado_imagen_url',
+    type: 'nvarchar',
+    length: 500,
+    nullable: true,
+  })
+  encabezadoImagenUrl: string | null;
+
+  // Pie de página que se dibuja abajo de cada página del PDF — solo
+  // implementado para origen CLIENTE con tipoPlantilla='TEXTO' (frontend,
+  // pdf-lib, carta-pdf.util.ts). Independiente del bloque de "cierre" de
+  // una sola vez (texto fijo + tabla de revisiones) que ya existe al
+  // final del documento — este pie se repite en todas las páginas.
+  @Column({
+    name: 'tdo_pie_pagina_tipo',
+    type: 'varchar',
+    length: 20,
+    default: 'NINGUNO',
+  })
+  piePaginaTipo: 'NINGUNO' | 'TEXTO' | 'IMAGEN';
+
+  @Column({
+    name: 'tdo_pie_pagina_texto',
+    type: 'nvarchar',
+    length: 300,
+    nullable: true,
+  })
+  piePaginaTexto: string | null;
+
+  @Column({
+    name: 'tdo_pie_pagina_imagen_url',
+    type: 'nvarchar',
+    length: 500,
+    nullable: true,
+  })
+  piePaginaImagenUrl: string | null;
+
   @CreateDateColumn({ name: 'tdo_created_at', type: 'datetime2' })
   createdAt: Date;
 

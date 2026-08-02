@@ -53,7 +53,14 @@ export class SolicitudesService {
     };
   }
 
+  // El esquema no cambia en caliente (solo con una migración + redeploy), así
+  // que esta introspección solo necesita correr una vez por proceso en vez
+  // de en cada crearSolicitud().
+  private historialColumnsCache: Record<string, string> | undefined;
+
   private async resolveHistorialColumns() {
+    if (this.historialColumnsCache) return this.historialColumnsCache;
+
     const result = await this.dataSource.query(`
       SELECT
         CASE WHEN COL_LENGTH('Solicitudes_estados_hist','seh_sol_id') IS NOT NULL THEN 'seh_sol_id' ELSE 'sa_sol_id' END AS solicitud_col,
@@ -62,7 +69,8 @@ export class SolicitudesService {
         CASE WHEN COL_LENGTH('Solicitudes_estados_hist','seh_fecha_hora') IS NOT NULL THEN 'seh_fecha_hora' ELSE 'fecha_hora' END AS fecha_col
     `);
 
-    return result[0];
+    this.historialColumnsCache = result[0];
+    return this.historialColumnsCache;
   }
 
   async crearSolicitud(body: any) {
@@ -110,61 +118,42 @@ export class SolicitudesService {
       );
       const now = new Date();
 
-      // Obtener días configurados para cada etapa del workflow
-      const diasRespuestaEjecResult = await queryRunner.query(`
-        SELECT TOP 1 pdr_dias
+      // Obtener días configurados para cada etapa del workflow — una sola
+      // query para las 5 áreas en vez de 5 round-trips secuenciales
+      // (mismo criterio de antes: por área, la fila con mayor pdr_id).
+      const diasRespuestaResult = await queryRunner.query(`
+        SELECT pdr_area, pdr_dias, pdr_id
         FROM param_dias_respuesta_solicitudes
         WHERE pdr_estado = 1
-          AND UPPER(LTRIM(RTRIM(pdr_area))) = 'EJECUTIVO NEGOCIOS'
+          AND UPPER(LTRIM(RTRIM(pdr_area))) IN (
+            'EJECUTIVO NEGOCIOS',
+            'AUXILIAR SERVICIO CLIENTE',
+            'OFICIAL CUMPLIMIENTO',
+            'COMITÉ CRÉDITO 1',
+            'COMITÉ CRÉDITO 2'
+          )
         ORDER BY pdr_id DESC
       `);
-      const diasRespuestaEjecutivo = Number(
-        diasRespuestaEjecResult?.[0]?.pdr_dias ?? 1,
+      const obtenerDiasRespuesta = (area: string, fallback: number) => {
+        const fila = (diasRespuestaResult || []).find(
+          (r: any) => String(r.pdr_area).toUpperCase().trim() === area,
+        );
+        return fila ? Number(fila.pdr_dias) : fallback;
+      };
+      const diasRespuestaEjecutivo = obtenerDiasRespuesta(
+        'EJECUTIVO NEGOCIOS',
+        1,
       );
-
-      const diasRespuestaAuxResult = await queryRunner.query(`
-        SELECT TOP 1 pdr_dias
-        FROM param_dias_respuesta_solicitudes
-        WHERE pdr_estado = 1
-          AND UPPER(LTRIM(RTRIM(pdr_area))) = 'AUXILIAR SERVICIO CLIENTE'
-        ORDER BY pdr_id DESC
-      `);
-      const diasRespuestaAuxiliar = Number(
-        diasRespuestaAuxResult?.[0]?.pdr_dias ?? 3,
+      const diasRespuestaAuxiliar = obtenerDiasRespuesta(
+        'AUXILIAR SERVICIO CLIENTE',
+        3,
       );
-
-      const diasRespuestaOficialResult = await queryRunner.query(`
-        SELECT TOP 1 pdr_dias
-        FROM param_dias_respuesta_solicitudes
-        WHERE pdr_estado = 1
-          AND UPPER(LTRIM(RTRIM(pdr_area))) = 'OFICIAL CUMPLIMIENTO'
-        ORDER BY pdr_id DESC
-      `);
-      const diasRespuestaOficial = Number(
-        diasRespuestaOficialResult?.[0]?.pdr_dias ?? 3,
+      const diasRespuestaOficial = obtenerDiasRespuesta(
+        'OFICIAL CUMPLIMIENTO',
+        3,
       );
-
-      const diasRespuestaCC1Result = await queryRunner.query(`
-        SELECT TOP 1 pdr_dias
-        FROM param_dias_respuesta_solicitudes
-        WHERE pdr_estado = 1
-          AND UPPER(LTRIM(RTRIM(pdr_area))) = 'COMITÉ CRÉDITO 1'
-        ORDER BY pdr_id DESC
-      `);
-      const diasRespuestaCC1 = Number(
-        diasRespuestaCC1Result?.[0]?.pdr_dias ?? 3,
-      );
-
-      const diasRespuestaCC2Result = await queryRunner.query(`
-        SELECT TOP 1 pdr_dias
-        FROM param_dias_respuesta_solicitudes
-        WHERE pdr_estado = 1
-          AND UPPER(LTRIM(RTRIM(pdr_area))) = 'COMITÉ CRÉDITO 2'
-        ORDER BY pdr_id DESC
-      `);
-      const diasRespuestaCC2 = Number(
-        diasRespuestaCC2Result?.[0]?.pdr_dias ?? 3,
-      );
+      const diasRespuestaCC1 = obtenerDiasRespuesta('COMITÉ CRÉDITO 1', 3);
+      const diasRespuestaCC2 = obtenerDiasRespuesta('COMITÉ CRÉDITO 2', 3);
 
       let festivos: any[] = [];
       try {
@@ -510,7 +499,10 @@ export class SolicitudesService {
       // 8. Commit
       await queryRunner.commitTransaction();
 
-      if (!hayDocumentosDiferidos) {
+      // Solo notificar cuando la solicitud realmente se envía (estado
+      // PENDIENTE, etapa EJN) — un guardado en BORRADOR no debe generar el
+      // correo de "solicitud registrada" al cliente ni al ejecutivo.
+      if (estadoId === 2 && !hayDocumentosDiferidos) {
         try {
           await this.notificacionesService.notificarRegistroSolicitud(
             Number(solicitudId),
@@ -763,6 +755,18 @@ export class SolicitudesService {
 
     // ===== TABLA DE SECCIONES =====
     for (const seccion of secciones) {
+      // Título de sección: se dibuja siempre en la posición actual, sin
+      // revisar si queda algo de la sección debajo — antes podía terminar
+      // solo al final de una hoja (con toda la hoja vacía debajo) y la
+      // primera pregunta real de la sección se empujaba a la siguiente.
+      // No se conoce de antemano la altura exacta de esa primera pregunta
+      // (depende de su tipo, calculado más abajo), así que se exige un
+      // colchón fijo generoso en vez de calcularla aquí.
+      if (yPos - 18 - 15 < 100 + 40) {
+        currentPage = nuevaPagina();
+        yPos = bodyTopY;
+      }
+
       // Título de sección
       drawBox(
         marginLeft,
@@ -899,6 +903,15 @@ export class SolicitudesService {
           espacioEntreParrafos +
           10;
 
+        // Si la nota completa (título + cuerpo) no cabe en lo que queda de
+        // página, saltar a una nueva ANTES de dibujar — de lo contrario la
+        // caja se dibuja igual en la posición actual y termina escribiendo
+        // hasta el borde inferior (o pasándose) de la página actual.
+        if (yPos - notaBoxHeight < 100) {
+          currentPage = nuevaPagina();
+          yPos = bodyTopY;
+        }
+
         // Caja para la nota
         drawBox(
           marginLeft,
@@ -958,7 +971,10 @@ export class SolicitudesService {
           });
         }
 
-        yPos -= notaBoxHeight + 8;
+        // +12 (no +8) para igualar el espacio que deja renderNormales
+        // después de una fila de preguntas — con +8 la nota quedaba visto
+        // más pegada a lo que sigue que el resto del formulario.
+        yPos -= notaBoxHeight + 12;
 
         // Nueva página si es necesario
         if (yPos < 100) {
@@ -1036,6 +1052,19 @@ export class SolicitudesService {
           yPos -= headerHeight;
         };
 
+        // Si no cabe el encabezado junto con al menos la primera fila,
+        // saltar de una vez a la página nueva — evita que el encabezado
+        // quede solo al final de una hoja y se repita, sin filas debajo,
+        // al inicio de la siguiente.
+        const alturaPrimeraFila =
+          filasConLineas.length > 0
+            ? Math.max(...filasConLineas[0].map((l) => l.length), 1) * 9 + 6
+            : 0;
+        if (yPos - 14 - alturaPrimeraFila < 100) {
+          currentPage = nuevaPagina();
+          yPos = bodyTopY;
+        }
+
         dibujarEncabezado();
 
         filasConLineas.forEach((lineasFila) => {
@@ -1076,7 +1105,10 @@ export class SolicitudesService {
           yPos -= rowHeight;
         });
 
-        yPos -= 10;
+        // +12 (no +10), igual que renderNota y renderNormales — con +10
+        // la tabla quedaba más pegada a lo que sigue que el resto del
+        // formulario.
+        yPos -= 12;
       };
 
       // Renderizar preguntas IMAGEN embebiendo la imagen real en el PDF,

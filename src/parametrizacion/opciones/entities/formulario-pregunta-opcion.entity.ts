@@ -21,6 +21,12 @@ export class FormularioPreguntaOpcion {
   @Column({ type: 'bit', default: true })
   fpo_estado: boolean;
 
+  // Identidad estable de la opción entre versiones del formulario — fpo_id
+  // cambia en cada clonado (IDENTITY), fpo_codigo no (ver
+  // migrations/20260727_agregar_fpo_codigo_identidad_opciones_entre_versiones.sql).
+  @Column({ type: 'nvarchar', length: 100, nullable: true })
+  fpo_codigo: string | null;
+
   @ManyToOne(() => FormularioPregunta, (fp) => fp.opciones)
   @JoinColumn({ name: 'fpo_fp_id' })
   pregunta: FormularioPregunta;

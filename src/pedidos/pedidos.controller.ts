@@ -14,4 +14,11 @@ export class PedidosController {
   ): Promise<PedidoClienteResponseDto[]> {
     return this.pedidosService.getPedidosPorCliente(+cliId);
   }
+
+  @Get('ejecutivo/:ejngId')
+  async getPedidosPorEjecutivo(
+    @Param('ejngId') ejngId: string,
+  ): Promise<PedidoClienteResponseDto[]> {
+    return this.pedidosService.getPedidosPorEjecutivo(+ejngId);
+  }
 }

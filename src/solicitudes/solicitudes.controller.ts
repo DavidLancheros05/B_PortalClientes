@@ -224,6 +224,30 @@ export class SolicitudesController {
     };
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Get('cliente/:clienteId/ultima-aprobada')
+  async getUltimaSolicitudAprobada(
+    @Param('clienteId', ParseIntPipe) clienteId: number,
+  ) {
+    const ultima =
+      await this.listadosService.obtenerUltimaSolicitudAprobada(clienteId);
+    if (!ultima) {
+      return null;
+    }
+    const respuestas =
+      await this.respuestasService.obtenerRespuestasConCodigoPregunta(
+        ultima.sol_id,
+      );
+    return {
+      sol_id: ultima.sol_id,
+      sol_numero_solicitud: ultima.sol_numero_solicitud,
+      sol_estado_id: Number(ultima.sol_estado_id),
+      sol_fecha_creacion: ultima.sol_fecha_creacion,
+      sol_fecha_envio: ultima.sol_fecha_envio,
+      respuestas,
+    };
+  }
+
   @Get('cliente/:clienteId/estadisticas')
   async estadisticasCliente(
     @Param('clienteId', ParseIntPipe) clienteId: number,
@@ -292,6 +316,20 @@ export class SolicitudesController {
     console.log('📤 Resultado:', data);
 
     return data;
+  }
+
+  // Bandeja del ejecutivo: solicitudes rechazadas de forma definitiva por
+  // Oficial de Cumplimiento o Comité de Crédito 2, pendientes de que él
+  // gestione el seguimiento con el cliente por fuera del sistema.
+  @Get('ejecutivo/:ejecutivoId/rechazadas')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('EJECUTIVO', 'ADMIN')
+  async getRechazadasForEjecutivo(
+    @Param('ejecutivoId', ParseIntPipe) ejecutivoId: number,
+  ) {
+    return this.listadosService.getSolicitudesRechazadasPorEjecutivoId(
+      ejecutivoId,
+    );
   }
 
   @Get('listado')
@@ -1199,12 +1237,17 @@ export class SolicitudesController {
       );
       const {
         consumo_mensual_proyectado,
+        toneladas_proyectadas,
         observacionesComercial,
         fecha_real_ejecutivo,
       } = body;
 
       if (consumo_mensual_proyectado == null) {
         throw new Error('consumo_mensual_proyectado es requerido');
+      }
+
+      if (toneladas_proyectadas == null) {
+        throw new Error('toneladas_proyectadas es requerido');
       }
 
       const usuario_modifica = req.user.usr_id;
@@ -1215,6 +1258,7 @@ export class SolicitudesController {
       const result = await this.workflowService.guardarGestionEjecutivo(
         id,
         consumo_mensual_proyectado,
+        toneladas_proyectadas,
         observacionesComercial,
         usuario_modifica,
         fecha_real_ejecutivo,
@@ -1224,6 +1268,30 @@ export class SolicitudesController {
       return result;
     } catch (error: any) {
       console.error(`❌ [CONTROLLER] Error guardando concepto:`, error);
+      throw new HttpException(error.message || 'Error interno', 500);
+    }
+  }
+
+  @Get(':id/rechazo-ejecutivo')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('EJECUTIVO', 'ADMIN')
+  async getRechazoEjecutivo(@Param('id', ParseIntPipe) id: number) {
+    return this.listadosService.getRechazoEjecutivoDetalle(id);
+  }
+
+  @Patch(':id/gestion-rechazo/finalizar')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('EJECUTIVO', 'ADMIN')
+  async finalizarGestionRechazo(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request & { user: { usr_id: number } },
+  ) {
+    try {
+      return await this.workflowService.finalizarGestionRechazo(
+        id,
+        req.user.usr_id,
+      );
+    } catch (error: any) {
       throw new HttpException(error.message || 'Error interno', 500);
     }
   }

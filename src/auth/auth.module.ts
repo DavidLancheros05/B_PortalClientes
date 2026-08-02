@@ -1,5 +1,5 @@
 import { forwardRef, Module } from '@nestjs/common';
-import { JwtModule } from '@nestjs/jwt';
+import { JwtModule, JwtModuleOptions } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
@@ -8,6 +8,7 @@ import { UsuarioModule } from '../usuarios/usuario.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { UsersModule } from '../users/users.module';
 import { PermissionsModule } from '../permissions/permissions.module';
+import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 
 @Module({
   imports: [
@@ -15,12 +16,16 @@ import { PermissionsModule } from '../permissions/permissions.module';
     TypeOrmModule,
     UsersModule,
     PermissionsModule,
+    NotificacionesModule,
 
     JwtModule.registerAsync({
       inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
+      useFactory: (configService: ConfigService): JwtModuleOptions => ({
         secret: configService.get<string>('JWT_SECRET'),
-        signOptions: { expiresIn: '7d' },
+        signOptions: {
+          expiresIn: (configService.get<string>('JWT_EXPIRES_IN') ||
+            '7d') as JwtModuleOptions['signOptions']['expiresIn'],
+        },
       }),
     }),
   ],

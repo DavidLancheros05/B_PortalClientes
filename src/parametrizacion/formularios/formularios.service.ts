@@ -621,8 +621,8 @@ export class FormulariosService {
 
       await this.dataSource.query(
         `
-          INSERT INTO Formulario_pregunta_opcion (fpo_fp_id, fpo_valor, fpo_estado)
-          SELECT m.nuevo_id, fpo.fpo_valor, fpo.fpo_estado
+          INSERT INTO Formulario_pregunta_opcion (fpo_fp_id, fpo_valor, fpo_estado, fpo_codigo)
+          SELECT m.nuevo_id, fpo.fpo_valor, fpo.fpo_estado, fpo.fpo_codigo
           FROM Formulario_pregunta_opcion fpo
           INNER JOIN (VALUES ${filasValues}) AS m(viejo_id, nuevo_id)
             ON fpo.fpo_fp_id = m.viejo_id

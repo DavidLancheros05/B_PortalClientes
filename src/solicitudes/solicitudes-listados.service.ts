@@ -323,6 +323,131 @@ export class SolicitudesListadosService {
     return await this.dataSource.query(sql, [ejecutivoId]);
   }
 
+  // Bandeja del ejecutivo de negocios para solicitudes rechazadas de forma
+  // definitiva por Oficial de Cumplimiento o Comité de Crédito 2 (ver
+  // guardarConceptoGenerico) — el ejecutivo asignado debe gestionar el
+  // seguimiento con el cliente por fuera del sistema y marcarlo "Finalizar"
+  // cuando termine (sol_gestion_rechazo_finalizada). No incluye solicitudes
+  // rechazadas antes de que existiera esta funcionalidad (backfill en
+  // 20260726_agregar_gestion_rechazo_ejecutivo.sql las marca como ya
+  // finalizadas).
+  async getSolicitudesRechazadasPorEjecutivoId(usuarioId: number) {
+    if (!usuarioId) {
+      throw new Error('No se proporcionó usuario ID');
+    }
+
+    const usuarioResult = await this.dataSource.query(
+      `SELECT usr_id, ejng_id FROM usuarios WHERE usr_id = @0`,
+      [usuarioId],
+    );
+
+    if (!usuarioResult || usuarioResult.length === 0) {
+      throw new Error(`Usuario ${usuarioId} no encontrado`);
+    }
+
+    const ejecutivoId = usuarioResult[0].ejng_id;
+
+    if (!ejecutivoId) {
+      return [];
+    }
+
+    const columns = await this.resolveLookupColumns();
+
+    const sql = `
+    SELECT
+      s.sol_id AS [sol_id],
+      s.sol_numero_solicitud AS [sol_numero_solicitud],
+      s.sol_estado_id AS [sol_estado_id],
+      s.sol_etapa_actual_id AS [sol_etapa_actual_id],
+      s.sol_cliente_id AS [sol_cliente_id],
+      s.sol_co_id AS [sol_co_id],
+      s.sol_fecha_creacion AS [sol_fecha_creacion],
+      s.sol_gestion_rechazo_finalizada AS [sol_gestion_rechazo_finalizada],
+      c.${columns.cliRazonSocial} AS [cliente_nombre],
+      c.cli_nro_identificacion AS [cliente_nit],
+      co.cop_nombre AS [centro_operacion_nombre],
+      mr.mrs_descripcion AS [motivo_rechazo],
+      rechazo.etapa_rechazo_codigo AS [etapa_rechazo_codigo],
+      rechazo.etapa_rechazo_nombre AS [etapa_rechazo_nombre],
+      rechazo.usuario_rechazo_nombre AS [usuario_rechazo_nombre],
+      rechazo.fecha_rechazo AS [fecha_rechazo],
+      rechazo.comentario_rechazo AS [comentario_rechazo]
+    FROM solicitudes s
+    LEFT JOIN clientes c ON s.sol_cliente_id = c.${columns.cliId}
+    LEFT JOIN Centro_operacion co ON s.sol_co_id = co.cop_id
+    LEFT JOIN Motivos_rechazo_solicitud mr ON mr.mrs_id = s.sol_motivo_rechazo_id
+    OUTER APPLY (
+      SELECT TOP 1
+        we.wet_codigo AS etapa_rechazo_codigo,
+        we.wet_nombre AS etapa_rechazo_nombre,
+        u2.usr_nombre AS usuario_rechazo_nombre,
+        swh.swh_fecha AS fecha_rechazo,
+        swh.swh_comentario AS comentario_rechazo
+      FROM solicitud_workflow_historial swh
+      LEFT JOIN workflow_etapas we ON we.wet_id = swh.swh_etapa_id
+      LEFT JOIN workflow_estado_etapa wr ON wr.wee_id = swh.swh_resultado_id
+      LEFT JOIN usuarios u2 ON u2.usr_id = swh.swh_usuario_id
+      WHERE swh.swh_sol_id = s.sol_id
+        AND wr.wee_codigo = 'RECHAZADO'
+        AND we.wet_codigo IN ('OFC', 'CC2')
+      ORDER BY swh.swh_fecha DESC
+    ) rechazo
+    WHERE s.sol_ejecutivo_id = @0
+      AND s.sol_estado_id = (SELECT ses_id FROM solicitud_estados WHERE ses_codigo = 'RECHAZADA')
+      AND s.sol_etapa_actual_id IN (
+        SELECT wet_id FROM workflow_etapas WHERE wet_codigo IN ('OFC', 'CC2')
+      )
+      AND s.sol_gestion_rechazo_finalizada = 0
+    ORDER BY rechazo.fecha_rechazo DESC
+  `;
+
+    return await this.dataSource.query(sql, [ejecutivoId]);
+  }
+
+  // Detalle de una solicitud rechazada para la bandeja del ejecutivo: motivo,
+  // etapa/usuario/fecha/comentario del rechazo (mismo OUTER APPLY que
+  // getSolicitudesRechazadasPorEjecutivoId), y estado de la gestión manual.
+  async getRechazoEjecutivoDetalle(solicitudId: number) {
+    const [row] = await this.dataSource.query(
+      `
+      SELECT
+        s.sol_id,
+        s.sol_motivo_rechazo_id,
+        mr.mrs_descripcion AS motivo_rechazo,
+        s.sol_gestion_rechazo_finalizada,
+        s.sol_fecha_gestion_rechazo,
+        u.usr_nombre AS usuario_gestion_nombre,
+        rechazo.etapa_rechazo_codigo,
+        rechazo.etapa_rechazo_nombre,
+        rechazo.usuario_rechazo_nombre,
+        rechazo.fecha_rechazo,
+        rechazo.comentario_rechazo
+      FROM solicitudes s
+      LEFT JOIN Motivos_rechazo_solicitud mr ON mr.mrs_id = s.sol_motivo_rechazo_id
+      LEFT JOIN usuarios u ON u.usr_id = s.sol_usuario_gestion_rechazo
+      OUTER APPLY (
+        SELECT TOP 1
+          we.wet_codigo AS etapa_rechazo_codigo,
+          we.wet_nombre AS etapa_rechazo_nombre,
+          u2.usr_nombre AS usuario_rechazo_nombre,
+          swh.swh_fecha AS fecha_rechazo,
+          swh.swh_comentario AS comentario_rechazo
+        FROM solicitud_workflow_historial swh
+        LEFT JOIN workflow_etapas we ON we.wet_id = swh.swh_etapa_id
+        LEFT JOIN workflow_estado_etapa wr ON wr.wee_id = swh.swh_resultado_id
+        LEFT JOIN usuarios u2 ON u2.usr_id = swh.swh_usuario_id
+        WHERE swh.swh_sol_id = s.sol_id
+          AND wr.wee_codigo = 'RECHAZADO'
+          AND we.wet_codigo IN ('OFC', 'CC2')
+        ORDER BY swh.swh_fecha DESC
+      ) rechazo
+      WHERE s.sol_id = @0
+      `,
+      [solicitudId],
+    );
+    return row ?? null;
+  }
+
   async getSolicitudesPorCentro(
     coId: number,
     estadoId?: number,
@@ -490,6 +615,32 @@ export class SolicitudesListadosService {
       FROM solicitudes s
       LEFT JOIN clientes c ON c.cli_id = s.sol_cliente_id
       WHERE s.sol_cliente_id = @0
+      ORDER BY s.sol_fecha_creacion DESC
+    `;
+    const result = await this.dataSource.query(sql, [clienteId]);
+    return result[0] || null;
+  }
+
+  // Igual que obtenerUltimaSolicitud pero solo considera solicitudes
+  // APROBADAS (sol_estado_id = 5) — usado para decidir si el cliente es
+  // candidato a "Ampliación de Cupo" y para precargar respuestas desde su
+  // última solicitud aprobada (no desde cualquier solicitud previa, que
+  // podría estar rechazada/cancelada/en trámite).
+  async obtenerUltimaSolicitudAprobada(clienteId: number) {
+    const sql = `
+      SELECT TOP 1
+        s.sol_id AS [sol_id],
+        s.sol_numero_solicitud AS [sol_numero_solicitud],
+        s.sol_estado_id AS [sol_estado_id],
+        s.sol_etapa_actual_id AS [sol_etapa_actual_id],
+        s.sol_resultado_etapa_id AS [sol_resultado_etapa_id],
+        s.sol_fecha_creacion AS [sol_fecha_creacion],
+        s.sol_fecha_envio AS [sol_fecha_envio],
+        c.cli_razon_social AS [cliente_nombre],
+        c.cli_nro_identificacion AS [cliente_nit]
+      FROM solicitudes s
+      LEFT JOIN clientes c ON c.cli_id = s.sol_cliente_id
+      WHERE s.sol_cliente_id = @0 AND s.sol_estado_id = 5
       ORDER BY s.sol_fecha_creacion DESC
     `;
     const result = await this.dataSource.query(sql, [clienteId]);

@@ -59,7 +59,7 @@ export class SolicitudesWorkflowService {
       ),
       runner.query(
         `
-        SELECT sa.sa_id, fp.fp_tipo_documento_id AS tdo_id
+        SELECT sa.sa_id, sa.sa_nombre_original, fp.fp_tipo_documento_id AS tdo_id
         FROM Solicitud_archivo sa
         JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
         WHERE sa.sa_sol_id = @0 AND sa.sa_estado = 'activo'
@@ -75,6 +75,8 @@ export class SolicitudesWorkflowService {
       `
       SELECT DISTINCT td.tdo_id, td.tdo_nombre, td.tdo_plantilla_contenido, td.tdo_tipo_plantilla,
         td.tdo_formato_codigo, td.tdo_formato_codigo_secundario, td.tdo_revision, td.tdo_paginas_total,
+        td.tdo_encabezado_tipo, td.tdo_encabezado_imagen_url,
+        td.tdo_pie_pagina_tipo, td.tdo_pie_pagina_texto, td.tdo_pie_pagina_imagen_url,
         fp.fp_id
       FROM Formulario_pregunta fp
       JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tipo_documento_id
@@ -88,18 +90,28 @@ export class SolicitudesWorkflowService {
     );
 
     if (diferidos.length === 0) {
-      return { diferidos: [] as any[], subidosSet: new Set<number>() };
+      return {
+        diferidos: [] as any[],
+        subidosSet: new Set<number>(),
+        subidosPorTdo: new Map<number, number>(),
+        nombrePorTdo: new Map<number, string>(),
+      };
     }
 
     // Si un tdo_id llegara a tener más de un archivo activo, se usa el más
     // reciente (sa_id más alto, por el ORDER BY + sobrescritura en el Map).
     const subidosPorTdo = new Map<number, number>();
-    for (const s of subidos) subidosPorTdo.set(s.tdo_id, s.sa_id);
+    const nombrePorTdo = new Map<number, string>();
+    for (const s of subidos) {
+      subidosPorTdo.set(s.tdo_id, s.sa_id);
+      nombrePorTdo.set(s.tdo_id, s.sa_nombre_original);
+    }
 
     return {
       diferidos,
       subidosSet: new Set(subidosPorTdo.keys()),
       subidosPorTdo,
+      nombrePorTdo,
     };
   }
 
@@ -118,6 +130,11 @@ export class SolicitudesWorkflowService {
       tdo_formato_codigo_secundario: string | null;
       tdo_revision: string | null;
       tdo_paginas_total: number | null;
+      tdo_encabezado_tipo: 'NINGUNO' | 'IMAGEN' | 'FORMATO_OFICIAL' | null;
+      tdo_encabezado_imagen_url: string | null;
+      tdo_pie_pagina_tipo: 'NINGUNO' | 'TEXTO' | 'IMAGEN' | null;
+      tdo_pie_pagina_texto: string | null;
+      tdo_pie_pagina_imagen_url: string | null;
       fp_id: number;
     }[]
   > {
@@ -143,17 +160,24 @@ export class SolicitudesWorkflowService {
       tdo_formato_codigo_secundario: string | null;
       tdo_revision: string | null;
       tdo_paginas_total: number | null;
+      tdo_encabezado_tipo: 'NINGUNO' | 'IMAGEN' | 'FORMATO_OFICIAL' | null;
+      tdo_encabezado_imagen_url: string | null;
+      tdo_pie_pagina_tipo: 'NINGUNO' | 'TEXTO' | 'IMAGEN' | null;
+      tdo_pie_pagina_texto: string | null;
+      tdo_pie_pagina_imagen_url: string | null;
       fp_id: number;
       yaSubido: boolean;
       sa_id: number | null;
+      sa_nombre_original: string | null;
     }[]
   > {
-    const { diferidos, subidosPorTdo } =
+    const { diferidos, subidosPorTdo, nombrePorTdo } =
       await this.obtenerDocumentosDiferidosConSubidos(solicitudId, runner);
     return diferidos.map((d: any) => ({
       ...d,
       yaSubido: subidosPorTdo.has(d.tdo_id),
       sa_id: subidosPorTdo.get(d.tdo_id) ?? null,
+      sa_nombre_original: nombrePorTdo.get(d.tdo_id) ?? null,
     }));
   }
 
@@ -814,6 +838,7 @@ export class SolicitudesWorkflowService {
   async guardarGestionEjecutivo(
     sa_sol_id: number,
     consumo_mensual_proyectado: number | null,
+    toneladas_proyectadas: number | null,
     observacionesComercial?: string,
     usuario_modifica?: number,
     fecha_real_ejecutivo?: string,
@@ -862,12 +887,13 @@ export class SolicitudesWorkflowService {
 
       const updateParams: any[] = [
         consumo_mensual_proyectado,
+        toneladas_proyectadas,
         observacionesComercial,
         estadoRevisionId,
         usuario_modifica,
         'Tu solicitud se encuentra en revisión.',
       ];
-      let updateSQL = `UPDATE solicitudes SET sol_consumo_mensual_proyectado = @0, sol_observacion_ejn = @1, sol_estado_id = @2, sol_usuario_modifica = @3, sol_updated_at = GETDATE(), sol_observacion_cliente = @4`;
+      let updateSQL = `UPDATE solicitudes SET sol_consumo_mensual_proyectado = @0, sol_toneladas_proyectadas = @1, sol_observacion_ejn = @2, sol_estado_id = @3, sol_usuario_modifica = @4, sol_updated_at = GETDATE(), sol_observacion_cliente = @5`;
 
       if (fecha_real_ejecutivo) {
         updateSQL += `, sol_fecha_real_ejecutivo = @${updateParams.length}`;
@@ -886,6 +912,7 @@ export class SolicitudesWorkflowService {
           sa_sol_id,
           usuario_modifica,
           consumo_mensual_proyectado ?? null,
+          toneladas_proyectadas ?? null,
           observacionesComercial ?? null,
         );
       } catch (respuestasError) {
@@ -1180,18 +1207,23 @@ export class SolicitudesWorkflowService {
         }
       }
 
-      // Rechazo del Oficial de Cumplimiento: es definitivo (no vuelve al
-      // cliente para corregir, a diferencia del rechazo de ASC), así que el
-      // cliente solo se entera si se le avisa por correo aquí.
-      if (!aprobado && etapaActualCodigo === 'OFC') {
+      // Rechazo de Oficial de Cumplimiento o Comité de Crédito 2: es
+      // definitivo (no vuelve al cliente para corregir, a diferencia del
+      // rechazo de ASC). Ya no se le avisa al cliente por correo — el
+      // ejecutivo de negocios asignado recibe el aviso y gestiona el
+      // seguimiento con el cliente por fuera del sistema (ver bandeja
+      // "Solicitudes Rechazadas" y solicitudes-listados.service.ts::
+      // getSolicitudesRechazadasPorEjecutivoId).
+      if (!aprobado && (etapaActualCodigo === 'OFC' || etapaActualCodigo === 'CC2')) {
         try {
-          await this.notificacionesService.notificarRechazoDefinitivoSolicitud(
+          await this.notificacionesService.notificarRechazoAlEjecutivo(
             sa_sol_id,
+            etapaActualCodigo,
             comentario || null,
           );
         } catch (emailError) {
           console.error(
-            `⚠️ [guardarConceptoGenerico] Error enviando correo de rechazo:`,
+            `⚠️ [guardarConceptoGenerico] Error enviando correo de rechazo al ejecutivo:`,
             emailError,
           );
         }
@@ -1209,6 +1241,43 @@ export class SolicitudesWorkflowService {
     } finally {
       await queryRunner.release();
     }
+  }
+
+  // Marca que el ejecutivo de negocios ya gestionó manualmente (fuera del
+  // sistema) el seguimiento con el cliente tras un rechazo de OFC/CC2. No
+  // toca sol_estado_id/sol_etapa_actual_id/sol_resultado_etapa_id — esos
+  // siguen terminando en RECHAZADA como documenta FLUJO_ETAPAS.md; esto es
+  // un tracker aparte, no una transición de workflow, así que no pasa por
+  // guardarConceptoGenerico ni necesita transacción (un solo UPDATE sin
+  // efectos dependientes).
+  async finalizarGestionRechazo(solicitudId: number, usuarioId: number) {
+    const [solicitud] = await this.dataSource.query(
+      `SELECT sol_estado_id FROM solicitudes WHERE sol_id = @0`,
+      [solicitudId],
+    );
+    if (!solicitud) {
+      throw new Error('Solicitud no encontrada');
+    }
+
+    const [estadoRechazada] = await this.dataSource.query(
+      `SELECT ses_id FROM solicitud_estados WHERE ses_codigo = 'RECHAZADA'`,
+    );
+    if (solicitud.sol_estado_id !== estadoRechazada.ses_id) {
+      throw new Error(
+        'Solo se puede finalizar la gestión sobre una solicitud rechazada',
+      );
+    }
+
+    await this.dataSource.query(
+      `UPDATE solicitudes
+       SET sol_gestion_rechazo_finalizada = 1,
+           sol_fecha_gestion_rechazo = GETDATE(),
+           sol_usuario_gestion_rechazo = @0
+       WHERE sol_id = @1`,
+      [usuarioId, solicitudId],
+    );
+
+    return { success: true };
   }
 
   // Upsert de una respuesta del formulario. `db` puede ser un queryRunner
@@ -1261,14 +1330,23 @@ export class SolicitudesWorkflowService {
     sa_sol_id: number,
     usuario_modifica: number,
     consumo_mensual_proyectado: number | null,
+    toneladas_proyectadas: number | null,
     observaciones: string | null,
   ) {
+    const [solicitudActual] = await this.dataSource.query(
+      `SELECT sol_formulario_version FROM solicitudes WHERE sol_id = @0`,
+      [sa_sol_id],
+    );
+    const version = solicitudActual?.sol_formulario_version ?? 1;
+
     const preguntas: { fp_id: number; fp_descripcion: string }[] =
       await this.dataSource.query(
         `SELECT fp.fp_id, fp.fp_descripcion
          FROM Formulario_pregunta fp
          JOIN Formulario_secciones fs ON fs.fs_id = fp.seccion_id
-         WHERE fs.fs_nombre LIKE 'CONCEPTO DEL EJECUTIVO%' AND fp.fp_estado = 1`,
+         WHERE fs.fs_nombre LIKE 'CONCEPTO DEL EJECUTIVO%' AND fp.fp_estado = 1
+           AND ISNULL(fp.fp_version, 1) = @0`,
+        [version],
       );
     if (!preguntas.length) {
       console.warn(
@@ -1311,6 +1389,17 @@ export class SolicitudesWorkflowService {
       );
     }
 
+    const toneladasPregunta = porDescripcion('Toneladas mes proyectado');
+    if (toneladasPregunta && toneladas_proyectadas != null) {
+      await this.upsertRespuestaFormulario(
+        this.dataSource,
+        sa_sol_id,
+        toneladasPregunta.fp_id,
+        { numero: toneladas_proyectadas },
+        usuario_modifica,
+      );
+    }
+
     const obsPregunta = porDescripcion('Observaciones adicionales');
     if (obsPregunta && observaciones) {
       await this.upsertRespuestaFormulario(
@@ -1335,6 +1424,12 @@ export class SolicitudesWorkflowService {
     usuario_modifica: number,
     condiciones?: { cupo?: number; plazoPago?: number; formaPago?: string },
   ) {
+    const [solicitudActual] = await queryRunner.query(
+      `SELECT sol_formulario_version FROM solicitudes WHERE sol_id = @0`,
+      [sa_sol_id],
+    );
+    const version = solicitudActual?.sol_formulario_version ?? 1;
+
     const preguntas: {
       fp_id: number;
       fp_descripcion: string;
@@ -1343,7 +1438,9 @@ export class SolicitudesWorkflowService {
       `SELECT fp.fp_id, fp.fp_descripcion, fp.fp_tipo
        FROM Formulario_pregunta fp
        JOIN Formulario_secciones fs ON fs.fs_id = fp.seccion_id
-       WHERE fs.fs_nombre LIKE 'USO EXCLUSIVO%' AND fp.fp_estado = 1`,
+       WHERE fs.fs_nombre LIKE 'USO EXCLUSIVO%' AND fp.fp_estado = 1
+         AND ISNULL(fp.fp_version, 1) = @0`,
+      [version],
     );
     if (!preguntas.length) {
       console.warn(
@@ -1698,14 +1795,23 @@ export class SolicitudesWorkflowService {
         return;
       }
 
+      // Fuente única desde 2026-07-27: la Carta de Vinculación es un
+      // Tipos_documentos con tdo_origen='CARTA_APROBACION' (antes vivía en
+      // param_carta_pdf_vinculacion, tabla aparte con su propia pantalla —
+      // ver migración 20260727_unificar_carta_vinculacion_en_tipos_documentos.sql).
+      // TiposDocumentosService garantiza que a lo sumo una quede activa a la
+      // vez (antes, con "TOP 1 ... WHERE cpv_activo=1" sin ORDER BY y más de
+      // una fila activa, cuál se usaba de verdad era no determinista).
       const [plantillaCartaPDF] = await this.dataSource.query(
-        `SELECT TOP 1 cpv_contenido FROM param_carta_pdf_vinculacion
-         WHERE cpv_activo = 1`,
+        `SELECT TOP 1 tdo_plantilla_contenido, tdo_encabezado_tipo, tdo_encabezado_imagen_url
+         FROM Tipos_documentos
+         WHERE tdo_origen = 'CARTA_APROBACION' AND tdo_estado = 1
+         ORDER BY tdo_updated_at DESC`,
       );
 
       if (!plantillaCartaPDF) {
         console.warn(
-          `⚠️ [enviarCartaVinculacionPorCorreo] Plantilla de carta PDF no encontrada`,
+          `⚠️ [enviarCartaVinculacionPorCorreo] Plantilla de carta (Tipos_documentos, origen CARTA_APROBACION) no encontrada`,
         );
         return;
       }
@@ -1722,7 +1828,7 @@ export class SolicitudesWorkflowService {
         return;
       }
 
-      let contenidoCarta = plantillaCartaPDF.cpv_contenido;
+      let contenidoCarta = plantillaCartaPDF.tdo_plantilla_contenido;
       const reemplazosCartaMap: Record<string, string> = {
         '{{cliente_nombre}}': solicitud.cliente_nombre || '-',
         '{{cupo_aprobado}}': this.formatCurrency(solicitud.sol_cupo_aprobado),
@@ -1746,6 +1852,9 @@ export class SolicitudesWorkflowService {
         contenidoCarta,
         solicitud.sol_numero_solicitud,
         solicitud.cliente_nombre,
+        plantillaCartaPDF.tdo_encabezado_tipo === 'IMAGEN'
+          ? plantillaCartaPDF.tdo_encabezado_imagen_url
+          : null,
       );
 
       // Persistir el PDF para que aparezca en "Mis Documentos" del cliente.
@@ -1877,6 +1986,83 @@ export class SolicitudesWorkflowService {
     });
   }
 
+  // ===== Negrita/tamaño puntual dentro del texto de la carta — mismos
+  // marcadores que guarda PlantillaEditor.tsx (**negrita**,
+  // {{size:N}}...{{/size}}) para los tipos de documento con plantilla de
+  // texto. Se porta acá (en vez de compartir código con el frontend, que
+  // corre en el navegador) la misma segmentación en dos pasadas
+  // (tamaño por-fuera, negrita por-dentro) que usa
+  // palabrasConEstilosPdf/palabrasConNegritaPdf en carta-pdf.util.ts, para
+  // que lo que el usuario ve en el editor coincida con el PDF real que se
+  // envía por correo al aprobar. pdfkit no necesita el layout manual palabra
+  // por palabra que hace el frontend: basta con dibujar cada tramo con
+  // `continued: true` y dejar que el propio pdfkit haga el wrap de línea. =====
+  private segmentarNegritaCarta(
+    texto: string,
+    boldPorDefecto: boolean,
+  ): { contenido: string; bold: boolean; size?: number }[] {
+    const tramos: { contenido: string; bold: boolean; size?: number }[] = [];
+    for (const parte of texto.split(/(\*\*[^*]+\*\*)/g)) {
+      if (!parte) continue;
+      const esNegrita =
+        parte.startsWith('**') && parte.endsWith('**') && parte.length > 4;
+      const contenido = esNegrita ? parte.slice(2, -2) : parte;
+      tramos.push({ contenido, bold: esNegrita || boldPorDefecto });
+    }
+    return tramos;
+  }
+
+  private segmentarEstilosCarta(
+    texto: string,
+  ): { contenido: string; bold: boolean; size?: number }[] {
+    const tramos: { contenido: string; bold: boolean; size?: number }[] = [];
+    const regexTamaño = /\{\{size:(\d+)\}\}([\s\S]*?)\{\{\/size\}\}/g;
+    let cursor = 0;
+    let match: RegExpExecArray | null;
+
+    const agregarTramo = (fragmento: string, size?: number) => {
+      for (const tramo of this.segmentarNegritaCarta(fragmento, false)) {
+        tramos.push(size != null ? { ...tramo, size } : tramo);
+      }
+    };
+
+    while ((match = regexTamaño.exec(texto))) {
+      if (match.index > cursor) agregarTramo(texto.slice(cursor, match.index));
+      agregarTramo(match[2], Number(match[1]));
+      cursor = match.index + match[0].length;
+    }
+    if (cursor < texto.length) agregarTramo(texto.slice(cursor));
+
+    return tramos;
+  }
+
+  private dibujarTextoConEstilosCarta(
+    doc: any,
+    texto: string,
+    opts: {
+      fontSizeBase: number;
+      boldBase: boolean;
+      align: 'left' | 'justify';
+      lineGap?: number;
+    },
+  ) {
+    const tramos = this.segmentarEstilosCarta(texto);
+    if (tramos.length === 0) return;
+    doc.fillColor('#1a1a1a');
+    tramos.forEach((tramo, i) => {
+      doc
+        .font(
+          tramo.bold || opts.boldBase ? 'Helvetica-Bold' : 'Helvetica',
+        )
+        .fontSize(tramo.size ?? opts.fontSizeBase);
+      doc.text(tramo.contenido, {
+        continued: i < tramos.length - 1,
+        align: opts.align,
+        lineGap: opts.lineGap,
+      });
+    });
+  }
+
   private dibujarBloqueCarta(
     doc: any,
     bloque:
@@ -1885,25 +2071,70 @@ export class SolicitudesWorkflowService {
       | { tipo: 'lista'; lineas: string[] },
   ) {
     if (bloque.tipo === 'subtitulo') {
-      doc
-        .fontSize(12)
-        .font('Helvetica-Bold')
-        .fillColor('#1a1a1a')
-        .text(bloque.texto, { align: 'left' });
+      this.dibujarTextoConEstilosCarta(doc, bloque.texto, {
+        fontSizeBase: 12,
+        boldBase: true,
+        align: 'left',
+      });
       doc.moveDown(0.4);
     } else if (bloque.tipo === 'parrafo') {
-      doc
-        .fontSize(11)
-        .font('Helvetica')
-        .fillColor('#1a1a1a')
-        .text(bloque.texto, { align: 'justify', lineGap: 4 });
+      this.dibujarTextoConEstilosCarta(doc, bloque.texto, {
+        fontSizeBase: 11,
+        boldBase: false,
+        align: 'justify',
+        lineGap: 4,
+      });
       doc.moveDown(0.7);
     } else {
-      doc.fontSize(11).font('Helvetica').fillColor('#1a1a1a');
       for (const linea of bloque.lineas) {
-        doc.text(linea, { align: 'left', lineGap: 3 });
+        this.dibujarTextoConEstilosCarta(doc, linea, {
+          fontSizeBase: 11,
+          boldBase: false,
+          align: 'left',
+          lineGap: 3,
+        });
       }
       doc.moveDown(0.7);
+    }
+  }
+
+  // Encabezado alternativo para documentos de Tipos_documentos con
+  // tdo_encabezado_tipo='IMAGEN': una imagen que el usuario sube desde
+  // parametrizacion/documentos, dibujada tal cual arriba de cada página, en
+  // vez del membrete de texto fijo "CARTONERA NACIONAL S.A." / la tabla
+  // completa de "formato oficial" (esa sigue sin implementarse en el
+  // backend — ver comentario en TipoDocumento.encabezadoTipo). Alto fijo
+  // (no se calcula del tamaño real de la imagen) para que el resto del
+  // layout sea predecible sin importar la proporción de la imagen subida:
+  // pdfkit la encoge/centra dentro de esa caja con `fit`, nunca se sale.
+  private dibujarEncabezadoImagenCarta(doc: any, imagenBuffer: Buffer) {
+    const marginLeft = 50;
+    const anchoContenido = 495;
+    const altoCaja = 80;
+    doc.image(imagenBuffer, marginLeft, doc.y, {
+      fit: [anchoContenido, altoCaja],
+      align: 'center',
+    });
+    doc.y += altoCaja + 14;
+  }
+
+  private async obtenerImagenEncabezadoCarta(
+    url: string | null | undefined,
+  ): Promise<Buffer | null> {
+    if (!url) return null;
+    try {
+      const respuesta = await fetch(url);
+      if (!respuesta.ok) {
+        throw new Error(`HTTP ${respuesta.status}`);
+      }
+      const arrayBuffer = await respuesta.arrayBuffer();
+      return Buffer.from(arrayBuffer);
+    } catch (error) {
+      console.error(
+        `⚠️ [obtenerImagenEncabezadoCarta] No se pudo descargar la imagen de encabezado (${url}):`,
+        error,
+      );
+      return null;
     }
   }
 
@@ -1911,7 +2142,12 @@ export class SolicitudesWorkflowService {
     contenidoCarta: string,
     numeroSolicitud: string,
     clienteNombre?: string,
+    encabezadoImagenUrl?: string | null,
   ): Promise<Buffer> {
+    const imagenEncabezado = await this.obtenerImagenEncabezadoCarta(
+      encabezadoImagenUrl,
+    );
+
     return new Promise((resolve, reject) => {
       try {
         const PDFDocument = require('pdfkit');
@@ -1932,25 +2168,36 @@ export class SolicitudesWorkflowService {
           day: 'numeric',
         });
 
-        // Membrete
-        doc
-          .fontSize(15)
-          .font('Helvetica-Bold')
-          .fillColor('#1a1a1a')
-          .text('CARTONERA NACIONAL S.A.', { align: 'center' });
-        doc
-          .fontSize(9)
-          .font('Helvetica-Oblique')
-          .fillColor('#555555')
-          .text('Vinculación Comercial', { align: 'center' });
-        doc.moveDown(0.6);
-        doc
-          .strokeColor('#999999')
-          .lineWidth(1)
-          .moveTo(50, doc.y)
-          .lineTo(545, doc.y)
-          .stroke();
-        doc.moveDown(1.4);
+        if (imagenEncabezado) {
+          // Se repite en cada página nueva que agregue pdfkit por
+          // desbordamiento de texto — sin esto, solo la primera página
+          // tendría encabezado.
+          doc.on('pageAdded', () =>
+            this.dibujarEncabezadoImagenCarta(doc, imagenEncabezado),
+          );
+          this.dibujarEncabezadoImagenCarta(doc, imagenEncabezado);
+        } else {
+          // Membrete de texto — el de siempre, cuando el documento no tiene
+          // imagen de encabezado configurada (tdo_encabezado_tipo='NINGUNO').
+          doc
+            .fontSize(15)
+            .font('Helvetica-Bold')
+            .fillColor('#1a1a1a')
+            .text('CARTONERA NACIONAL S.A.', { align: 'center' });
+          doc
+            .fontSize(9)
+            .font('Helvetica-Oblique')
+            .fillColor('#555555')
+            .text('Vinculación Comercial', { align: 'center' });
+          doc.moveDown(0.6);
+          doc
+            .strokeColor('#999999')
+            .lineWidth(1)
+            .moveTo(50, doc.y)
+            .lineTo(545, doc.y)
+            .stroke();
+          doc.moveDown(1.4);
+        }
 
         // Fecha
         doc

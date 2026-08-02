@@ -45,6 +45,56 @@ export class SolicitudesRespuestasService {
     return await this.dataSource.query(sql, [solicitudId]);
   }
 
+  // Igual que obtenerRespuestas pero suma fp_codigo (identidad estable de
+  // la pregunta entre versiones — ver
+  // migrations/20260727_backfill_fp_codigo_identidad_entre_versiones.sql)
+  // y fpo_codigo (misma idea para la opción seleccionada, cuando la
+  // respuesta es de una pregunta SELECT/MULTISELECT — ver
+  // migrations/20260727_backfill_fpo_codigo_identidad_opciones_entre_versiones.sql).
+  // Usado solo por la precarga de Ampliación de Cupo
+  // (obtenerUltimaSolicitudAprobada), que necesita reconocer una pregunta
+  // (y su opción respondida) aunque hayan cambiado de id entre la versión
+  // de la solicitud aprobada y la versión activa actual.
+  async obtenerRespuestasConCodigoPregunta(
+    solicitudId: number,
+  ): Promise<
+    Array<
+      SolicitudRespuestaDto & {
+        fp_codigo: string | null;
+        fpo_codigo: string | null;
+      }
+    >
+  > {
+    const sql = `
+      SELECT
+        fr.fr_id AS [fr_id],
+        fr.fr_solicitud_id AS [fr_solicitud_id],
+        fr.fr_fp_id AS [fr_fp_id],
+        fr.fr_valor_texto AS [fr_valor_texto],
+        fr.fr_valor_numero AS [fr_valor_numero],
+        fr.fr_valor_fecha AS [fr_valor_fecha],
+        fr.fr_valor_opcion_id AS [fr_valor_opcion_id],
+        fr.fr_valor_archivo_id AS [fr_valor_archivo_id],
+        fr.fr_es_multiselect AS [fr_es_multiselect],
+        fr.fr_completado AS [fr_completado],
+        fr.fr_observaciones AS [fr_observaciones],
+        fr.fr_created_at AS [fr_created_at],
+        fr.fr_actualizado_por AS [fr_actualizado_por],
+        fr.fr_updated_at AS [fr_updated_at],
+        fr.fr_valor_catalogo_tipo AS [fr_valor_catalogo_tipo],
+        fr.fr_valor_catalogo_id AS [fr_valor_catalogo_id],
+        fp.fp_codigo AS [fp_codigo],
+        fpo.fpo_codigo AS [fpo_codigo]
+      FROM Formulario_respuesta fr
+      LEFT JOIN Formulario_pregunta fp ON fp.fp_id = fr.fr_fp_id
+      LEFT JOIN Formulario_pregunta_opcion fpo ON fpo.fpo_id = fr.fr_valor_opcion_id
+      WHERE fr.fr_solicitud_id = @0
+      ORDER BY fr.fr_fp_id
+    `;
+
+    return await this.dataSource.query(sql, [solicitudId]);
+  }
+
   async guardarRespuesta(dto: any) {
     console.log('Guardando respuesta:', dto);
 

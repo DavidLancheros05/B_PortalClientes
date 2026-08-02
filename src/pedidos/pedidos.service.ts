@@ -11,6 +11,23 @@ export class PedidosService {
     private readonly clienteRepo: Repository<ClienteEntity>,
   ) {}
 
+  // Todos los clientes asignados a un ejecutivo de negocios (Clientes.ejng_id)
+  // y sus pedidos combinados — para que el ejecutivo vea el mismo listado que
+  // ve un cliente individual, pero de toda su cartera.
+  async getPedidosPorEjecutivo(
+    ejngId: number,
+  ): Promise<PedidoClienteResponseDto[]> {
+    const clientes = await this.clienteRepo.find({
+      where: { ejng_id: ejngId },
+    });
+
+    const pedidosPorCliente = await Promise.all(
+      clientes.map((cliente) => this.getPedidosPorCliente(cliente.cli_id)),
+    );
+
+    return pedidosPorCliente.flat();
+  }
+
   async getPedidosPorCliente(
     cliId: number,
   ): Promise<PedidoClienteResponseDto[]> {

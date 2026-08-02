@@ -33,6 +33,14 @@ ciclos de "esperar 60-75s, revisar netstat, seguir esperando" antes de notar
 que había que matar el proceso a mano y relanzar. Cada ronda de esperar +
 revisar es una llamada a `ScheduleWakeup` + `Bash` que se pudo evitar.
 
+**Causa de fondo encontrada el 2026-07-25** (ver
+[`bug-backend-se-reiniciaba-solo-watch-fuera-de-src.md`](../bug-backend-se-reiniciaba-solo-watch-fuera-de-src.md)):
+`tsconfig.build.json` no tenía `include: ["src/**/*"]`, así que el watcher
+vigilaba todo el repo (incluida esta misma carpeta de documentación y
+`public/uploads/`), reiniciando el proceso completo ante cualquier archivo
+tocado fuera de `src/` — no solo por ediciones de código. Ya corregido; los
+`EADDRINUSE` deberían volverse mucho menos frecuentes.
+
 **Fix / receta directa** (no ir por partes): después de editar código del
 backend, si en ~90s no responde `GET http://localhost:3001/api/solicitudes`
 (o el endpoint que sea), asumir que el watcher se cayó y hacer esto de una

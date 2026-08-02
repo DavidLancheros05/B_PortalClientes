@@ -6,6 +6,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { plainToInstance } from 'class-transformer';
+import { hashPassword, passwordCoincide } from '../common/utils/password.util';
 import { ClienteEntity } from './entities/clientes.entity';
 import { CreateClienteDto } from './dto/create-cliente.dto';
 import { UpdateClienteDto } from './dto/update-cliente.dto';
@@ -248,10 +249,14 @@ export class ClientesService {
   // ========================
   async create(dto: CreateClienteDto): Promise<ClienteDetailResponseDto> {
     const habilitaAcceso = dto.cli_acceso_portal_clientes ?? false;
-    // El login de clientes compara la contraseña en texto plano
-    // (auth.service.ts), así que se genera y se guarda igual.
     const passwordGenerada = habilitaAcceso
       ? Math.random().toString(36).slice(-8)
+      : null;
+    // Se guarda hasheada con bcrypt; el correo de bienvenida sí manda la
+    // contraseña en texto plano (es la única forma de que el cliente la
+    // conozca) usando `passwordGenerada`, no el hash.
+    const passwordHasheada = passwordGenerada
+      ? await hashPassword(passwordGenerada)
       : null;
 
     const entity = plainToInstance(ClienteEntity, {
@@ -261,7 +266,7 @@ export class ClientesService {
       cli_direccion: dto.cli_direccion,
       cli_correo: dto.cli_correo,
       cli_acceso_portal_clientes: habilitaAcceso,
-      cli_password: passwordGenerada,
+      cli_password: passwordHasheada,
       ejng_id: dto.ejng_id,
       cli_estado: 'A',
       pai_id: dto.pai_id,
@@ -330,11 +335,14 @@ export class ClientesService {
       // conserva la contraseña existente en vez de invalidarla.
       passwordGenerada = Math.random().toString(36).slice(-8);
     }
+    const passwordHasheada = passwordGenerada
+      ? await hashPassword(passwordGenerada)
+      : null;
 
     const updateEntity = plainToInstance(
       ClienteEntity,
-      passwordGenerada
-        ? { ...updateData, cli_password: passwordGenerada }
+      passwordHasheada
+        ? { ...updateData, cli_password: passwordHasheada }
         : updateData,
       { excludeExtraneousValues: false },
     );
@@ -391,13 +399,12 @@ export class ClientesService {
       throw new NotFoundException('Cliente no existe');
     }
 
-    // El login de clientes compara la contraseña en texto plano
-    // (auth.service.ts), asi que se guarda igual aqui.
-    if (cliente.cli_password !== currentPassword) {
+    if (!(await passwordCoincide(currentPassword, cliente.cli_password))) {
       throw new UnauthorizedException('La contraseña actual es incorrecta');
     }
 
-    await this.clienteRepo.update(cli_id, { cli_password: newPassword });
+    const nuevaHasheada = await hashPassword(newPassword);
+    await this.clienteRepo.update(cli_id, { cli_password: nuevaHasheada });
     return { message: 'Contraseña actualizada correctamente' };
   }
 }

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -8,7 +9,10 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { TiposDocumentosService } from './tipos-documentos.service';
 import { CreateTipoDocumentoDto } from './dto/create-tipo-documento.dto';
 import { UpdateTipoDocumentoDto } from './dto/update-tipo-documento.dto';
@@ -50,6 +54,37 @@ export class TiposDocumentosController {
   @Delete(':id')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.tiposDocumentosService.remove(id);
+  }
+
+  // Imagen de encabezado (tdo_encabezado_tipo = 'IMAGEN') — se dibuja arriba
+  // de cada página del PDF de documentos de origen CARTA_APROBACION en vez
+  // de la tabla de "formato oficial" completa (ver
+  // solicitudes-workflow.service.ts::dibujarEncabezadoImagenCarta).
+  @Post(':id/encabezado-imagen')
+  @UseInterceptors(FileInterceptor('archivo'))
+  async subirEncabezadoImagen(
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('No se proporcionó ningún archivo');
+    }
+    return this.tiposDocumentosService.subirEncabezadoImagen(id, file);
+  }
+
+  // Imagen de pie de página (tdo_pie_pagina_tipo = 'IMAGEN') — se dibuja
+  // abajo de cada página del PDF de documentos de origen CLIENTE con
+  // tipoPlantilla='TEXTO' (frontend, pdf-lib, carta-pdf.util.ts).
+  @Post(':id/pie-pagina-imagen')
+  @UseInterceptors(FileInterceptor('archivo'))
+  async subirPiePaginaImagen(
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('No se proporcionó ningún archivo');
+    }
+    return this.tiposDocumentosService.subirPiePaginaImagen(id, file);
   }
 
   // ===== Historial de revisiones (tabla "Revisión / Descripción del

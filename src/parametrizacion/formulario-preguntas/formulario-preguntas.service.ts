@@ -14,7 +14,7 @@ export class FormularioPreguntasService {
     private readonly formularioPreguntaRepository: Repository<FormularioPregunta>,
   ) {}
 
-  create(dto: CreateFormularioPreguntaDto) {
+  async create(dto: CreateFormularioPreguntaDto) {
     const normalizedDto = {
       ...dto,
       fp_descripcion: dto.fp_descripcion
@@ -23,7 +23,24 @@ export class FormularioPreguntasService {
       fp_created_at: new Date(),
     };
 
-    return this.formularioPreguntaRepository.save(normalizedDto);
+    const creada = await this.formularioPreguntaRepository.save(normalizedDto);
+
+    // Toda pregunta necesita una identidad estable entre versiones de
+    // formulario (fp_codigo no cambia al clonar una versión nueva, fp_id
+    // sí — ver migrations/20260727_backfill_fp_codigo_identidad_entre_versiones.sql).
+    // El editor de formularios no tiene ningún campo para asignarlo a
+    // mano, así que se genera aquí automáticamente si quedó vacío, para
+    // que la precarga de Ampliación de Cupo no dependa de fp_id solo
+    // (que se rompe apenas se active una versión distinta a la que se
+    // usó para la última solicitud aprobada del cliente).
+    if (!creada.fp_codigo) {
+      creada.fp_codigo = `AUTO_Q${creada.fp_id}`;
+      await this.formularioPreguntaRepository.update(creada.fp_id, {
+        fp_codigo: creada.fp_codigo,
+      });
+    }
+
+    return creada;
   }
 
   // Preguntas del formulario activo (la única que se usa hoy en "nueva
@@ -89,6 +106,7 @@ export class FormularioPreguntasService {
         .map((o) => ({
           op_id: o.fpo_id,
           op_descripcion: normalizeMojibake(o.fpo_valor),
+          op_codigo: o.fpo_codigo,
         })),
     }));
   }
