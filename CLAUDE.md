@@ -213,6 +213,23 @@ hardcodeado — moverlo requeriría cambiar esa ruta en el script.
 
 - **Columnas SQL Server `date` (sin hora/zona) exigen aritmética en UTC, no en hora local del proceso.** `mssql`/tedious serializa/deserializa `date` como medianoche UTC. `common/utils/business-days.util.ts` usaba `getDate()`/`setDate()`/`getDay()` (hora local) — inofensivo mientras el proceso Node corra en UTC (típico en Render/Vercel), pero al ejecutar el mismo cálculo desde una máquina en otra zona horaria (ej. un dev en `America/Bogota`, UTC-5) para reconstruir/recalcular fechas ya guardadas, la lectura de una columna `date` como `2026-07-20T00:00:00.000Z` se interpreta como `2026-07-19` 19:00 local — un día completo de corrimiento. Se descubrió porque un script de recálculo retroactivo escribió fechas mal la primera vez (detectado comparando el resultado contra un cálculo manual). Fix: todas las funciones de `business-days.util.ts` ahora usan `getUTC*`/`setUTC*` exclusivamente. Cualquier script nuevo que lea/escriba una columna `date` y haga aritmética de fechas debe hacer lo mismo (o forzar `TZ=UTC` en el proceso).
 - **Días no hábiles de la semana ahora son parametrizables** (antes hardcodeado a sábado/domingo en `isBusinessDay`) vía tabla `param_dias_no_habiles_semana` (`dsh_dia_semana` 0=domingo..6=sábado, `dsh_co_id` NULL=todas las compañías, mismo criterio que `Festivos.fes_co_id`) — sin pantalla de administración propia, igual que `Festivos` (se edita directo en BD). Callers: `solicitudes.service.ts` (creación) y `historial-workflow.service.ts` (transición real), ambos con fallback a sábado/domingo si la tabla no existe o está vacía.
+- **Pendiente de investigar (2026-08-02), NO arreglado todavía**: las columnas
+  `datetime` (`sol_created_at`, `sol_updated_at`, `swh_fecha`, etc. — distinto
+  de las columnas `date` del gotcha de arriba) parecen guardar la hora local
+  de Colombia pero viajan etiquetadas como UTC (`Z`) en el JSON que devuelve
+  la API. Verificado en vivo: una solicitud creada a las 6:31 p.m. hora real
+  quedó con `sol_created_at = "...T18:31:53.800Z"` — los dígitos `18:31:53`
+  son ya la hora local correcta, pero el sufijo `Z` hace que cualquier
+  conversión "correcta" a UTC (ej. `new Date(valor).toLocaleString()` en el
+  navegador, o restar el offset a mano) la corra 5 horas para atrás. Posible
+  causa: `new Date()` en el proceso Node vs `GETDATE()` en SQL Server (host
+  compartido `SQL8020.site4now.net`) podrían no estar usando el mismo
+  criterio de zona horaria al escribir, y el driver `mssql`/tedious etiqueta
+  todo como UTC al leer sin importar cómo se escribió. Impacto potencial:
+  cualquier fecha/hora mostrada en el frontend que haga esa conversión
+  "correcta" (no solo mostrar el string crudo) saldría 5 horas adelantada o
+  atrasada según el sentido de la conversión. No investigado a fondo ni
+  arreglado — el usuario pidió dejarlo así por ahora.
 
 ## Patrones de verificación que ya funcionan en este proyecto
 

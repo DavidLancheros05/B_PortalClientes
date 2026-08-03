@@ -51,13 +51,24 @@ actuales); además, ahora también se manda como cookie httpOnly.
    en dev cae a `SameSite=Lax` sin `Secure` (una cookie `Secure` nunca se
    manda por `http://localhost`).
 
-   ⚠️ **Pendiente de confirmar por el usuario**: no hay forma de verificar
-   desde acá si Render tiene `NODE_ENV=production` seteado en el dashboard
-   — a diferencia de Heroku, Render no lo pone solo. Si no está, la cookie
-   en producción sale `SameSite=Lax` sin `Secure`, lo que **rompería
-   silenciosamente la Fase 2** (un navegador no manda una cookie `SameSite=Lax`
-   en una petición cross-site vía `fetch`/`XHR`). Confirmar/agregar esa env
-   var en Render antes de arrancar la Fase 2.
+   ✅ **`NODE_ENV=production` confirmado y verificado en producción real,
+   2026-08-02**: no estaba seteado en Render — se agregó a mano en el
+   dashboard. Efecto colateral no previsto al agregarlo: `npm install`
+   empezó a omitir `devDependencies` (`@nestjs/cli` incluido), rompiendo el
+   build (`sh: 1: nest: not found`). Fix: variable adicional
+   `NPM_CONFIG_PRODUCTION=false` + "Clear build cache & deploy" (el primer
+   redeploy con la variable nueva reusó un `node_modules` cacheado ya
+   podado del intento anterior, así que "up to date" no reinstalaba nada;
+   hubo que forzar limpiar el caché). Con ambas variables el build volvió a
+   pasar.
+
+   Verificado con el commit `24329e7` ya desplegado, contra el backend real
+   (`https://b-portalclientes-1.onrender.com/api/auth/login`, cliente de
+   prueba 13606 con password temporal, restaurada al terminar):
+   `Set-Cookie: pc_token=...; HttpOnly; Secure; SameSite=None` (no `Lax`,
+   confirmando que `NODE_ENV=production` sí está activo), y
+   `GET /solicitudes/2192/documentos` (protegido) respondiendo `200 OK`
+   usando solo esa cookie, sin header `Authorization`.
 
 2. **`AuthController.logout`**: además de invalidar la sesión (`token_version`,
    sin cambios), ahora también limpia la cookie (`res.clearCookie` con los
@@ -96,6 +107,20 @@ terminar.
    contra un endpoint sí protegido, con el resultado correcto de arriba.)
 
 `tsc --noEmit` limpio.
+
+### Verificado también contra producción real (post-deploy, commit `24329e7`)
+
+Mismo procedimiento (contraseña temporal en cliente 13606, restaurada al
+terminar) pero contra `https://b-portalclientes-1.onrender.com`:
+
+1. `POST /api/auth/login` → `Set-Cookie: pc_token=...; Max-Age=86400;
+   Path=/; HttpOnly; Secure; SameSite=None` — a diferencia de dev, sí trae
+   `Secure`/`SameSite=None` (confirma `NODE_ENV=production` activo).
+2. `GET /api/solicitudes/2192/documentos` solo con la cookie → `200 OK`.
+
+Con esto, la Fase 1 queda cerrada tanto en dev como en producción real —
+la Fase 2 (frontend) puede arrancar sin dependencias pendientes de
+infraestructura.
 
 ## Qué NO cambió en esta fase (a propósito)
 

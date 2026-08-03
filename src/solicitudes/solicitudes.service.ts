@@ -93,16 +93,33 @@ export class SolicitudesService {
         throw new Error('Faltan cliente_id o co_id');
       }
 
-      // 1.5. Validar que no exista ya una solicitud en estado BORRADOR para este cliente
-      const solicitudBorrador = await queryRunner.query(
-        `SELECT sol_id, sol_numero_solicitud FROM solicitudes
-         WHERE sol_cliente_id = @0 AND sol_estado_id = 1`,
+      // 1.5. Validar que no exista ya una solicitud en trámite (BORRADOR,
+      // PENDIENTE o REVISIÓN) para este cliente. Antes solo bloqueaba
+      // BORRADOR — el bloqueo de PENDIENTE/REVISIÓN vivía nada más en el
+      // frontend (SolicitudFormContent.tsx::useUltimaSolicitud), que es
+      // saltable por cualquier camino que no pase por ese formulario
+      // puntual (llamada directa a la API, otra herramienta interna,
+      // etc.) — confirmado en vivo: un cliente terminó con dos solicitudes
+      // activas a la vez. Mismo criterio (estados 1/2/3) que ya usa
+      // AmpliacionCupoService.create() para el mismo problema.
+      const solicitudEnTramite = await queryRunner.query(
+        `SELECT TOP 1 sol_id, sol_numero_solicitud, sol_estado_id
+         FROM solicitudes
+         WHERE sol_cliente_id = @0 AND sol_estado_id IN (1, 2, 3)
+         ORDER BY sol_id DESC`,
         [clienteId],
       );
 
-      if (solicitudBorrador && solicitudBorrador.length > 0) {
+      if (solicitudEnTramite && solicitudEnTramite.length > 0) {
+        const nombresEstado: Record<number, string> = {
+          1: 'en borrador',
+          2: 'pendiente',
+          3: 'en revisión',
+        };
+        const estadoTexto =
+          nombresEstado[solicitudEnTramite[0].sol_estado_id] || 'en trámite';
         throw new Error(
-          `El cliente ya tiene una solicitud en borrador (No. ${solicitudBorrador[0].sol_numero_solicitud}). Complétala o elimínala antes de crear una nueva.`,
+          `El cliente ya tiene una solicitud ${estadoTexto} (No. ${solicitudEnTramite[0].sol_numero_solicitud}). Complétala o resuélvela antes de crear una nueva.`,
         );
       }
 

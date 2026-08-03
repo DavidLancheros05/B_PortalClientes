@@ -50,6 +50,22 @@ export class SolicitudesController {
     console.log('🟣 [SOLICITUDES-CONTROLLER] ✅ Controlador inicializado');
   }
 
+  // El payload del JWT reutiliza el campo `usr_id` para el id de quien
+  // sea que esté logueado (ver AuthService.loginCliente en auth.service.ts):
+  // para un usuario interno es un usuarios.usr_id real, pero para un
+  // cliente es en realidad su cli_id. Columnas como sol_usuario_modifica
+  // tienen FK a Usuarios — pasarles el usr_id de un cliente tal cual
+  // revienta con "conflicted with the FOREIGN KEY constraint" (encontrado
+  // en vivo: PATCH :id/estado fallaba así para cualquier cliente enviando
+  // su solicitud). Solo un usuario interno puede quedar registrado como
+  // quien modificó una solicitud; para un cliente, null (columna nullable).
+  private resolverUsuarioIdParaAuditoria(
+    user: { usr_id?: number; id?: number; tipo?: string } | undefined,
+  ): number | null {
+    if (user?.tipo === 'cliente') return null;
+    return user?.usr_id || user?.id || null;
+  }
+
   @UseGuards(JwtAuthGuard)
   @Post()
   async crearSolicitud(@Body() dto: any) {
@@ -1118,9 +1134,9 @@ export class SolicitudesController {
   async cambiarEstado(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { estadoId: number },
-    @Req() req: Request & { user: { usr_id?: number; id?: number } },
+    @Req() req: Request & { user: { usr_id?: number; id?: number; tipo?: string } },
   ) {
-    const usuarioId = req.user?.usr_id || req.user?.id;
+    const usuarioId = this.resolverUsuarioIdParaAuditoria(req.user);
     return this.workflowService.cambiarEstado(id, body.estadoId, usuarioId);
   }
 
@@ -1128,13 +1144,13 @@ export class SolicitudesController {
   @UseGuards(JwtAuthGuard)
   async actualizarResultadoPendiente(
     @Param('id', ParseIntPipe) id: number,
-    @Req() req: Request & { user: { usr_id?: number; id?: number } },
+    @Req() req: Request & { user: { usr_id?: number; id?: number; tipo?: string } },
   ) {
     try {
       console.log(
         `[actualizarResultadoPendiente] Actualizando solicitud ${id} a resultado PENDIENTE`,
       );
-      const usuarioId = req.user?.usr_id || req.user?.id;
+      const usuarioId = this.resolverUsuarioIdParaAuditoria(req.user);
       return await this.workflowService.actualizarResultadoPendiente(
         id,
         usuarioId,
@@ -1152,10 +1168,10 @@ export class SolicitudesController {
   @UseGuards(JwtAuthGuard)
   async verificarDocumentosDiferidos(
     @Param('id', ParseIntPipe) id: number,
-    @Req() req: Request & { user: { usr_id?: number; id?: number } },
+    @Req() req: Request & { user: { usr_id?: number; id?: number; tipo?: string } },
   ) {
     try {
-      const usuarioId = req.user?.usr_id || req.user?.id;
+      const usuarioId = this.resolverUsuarioIdParaAuditoria(req.user);
       return await this.workflowService.verificarYAvanzarDocumentosPlantilla(
         id,
         usuarioId,

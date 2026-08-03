@@ -218,7 +218,7 @@ export class SolicitudesWorkflowService {
   async cambiarEstado(
     solicitudId: number,
     estadoId: number,
-    usuarioId: number = 1,
+    usuarioId: number | null = 1,
   ) {
     const histCols = await this.resolveHistorialColumns();
     const queryRunner = this.dataSource.createQueryRunner();
@@ -378,6 +378,16 @@ export class SolicitudesWorkflowService {
 
       await queryRunner.query(updateSQL, params);
 
+      // A diferencia de sol_usuario_modifica (nullable), tanto
+      // Solicitudes_estados_hist.seh_usr_id como
+      // solicitud_workflow_historial.swh_usuario_id son NOT NULL sin
+      // default — cuando quien actúa es un cliente (usuarioId=null, ver
+      // resolverUsuarioIdParaAuditoria en el controller) hace falta un
+      // valor real igual. Mismo fallback que ya usa
+      // SolicitudesService.crearSolicitud para este mismo caso
+      // ("body.usuario_crea || 1").
+      const usuarioIdParaHistorial = usuarioId ?? 1;
+
       // Registrar en historial
       const historialSQL = `
         INSERT INTO Solicitudes_estados_hist
@@ -385,7 +395,11 @@ export class SolicitudesWorkflowService {
         VALUES (@0, @1, @2, GETDATE())
       `;
 
-      await queryRunner.query(historialSQL, [solicitudId, estadoId, usuarioId]);
+      await queryRunner.query(historialSQL, [
+        solicitudId,
+        estadoId,
+        usuarioIdParaHistorial,
+      ]);
 
       // Registrar transición de workflow si se cambió la etapa
       if (etapaId !== null) {
@@ -402,7 +416,7 @@ export class SolicitudesWorkflowService {
               solicitudId,
               etapaId,
               resultadoId,
-              usuarioId,
+              usuarioId: usuarioIdParaHistorial,
               comentario: mensajeTransicion,
             },
           );
@@ -422,7 +436,7 @@ export class SolicitudesWorkflowService {
               solicitudId,
               etapaId: sol_etapa_actual_id,
               resultadoId: resultadoIdActualizar,
-              usuarioId,
+              usuarioId: usuarioIdParaHistorial,
               comentario:
                 'Cliente editó solicitud rechazada - Resultado vuelve a PENDIENTE',
             },
@@ -490,7 +504,7 @@ export class SolicitudesWorkflowService {
    */
   async verificarYAvanzarDocumentosPlantilla(
     solicitudId: number,
-    usuarioId: number = 1,
+    usuarioId: number | null = 1,
   ) {
     const faltantes = await this.obtenerDocumentosDiferidosFaltantes(
       solicitudId,
@@ -557,13 +571,16 @@ export class SolicitudesWorkflowService {
         ],
       );
 
+      // solicitud_workflow_historial.swh_usuario_id es NOT NULL sin
+      // default, a diferencia de sol_usuario_modifica (nullable) — mismo
+      // fallback que cambiarEstado.
       await this.historialWorkflowService.registrarTransicionConSLA(
         queryRunner,
         {
           solicitudId,
           etapaId: etapaEJN.wet_id,
           resultadoId: resultadoPendiente.wee_id,
-          usuarioId,
+          usuarioId: usuarioId ?? 1,
           comentario:
             'Cliente subió los documentos generados pendientes - Solicitud enviada a Ejecutivo de Negocios',
         },
@@ -1756,7 +1773,7 @@ export class SolicitudesWorkflowService {
 
   async actualizarResultadoPendiente(
     solicitudId: number,
-    usuarioId: number = 1,
+    usuarioId: number | null = 1,
   ) {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -1775,13 +1792,16 @@ export class SolicitudesWorkflowService {
         [3, 3, 1, usuarioId, solicitudId, 'Tu solicitud se encuentra en revisión.'],
       );
 
+      // solicitud_workflow_historial.swh_usuario_id es NOT NULL sin
+      // default, a diferencia de sol_usuario_modifica (nullable) — mismo
+      // fallback que cambiarEstado.
       await this.historialWorkflowService.registrarTransicionConSLA(
         queryRunner,
         {
           solicitudId,
           etapaId: 3,
           resultadoId: 1,
-          usuarioId,
+          usuarioId: usuarioId ?? 1,
           comentario:
             'Solicitud corregida por cliente - Resultado actualizado a PENDIENTE',
         },
