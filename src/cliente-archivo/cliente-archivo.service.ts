@@ -1,5 +1,5 @@
 // src/cliente-archivo/cliente-archivo.service.ts
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { IStorageService, STORAGE_SERVICE } from '../common/storage/storage.interface';
 
@@ -29,13 +29,14 @@ export class ClienteArchivoService {
     clienteId: number,
     solicitudId: number,
     queryRunner: any,
-  ): Promise<void> {
+  ): Promise<{ tdo_id: number; tdo_nombre: string; error: string }[]> {
     const documentos = await queryRunner.query(
       `SELECT sa.sa_id, sa.sa_nombre_original, sa.sa_ruta_almacenamiento,
               sa.sa_tipo_mime, sa.sa_resource_type, sa.sa_fecha_emision, sa.sa_fecha_vencimiento,
-              fp.fp_tipo_documento_id AS tdo_id
+              fp.fp_tipo_documento_id AS tdo_id, td.tdo_nombre
        FROM Solicitud_archivo sa
        JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
+       JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tipo_documento_id
        WHERE sa.sa_sol_id = @0
          AND sa.sa_estado = 'activo'
          AND ISNULL(sa.sa_requiere_cambio, 0) = 0
@@ -44,6 +45,16 @@ export class ClienteArchivoService {
     );
 
     let promovidos = 0;
+    // Fallas de duplicado (ej. blip transitorio de Cloudinary) no deben
+    // tumbar la aprobación ni el resto de la promoción — pero antes se
+    // perdían en un log que nadie revisaba, dejando al cliente con un
+    // documento "vigente" que en realidad nunca quedó disponible para
+    // reutilizar en solicitudes futuras, sin que nadie se enterara. Se
+    // acumulan aquí para que el caller (guardarConceptoGenerico) las
+    // devuelva en la respuesta de la aprobación, visibles para quien
+    // aprobó.
+    const fallidos: { tdo_id: number; tdo_nombre: string; error: string }[] =
+      [];
 
     for (const doc of documentos) {
       // Duplicado real en Cloudinary (no solo copiar la URL): el archivo
@@ -66,6 +77,11 @@ export class ClienteArchivoService {
           `[promoverDocumentos] No se pudo duplicar el documento tdo_id=${doc.tdo_id} (sa_id=${doc.sa_id}) — se omite, el original en Solicitud_archivo sigue siendo la fuente de verdad:`,
           error,
         );
+        fallidos.push({
+          tdo_id: doc.tdo_id,
+          tdo_nombre: doc.tdo_nombre,
+          error: error instanceof Error ? error.message : String(error),
+        });
         continue;
       }
 
@@ -112,6 +128,8 @@ export class ClienteArchivoService {
     this.logger.log(
       `[promoverDocumentos] Cliente ${clienteId}: ${promovidos}/${documentos.length} documento(s) promovidos (duplicados) desde solicitud ${solicitudId}`,
     );
+
+    return fallidos;
   }
 
   /** Lista lo que el cliente tiene vigente en su archivo, para ofrecerlo al iniciar una solicitud nueva. */
@@ -126,6 +144,103 @@ export class ClienteArchivoService {
        ORDER BY td.tdo_nombre ASC`,
       [clienteId],
     );
+  }
+
+  /**
+   * Reutiliza un documento del archivo consolidado del cliente
+   * (Cliente_archivo) como Solicitud_archivo de una solicitud en curso —
+   * confirmación explícita de "Usar este documento" en el formulario de
+   * nueva solicitud (Camino 1). Distinto de
+   * AmpliacionCupoService.clonarDocumentosClienteArchivo (Camino 2, clona
+   * TODOS los documentos vigentes de una sola vez al crear la solicitud
+   * desde el módulo del Ejecutivo); este método clona uno a la vez, a
+   * pedido del cliente mientras diligencia el formulario. Duplica el asset
+   * (mismo motivo que promoverDocumentos: un asset propio e independiente
+   * por fila, para que reemplazar/eliminar en un lado no rompa el otro).
+   */
+  async reutilizarEnSolicitud(
+    caId: number,
+    solicitudId: number,
+    fpId: number,
+    usuarioId?: number,
+  ) {
+    const [documentoCliente] = await this.dataSource.query(
+      `SELECT ca_cli_id, ca_nombre_original, ca_ruta_almacenamiento, ca_tipo_mime,
+              ca_resource_type, ca_fecha_emision, ca_fecha_vencimiento
+       FROM Cliente_archivo WHERE ca_id = @0`,
+      [caId],
+    );
+    if (!documentoCliente) {
+      throw new Error(`Cliente_archivo ${caId} no encontrado`);
+    }
+
+    const [solicitud] = await this.dataSource.query(
+      `SELECT sol_cliente_id, sol_co_id, sol_numero_solicitud FROM solicitudes WHERE sol_id = @0`,
+      [solicitudId],
+    );
+    if (!solicitud) {
+      throw new Error(`Solicitud ${solicitudId} no encontrada`);
+    }
+    if (
+      Number(solicitud.sol_cliente_id) !== Number(documentoCliente.ca_cli_id)
+    ) {
+      throw new ForbiddenException(
+        'El documento de archivo no pertenece al cliente de esta solicitud',
+      );
+    }
+
+    const [centro] = await this.dataSource.query(
+      `SELECT cop_nombre FROM Centro_operacion WHERE cop_id = @0`,
+      [solicitud.sol_co_id],
+    );
+
+    const carpetaDestino = `documentos-solicitudes/${centro?.cop_nombre || 'general'}/formularios/${solicitud.sol_numero_solicitud}`;
+
+    const duplicado = await this.storageService.duplicate(
+      documentoCliente.ca_ruta_almacenamiento,
+      {
+        folder: carpetaDestino,
+        filename: documentoCliente.ca_nombre_original,
+        resourceType: documentoCliente.ca_resource_type || 'raw',
+      },
+    );
+
+    const [inserted] = await this.dataSource.query(
+      `INSERT INTO Solicitud_archivo
+         (sa_sol_id, sa_fp_id, sa_nombre_original, sa_nombre_guardado, sa_tipo_mime,
+          sa_ruta_almacenamiento, sa_cargado_por, sa_estado, sa_cloudinary_public_id,
+          sa_resource_type, sa_created_at, sa_fecha_emision, sa_fecha_vencimiento)
+       OUTPUT INSERTED.sa_id
+       VALUES (@0, @1, @2, @3, @4, @5, @6, 'activo', @7, @8, GETDATE(), @9, @10)`,
+      [
+        solicitudId,
+        fpId,
+        documentoCliente.ca_nombre_original,
+        documentoCliente.ca_nombre_original,
+        documentoCliente.ca_tipo_mime,
+        duplicado.url,
+        usuarioId || 0,
+        duplicado.providerId,
+        duplicado.resourceType,
+        documentoCliente.ca_fecha_emision,
+        documentoCliente.ca_fecha_vencimiento,
+      ],
+    );
+
+    this.logger.log(
+      `[reutilizarEnSolicitud] Cliente ${documentoCliente.ca_cli_id} → solicitud ${solicitudId}, fp_id=${fpId}: documento reutilizado desde Cliente_archivo ca_id=${caId}`,
+    );
+
+    return {
+      ok: true,
+      mensaje: 'Documento reutilizado desde el archivo del cliente',
+      data: {
+        sa_id: inserted?.sa_id,
+        sa_sol_id: solicitudId,
+        fp_id: fpId,
+        sa_nombre_original: documentoCliente.ca_nombre_original,
+      },
+    };
   }
 
   /**

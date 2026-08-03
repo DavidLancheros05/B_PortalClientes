@@ -794,9 +794,39 @@ de la misma transacción de aprobación/creación — más tiempo de transacció
 abierta y más almacenamiento usado (bytes duplicados por cada nivel de
 reutilización) a cambio de que ningún borrado en un punto rompa otro.
 
+## Bug encontrado 2026-08-02/03: botón "Volver" de 6 páginas apunta a "/solicitudes", que no tiene `page.tsx` propio
+
+**Síntoma reportado por el usuario**: en `solicitud-ampliacion-cupo`, al hacer
+clic en "Volver" la página falla (404 de Next.js).
+
+**Causa**: el botón hace `router.push("/solicitudes")`, pero
+`FRONTEND/src/app/solicitudes/` **no tiene ningún `page.tsx` en su raíz**,
+solo subcarpetas (`nueva`, `listado-de-solicitudes`, etc.). Sin `page.tsx` ni
+`not-found.tsx` propio, Next.js renderiza el 404 genérico. Confirmado en BD
+que el módulo padre del menú "Solicitudes" (`pc_modulos.mod_id = 83`) sí tiene
+`mod_ruta = '/solicitudes'` asignada, pero esa ruta nunca tuvo página real —
+es un hueco preexistente, no una regresión de un cambio reciente.
+
+**No es específico de esta página** — el mismo `router.push("/solicitudes")`
+roto aparece en 6 archivos de `FRONTEND/src/app/solicitudes/`:
+`solicitud-ampliacion-cupo/page.tsx` (líneas ~200 y ~317),
+`mis-documentos-vencidos/page.tsx` (~76),
+`listado-de-solicitudes/page.tsx` (~490, vía `PageHeaderCard.onBack`),
+`rechazadas-ejecutivo/page.tsx` (~189),
+`listado-documentos/page.tsx` (~353),
+`gestion-ejecutivo-negocios/page.tsx` (~288, vía `PageHeaderCard.onBack`).
+
+**Estado**: por pedido del usuario, no se corrigió el destino todavía — solo
+se dejó un comentario `// TODO` en cada una de esas 7 líneas señalando el
+problema. Pendiente decidir a dónde debe apuntar realmente ese "Volver" (el
+candidato más natural es `/solicitudes/listado-de-solicitudes`, que sí existe
+y es el listado general) y aplicar el cambio en los 6 archivos.
+
 ## Pendiente al cierre de esta sesión (2026-08-02)
 
 - Validación "nuevo cupo ≥ cupo actual" en Camino 2 — ver fix (13).
+- Destino roto del botón "Volver" en 6 páginas (`router.push("/solicitudes")`
+  → 404) — ver sección de arriba.
 
 ## Gotchas ya resueltos esta sesión (para no repetirlos)
 

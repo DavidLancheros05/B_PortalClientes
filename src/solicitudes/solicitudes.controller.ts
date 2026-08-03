@@ -26,6 +26,7 @@ import { SolicitudesRespuestasService } from './solicitudes-respuestas.service';
 import { SolicitudesWorkflowService } from './solicitudes-workflow.service';
 import { SolicitudesDocumentosService } from './solicitudes-documentos.service';
 import { FormularioRenderizableService } from './formulario-renderizable.service';
+import { ClienteArchivoService } from '../cliente-archivo/cliente-archivo.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
@@ -46,6 +47,7 @@ export class SolicitudesController {
     private readonly workflowService: SolicitudesWorkflowService,
     private readonly documentosService: SolicitudesDocumentosService,
     private readonly formularioRenderizableService: FormularioRenderizableService,
+    private readonly clienteArchivoService: ClienteArchivoService,
   ) {
     console.log('🟣 [SOLICITUDES-CONTROLLER] ✅ Controlador inicializado');
   }
@@ -794,6 +796,31 @@ export class SolicitudesController {
     }
   }
 
+  // Versión liviana de formulario-renderizable: resuelve solo las preguntas
+  // pedidas por fp_codigo (query param repetible ?codigo=A&codigo=B), en vez
+  // de las ~85-100 del formulario completo. Usado por el bloque "Solicita
+  // cupo de crédito" de las pantallas de gestión, que antes esperaba el
+  // render completo del formulario solo para leer 4 valores.
+  @Get(':id/respuestas-por-codigo')
+  async getRespuestasPorCodigo(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('codigo') codigo?: string | string[],
+  ) {
+    try {
+      const codigos = !codigo ? [] : Array.isArray(codigo) ? codigo : [codigo];
+      return await this.formularioRenderizableService.obtenerRespuestasPorCodigo(
+        id,
+        codigos,
+      );
+    } catch (error) {
+      console.error('Error obteniendo respuestas por código:', error);
+      throw new HttpException(
+        error instanceof Error ? error.message : 'Error al obtener respuestas',
+        500,
+      );
+    }
+  }
+
   @Get(':id/pdf')
   async generarPdf(
     @Param('id', ParseIntPipe) id: number,
@@ -1085,6 +1112,47 @@ export class SolicitudesController {
       return {
         ok: false,
         mensaje: 'Error al guardar archivo',
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  // Reutilizar un documento del archivo consolidado del cliente
+  // (Cliente_archivo) como Solicitud_archivo de esta solicitud — confirmado
+  // explícitamente por el cliente ("Usar este documento") mientras
+  // diligencia el formulario de nueva solicitud, en vez de volver a subir
+  // un documento que ya tiene vigente de una aprobación anterior.
+  @Post('respuestas/archivo/reutilizar')
+  @UseGuards(JwtAuthGuard)
+  async reutilizarArchivoCliente(
+    @Body() dto: { sa_sol_id: number; fp_id: number; ca_id: number },
+    @Req()
+    req: Request & {
+      user: {
+        usr_id: number;
+        rol?: string;
+        cliente_id?: number;
+        cli_id?: number;
+      };
+    },
+  ) {
+    try {
+      await this.documentosService.verificarAccesoSolicitud(
+        Number(dto?.sa_sol_id),
+        req.user,
+      );
+      return await this.clienteArchivoService.reutilizarEnSolicitud(
+        Number(dto?.ca_id),
+        Number(dto?.sa_sol_id),
+        Number(dto?.fp_id),
+        req.user?.usr_id,
+      );
+    } catch (error) {
+      if (error instanceof ForbiddenException) throw error;
+      console.error('❌ Error al reutilizar archivo del cliente:', error);
+      return {
+        ok: false,
+        mensaje: 'Error al reutilizar archivo del cliente',
         error: error instanceof Error ? error.message : String(error),
       };
     }

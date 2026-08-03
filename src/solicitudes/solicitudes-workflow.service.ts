@@ -1192,12 +1192,18 @@ export class SolicitudesWorkflowService {
       // ser "cliente creado", así que no debe archivar documentos para
       // reutilizar. Misma transacción/queryRunner que el resto de la
       // aprobación: si esto falla, se revierte junto con todo lo demás.
+      let documentosArchivoConError: {
+        tdo_id: number;
+        tdo_nombre: string;
+        error: string;
+      }[] = [];
       if (aprobado && etapaActualCodigo === 'CC2' && clienteIdSolicitud) {
-        await this.clienteArchivoService.promoverDocumentos(
-          clienteIdSolicitud,
-          sa_sol_id,
-          queryRunner,
-        );
+        documentosArchivoConError =
+          await this.clienteArchivoService.promoverDocumentos(
+            clienteIdSolicitud,
+            sa_sol_id,
+            queryRunner,
+          );
       }
 
       const mensajeHistorial = aprobado
@@ -1288,6 +1294,13 @@ export class SolicitudesWorkflowService {
         success: true,
         sa_sol_id,
         mensaje: 'Concepto registrado exitosamente',
+        // No vacío solo en el caso raro de que falle la copia de algún
+        // documento hacia el archivo consolidado del cliente (Cliente_archivo)
+        // al aprobar en CC2 — la aprobación en sí siempre se completa igual;
+        // esto solo avisa que ese documento puntual no quedará disponible
+        // para reutilizar en la próxima solicitud del cliente sin que el
+        // aprobador se entere.
+        documentosArchivoConError,
       };
     } catch (error) {
       await queryRunner.rollbackTransaction();

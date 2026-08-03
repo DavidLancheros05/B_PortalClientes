@@ -340,6 +340,60 @@ export class FormularioRenderizableService {
     };
   }
 
+  // Resuelve solo un puñado de preguntas por fp_codigo — a diferencia de
+  // obtenerFormularioRenderizable, que resuelve las ~85-100 preguntas del
+  // formulario completo. Pensado para consumidores que solo necesitan 3-4
+  // respuestas puntuales (ej. el bloque "Solicita cupo de crédito" de las
+  // pantallas de gestión), donde esperar el render completo del formulario
+  // era la causa real de la demora. Reutiliza resolverValorRespuesta (misma
+  // lógica que ya usa el render completo) en vez de reimplementar el
+  // formateo — importante porque algunas preguntas tipo SELECT_TABLA (ej.
+  // FORMA_PAGO_SOLICITADA) resuelven su texto contra una tabla catálogo
+  // aparte, no contra Formulario_pregunta_opcion.
+  async obtenerRespuestasPorCodigo(
+    solicitudId: number,
+    codigos: string[],
+  ): Promise<
+    Array<{ fp_codigo: string; valor_resuelto: string; tiene_respuesta: boolean }>
+  > {
+    if (codigos.length === 0) return [];
+
+    const placeholders = codigos.map((_, i) => `@${i + 1}`).join(', ');
+    const filas = await this.dataSource.query(
+      `SELECT fp.fp_codigo, fp.fp_tipo, fp.fp_subtipo, fp.fp_catalogo_tabla,
+              fp.fp_catalogo_columna, fp.fp_catalogo_pk_column,
+              fr.fr_valor_texto, fr.fr_valor_numero, fr.fr_valor_opcion_id,
+              fr.fr_valor_archivo_id
+       FROM (
+         SELECT fr_fp_id, fr_valor_texto, fr_valor_numero, fr_valor_opcion_id,
+           fr_valor_archivo_id,
+           ROW_NUMBER() OVER (PARTITION BY fr_fp_id ORDER BY fr_updated_at DESC) AS rn
+         FROM Formulario_respuesta
+         WHERE fr_solicitud_id = @0
+       ) fr
+       JOIN Formulario_pregunta fp ON fp.fp_id = fr.fr_fp_id
+       WHERE fr.rn = 1 AND fp.fp_codigo IN (${placeholders})`,
+      [solicitudId, ...codigos],
+    );
+
+    const valoresResueltos = await Promise.all(
+      filas.map((fila: any) => this.resolverValorRespuesta(fila)),
+    );
+
+    return codigos.map((codigo) => {
+      const index = filas.findIndex((f: any) => f.fp_codigo === codigo);
+      if (index === -1) {
+        return { fp_codigo: codigo, valor_resuelto: 'Sin respuesta', tiene_respuesta: false };
+      }
+      const valor = valoresResueltos[index];
+      return {
+        fp_codigo: codigo,
+        valor_resuelto: valor,
+        tiene_respuesta: valor !== 'Sin respuesta',
+      };
+    });
+  }
+
   private parseTablaColumnas(fpTablaColumnas?: string | null): string[] {
     if (!fpTablaColumnas) return [];
     try {
