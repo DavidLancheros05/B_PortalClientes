@@ -124,6 +124,12 @@ export class SolicitudesListadosService {
         s.sol_co_id AS [sol_co_id],
         co.${columns.coNombre} AS [centro_operacion_nombre],
         s.sol_fecha_creacion AS [sol_fecha_creacion],
+        s.sol_fecha_envio AS [sol_fecha_envio],
+        (
+          SELECT MAX(seh.seh_fecha_hora)
+          FROM Solicitudes_estados_hist seh
+          WHERE seh.seh_sol_id = s.sol_id AND seh.seh_estado_id = 5
+        ) AS [sol_fecha_aprobacion],
         s.sol_estado_id AS [sol_estado_id],
         s.sol_etapa_actual_id AS [sol_etapa_actual_id],
         we.wet_nombre AS [etapa_nombre],
@@ -303,9 +309,7 @@ export class SolicitudesListadosService {
     LEFT JOIN clientes c ON s.sol_cliente_id = c.${columns.cliId}
     LEFT JOIN Centro_operacion co ON s.sol_co_id = co.cop_id
     OUTER APPLY (
-      -- Esta bandeja no filtra por etapa actual (puede incluir solicitudes
-      -- que ya avanzaron más allá de Ejecutivo de Negocios), así que se
-      -- ancla siempre a la etapa EJN específicamente, no a
+      -- Ancla siempre a la etapa EJN específicamente, no a
       -- sol_etapa_actual_id -- si se usara la etapa actual, una solicitud
       -- que ya está en Auxiliar/Comité mostraría la fecha estimada de esa
       -- otra etapa bajo la etiqueta "ejecutivo".
@@ -317,6 +321,13 @@ export class SolicitudesListadosService {
     ) fe_vigente
     WHERE s.sol_ejecutivo_id = @0
       AND s.sol_estado_id = 2
+      -- sol_estado_id = 2 (PENDIENTE) por sí solo no basta: también es el
+      -- estado de "cliente esperando documentos diferidos" (CLI/PEND_DOCS,
+      -- antes de llegar a EJN) y de "auxiliar rechazó, cliente corrigiendo"
+      -- (ASC/RECHAZADO cliente_actualiza, después de EJN). Sin este filtro,
+      -- ambos casos aparecían en la bandeja del ejecutivo aunque no le
+      -- tocara actuar todavía (o ya nunca más).
+      AND s.sol_etapa_actual_id = (SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'EJN')
     ORDER BY s.sol_fecha_creacion DESC
   `;
 

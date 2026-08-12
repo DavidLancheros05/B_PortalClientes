@@ -117,6 +117,21 @@ export class FormularioPregunta {
   @Column({ type: 'nvarchar', length: 'MAX', nullable: true })
   fp_tabla_limite_reglas: string | null;
 
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  fp_catalogo_filtro_columna: string | null;
+
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  fp_catalogo_columna_condicion: string | null;
+
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  fp_catalogo_valor_condicion: string | null;
+
+  @Column({ type: 'int', nullable: true })
+  fp_catalogo_filtro_pregunta_id: number | null;
+
+  @Column({ type: 'nvarchar', length: 'MAX', nullable: true })
+  fp_catalogo_filtro_reglas: string | null;
+
   @Column({ type: 'bit', default: false })
   fp_oculto_en_formulario: boolean;
 

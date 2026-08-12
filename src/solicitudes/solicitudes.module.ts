@@ -19,6 +19,7 @@ import { WorkflowService } from './workflow.service';
 import { StorageModule } from '../common/storage/storage.module';
 import { PermissionsModule } from '../permissions/permissions.module';
 import { ClienteArchivoModule } from '../cliente-archivo/cliente-archivo.module';
+import { ClienteDatosNormalizadosModule } from '../cliente-datos-normalizados/cliente-datos-normalizados.module';
 import { SolicitudEstadosModule } from '../common/solicitud-estados/solicitud-estados.module';
 
 @Module({
@@ -31,6 +32,7 @@ import { SolicitudEstadosModule } from '../common/solicitud-estados/solicitud-es
     StorageModule,
     PermissionsModule,
     ClienteArchivoModule,
+    ClienteDatosNormalizadosModule,
     SolicitudEstadosModule,
   ],
   controllers: [SolicitudesController], // <-- esto es clave

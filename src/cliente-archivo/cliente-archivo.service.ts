@@ -2,6 +2,10 @@
 import { ForbiddenException, Inject, Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { IStorageService, STORAGE_SERVICE } from '../common/storage/storage.interface';
+import {
+  CarpetaAlmacenamientoService,
+  TIPO_ARCHIVO_URLS,
+} from '../common/storage/carpeta-almacenamiento.service';
 
 /**
  * Archivo "definitivo" del cliente (Cliente_archivo): un único documento
@@ -16,6 +20,7 @@ export class ClienteArchivoService {
   constructor(
     private readonly dataSource: DataSource,
     @Inject(STORAGE_SERVICE) private readonly storageService: IStorageService,
+    private readonly carpetaAlmacenamiento: CarpetaAlmacenamientoService,
   ) {}
 
   /**
@@ -175,7 +180,7 @@ export class ClienteArchivoService {
     }
 
     const [solicitud] = await this.dataSource.query(
-      `SELECT sol_cliente_id, sol_co_id, sol_numero_solicitud FROM solicitudes WHERE sol_id = @0`,
+      `SELECT sol_cliente_id, sol_numero_solicitud FROM solicitudes WHERE sol_id = @0`,
       [solicitudId],
     );
     if (!solicitud) {
@@ -189,12 +194,10 @@ export class ClienteArchivoService {
       );
     }
 
-    const [centro] = await this.dataSource.query(
-      `SELECT cop_nombre FROM Centro_operacion WHERE cop_id = @0`,
-      [solicitud.sol_co_id],
+    const carpetaBase = await this.carpetaAlmacenamiento.obtenerBase(
+      TIPO_ARCHIVO_URLS.SOLICITUDES,
     );
-
-    const carpetaDestino = `documentos-solicitudes/${centro?.cop_nombre || 'general'}/formularios/${solicitud.sol_numero_solicitud}`;
+    const carpetaDestino = `${carpetaBase}formularios/${solicitud.sol_numero_solicitud}`;
 
     const duplicado = await this.storageService.duplicate(
       documentoCliente.ca_ruta_almacenamiento,

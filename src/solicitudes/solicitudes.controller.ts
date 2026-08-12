@@ -70,7 +70,31 @@ export class SolicitudesController {
 
   @UseGuards(JwtAuthGuard)
   @Post()
-  async crearSolicitud(@Body() dto: any) {
+  async crearSolicitud(
+    @Body() dto: any,
+    @Req()
+    req: Request & {
+      user: { rol?: string; cliente_id?: number; cli_id?: number };
+    },
+  ) {
+    // Un CLIENTE solo puede crear solicitudes para sí mismo — sin esto,
+    // cualquiera con JWT válido podía mandar el cliente_id de otro cliente
+    // en el body. Personal interno (rol != CLIENTE) no tiene esta
+    // restricción, igual que en getMisDocumentos (línea 430) y en
+    // cliente-archivo.controller.ts. El throw va FUERA del try/catch de
+    // abajo a propósito: ese catch atrapa todo y responde 200 con
+    // {ok:false}, lo que convertiría este 403 real en un error silencioso
+    // para el frontend.
+    const propioClienteId = req.user?.cliente_id ?? req.user?.cli_id;
+    if (
+      req.user?.rol === 'CLIENTE' &&
+      Number(propioClienteId) !== Number(dto?.cliente_id)
+    ) {
+      throw new ForbiddenException(
+        'No tienes permiso para crear una solicitud para otro cliente',
+      );
+    }
+
     try {
       console.log(
         '🔹 Body recibido del frontend:',
@@ -420,26 +444,34 @@ export class SolicitudesController {
       user: { rol?: string; cliente_id?: number; cli_id?: number };
     },
     @Query('solicitudId') solicitudIdParam?: string,
+    @Query('clienteId') clienteIdParam?: string,
   ) {
     try {
       // Personal interno (rol != CLIENTE) puede pasar solicitudId para
       // gestionar los documentos de un cliente en su nombre (ej. modo de
-      // solución "Auxiliar Actualiza" — ver corregir-formulario-asc). Un
-      // CLIENTE nunca puede usar este parámetro para ver otra solicitud que
-      // no sea la propia.
+      // solución "Auxiliar Actualiza" — ver corregir-formulario-asc), o
+      // clienteId cuando entra sin ese contexto (ej. desde el menú) y elige
+      // un cliente en el selector de la página — ver la última solicitud de
+      // ESE cliente, no la del usuario logueado. Un CLIENTE nunca puede
+      // usar ninguno de los dos para ver otra solicitud que no sea la
+      // propia.
       const esStaff = Boolean(req.user?.rol) && req.user.rol !== 'CLIENTE';
       const solicitud =
         esStaff && solicitudIdParam
           ? await this.listadosService.obtenerSolicitudPorId(
               Number(solicitudIdParam),
             )
-          : await (async () => {
-              const clienteId = req.user?.cliente_id ?? req.user?.cli_id;
-              if (!clienteId) {
-                throw new HttpException('Usuario sin cliente asociado', 400);
-              }
-              return this.listadosService.obtenerUltimaSolicitud(clienteId);
-            })();
+          : esStaff && clienteIdParam
+            ? await this.listadosService.obtenerUltimaSolicitud(
+                Number(clienteIdParam),
+              )
+            : await (async () => {
+                const clienteId = req.user?.cliente_id ?? req.user?.cli_id;
+                if (!clienteId) {
+                  throw new HttpException('Usuario sin cliente asociado', 400);
+                }
+                return this.listadosService.obtenerUltimaSolicitud(clienteId);
+              })();
 
       if (!solicitud) {
         return {
@@ -986,6 +1018,105 @@ export class SolicitudesController {
       console.error('Error al eliminar soporte de análisis:', error);
       throw new HttpException(
         error instanceof Error ? error.message : 'Error al eliminar soporte',
+        500,
+      );
+    }
+  }
+
+  // Tablas KYC (representante legal / suplentes / accionistas) que llenó el
+  // cliente en el formulario, para la pantalla de Gestión Oficial de
+  // Cumplimiento — ver FormularioRenderizableService.obtenerTablasCumplimiento.
+  @Get(':id/tablas-cumplimiento')
+  async getTablasCumplimiento(@Param('id', ParseIntPipe) id: number) {
+    try {
+      return await this.formularioRenderizableService.obtenerTablasCumplimiento(
+        id,
+      );
+    } catch (error) {
+      console.error('Error obteniendo tablas de cumplimiento:', error);
+      throw new HttpException(
+        error instanceof Error
+          ? error.message
+          : 'Error al obtener tablas de cumplimiento',
+        500,
+      );
+    }
+  }
+
+  // Evidencia por persona (una fila de representante legal/suplentes/
+  // accionistas) — ver SolicitudesDocumentosService.subirEvidenciaPersona.
+  @Post(':id/evidencias-persona')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(FileInterceptor('archivo'))
+  async subirEvidenciaPersona(
+    @Param('id', ParseIntPipe) solicitudId: number,
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: { fp_id: string; fila_index: string },
+    @Req() req: Request & { user: { usr_id: number } },
+  ) {
+    try {
+      if (!file) {
+        throw new BadRequestException('No se proporcionó ningún archivo');
+      }
+      const fpId = Number(body?.fp_id);
+      const filaIndex = Number(body?.fila_index);
+      if (!fpId || Number.isNaN(filaIndex)) {
+        throw new BadRequestException('fp_id y fila_index son obligatorios');
+      }
+      const fila = await this.documentosService.subirEvidenciaPersona(
+        solicitudId,
+        fpId,
+        filaIndex,
+        file,
+        req.user.usr_id,
+      );
+      return { ok: true, data: fila };
+    } catch (error) {
+      console.error('Error al subir evidencia de persona:', error);
+      throw new HttpException(
+        error instanceof Error ? error.message : 'Error al subir evidencia',
+        500,
+      );
+    }
+  }
+
+  @Get(':id/evidencias-persona')
+  @UseGuards(JwtAuthGuard)
+  async obtenerEvidenciasPersona(
+    @Param('id', ParseIntPipe) solicitudId: number,
+    @Query('fp_id') fpId: string,
+  ) {
+    try {
+      const evidencias = await this.documentosService.obtenerEvidenciasPersona(
+        solicitudId,
+        Number(fpId),
+      );
+      return { ok: true, data: evidencias };
+    } catch (error) {
+      console.error('Error al obtener evidencias de persona:', error);
+      throw new HttpException(
+        error instanceof Error ? error.message : 'Error al obtener evidencias',
+        500,
+      );
+    }
+  }
+
+  @Delete(':id/evidencias-persona/:sepId')
+  @UseGuards(JwtAuthGuard)
+  async eliminarEvidenciaPersona(
+    @Param('id', ParseIntPipe) solicitudId: number,
+    @Param('sepId', ParseIntPipe) sepId: number,
+  ) {
+    try {
+      await this.documentosService.eliminarEvidenciaPersona(
+        solicitudId,
+        sepId,
+      );
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al eliminar evidencia de persona:', error);
+      throw new HttpException(
+        error instanceof Error ? error.message : 'Error al eliminar evidencia',
         500,
       );
     }

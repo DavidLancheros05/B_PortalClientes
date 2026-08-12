@@ -9,6 +9,10 @@ import { DataSource } from 'typeorm';
 import { CreateAmpliacionCupoDto, UpdateAmpliacionCupoDto } from './dto';
 import { ClienteArchivoService } from '../cliente-archivo/cliente-archivo.service';
 import { IStorageService, STORAGE_SERVICE } from '../common/storage/storage.interface';
+import {
+  CarpetaAlmacenamientoService,
+  TIPO_ARCHIVO_URLS,
+} from '../common/storage/carpeta-almacenamiento.service';
 
 const CAMPOS_SOLICITUD_AMPLIACION = `
   sol_id, sol_cliente_id, sol_cupo_solicitado, sol_cupo_actual_referencia,
@@ -29,6 +33,7 @@ export class AmpliacionCupoService {
     private readonly dataSource: DataSource,
     private readonly clienteArchivoService: ClienteArchivoService,
     @Inject(STORAGE_SERVICE) private readonly storageService: IStorageService,
+    private readonly carpetaAlmacenamiento: CarpetaAlmacenamientoService,
   ) {}
 
   private async obtenerSiguienteNumeroSolicitud(
@@ -117,7 +122,7 @@ export class AmpliacionCupoService {
 
       // 2.1 Obtener centro de operación del cliente (el primero asignado)
       const coResult = await queryRunner.query(
-        `SELECT TOP 1 dcc.cop_id, co.cop_nombre
+        `SELECT TOP 1 dcc.cop_id
          FROM Detalle_cliente_centro dcc
          JOIN Centro_operacion co ON co.cop_id = dcc.cop_id
          WHERE dcc.cli_id = @0 AND dcc.dclc_estado = 'A'
@@ -132,7 +137,6 @@ export class AmpliacionCupoService {
       }
 
       const coId = coResult[0].cop_id;
-      const copNombre = coResult[0].cop_nombre;
 
       // 3. Obtener número de solicitud
       const numeroSolicitud = await this.obtenerSiguienteNumeroSolicitud(
@@ -277,7 +281,6 @@ export class AmpliacionCupoService {
           dto.clienteId,
           solicitudId,
           formularioVersion,
-          copNombre,
           numeroSolicitud,
         );
       }
@@ -323,7 +326,8 @@ export class AmpliacionCupoService {
       const preguntas: { fp_id: number; fp_codigo: string }[] =
         await queryRunner.query(
           `SELECT fp_id, fp_codigo FROM Formulario_pregunta
-           WHERE fp_codigo IN ('TIPO_SOLICITUD', 'SOLICITA_CREDITO', 'CUPO_SOLICITADO')
+           WHERE fp_codigo IN ('TIPO_SOLICITUD', 'SOLICITA_CREDITO', 'CUPO_SOLICITADO',
+                                'CONCEPTO_CONSUMO_PROYECTADO', 'CONCEPTO_TONELADAS_PROYECTADO')
              AND fp_estado = 1 AND ISNULL(fp_version, 1) = @0`,
           [formularioVersion],
         );
@@ -397,31 +401,17 @@ export class AmpliacionCupoService {
       // (SolicitudesWorkflowService.guardarRespuestasConceptoEjecutivo), así
       // que sin esto el PDF completo de la solicitud y cualquier plantilla
       // que lea estas preguntas quedaban con "Consumo mes proyectado"/
-      // "Toneladas mes proyectado" en blanco. Se resuelve por nombre de
-      // sección + descripción, igual que el método hermano, porque esas
-      // preguntas no tienen fp_codigo asignado.
-      const preguntasConcepto: { fp_id: number; fp_descripcion: string }[] =
-        await queryRunner.query(
-          `SELECT fp.fp_id, fp.fp_descripcion
-           FROM Formulario_pregunta fp
-           JOIN Formulario_secciones fs ON fs.fs_id = fp.seccion_id
-           WHERE fs.fs_nombre LIKE 'CONCEPTO DEL EJECUTIVO%' AND fp.fp_estado = 1
-             AND ISNULL(fp.fp_version, 1) = @0`,
-          [formularioVersion],
-        );
-      const porDescripcion = (texto: string) =>
-        preguntasConcepto.find(
-          (p) =>
-            p.fp_descripcion.trim().replace(/:$/, '').toUpperCase() ===
-            texto.toUpperCase(),
-        );
-
-      const consumoPregunta = porDescripcion('Consumo mes proyectado');
+      // "Toneladas mes proyectado" en blanco.
+      const consumoPregunta = preguntas.find(
+        (p) => p.fp_codigo === 'CONCEPTO_CONSUMO_PROYECTADO',
+      );
       if (consumoPregunta) {
         await upsert(consumoPregunta.fp_id, { numero: consumoMensualProyectado });
       }
 
-      const toneladasPregunta = porDescripcion('Toneladas mes proyectado');
+      const toneladasPregunta = preguntas.find(
+        (p) => p.fp_codigo === 'CONCEPTO_TONELADAS_PROYECTADO',
+      );
       if (toneladasPregunta) {
         await upsert(toneladasPregunta.fp_id, { numero: toneladasProyectadas });
       }
@@ -600,7 +590,6 @@ export class AmpliacionCupoService {
     clienteId: number,
     solicitudIdNueva: number,
     formularioVersion: number,
-    copNombre: string,
     numeroSolicitud: string,
   ): Promise<void> {
     try {
@@ -631,7 +620,10 @@ export class AmpliacionCupoService {
         preguntasDocumento.map((p) => [p.fp_tipo_documento_id, p.fp_id]),
       );
 
-      const carpetaDestino = `documentos-solicitudes/${copNombre}/formularios/${numeroSolicitud}`;
+      const carpetaBase = await this.carpetaAlmacenamiento.obtenerBase(
+        TIPO_ARCHIVO_URLS.SOLICITUDES,
+      );
+      const carpetaDestino = `${carpetaBase}formularios/${numeroSolicitud}`;
       let clonados = 0;
 
       for (const doc of documentosCliente) {

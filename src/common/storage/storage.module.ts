@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { STORAGE_SERVICE } from './storage.interface';
 import { CloudinaryStorageService } from './providers/cloudinary-storage.service';
+import { CarpetaAlmacenamientoService } from './carpeta-almacenamiento.service';
 
 // Para cambiar de proveedor de almacenamiento (disco local, S3, servidor
 // propio, etc.) más adelante: crear una nueva clase en ./providers que
@@ -12,7 +13,8 @@ import { CloudinaryStorageService } from './providers/cloudinary-storage.service
       provide: STORAGE_SERVICE,
       useClass: CloudinaryStorageService,
     },
+    CarpetaAlmacenamientoService,
   ],
-  exports: [STORAGE_SERVICE],
+  exports: [STORAGE_SERVICE, CarpetaAlmacenamientoService],
 })
 export class StorageModule {}

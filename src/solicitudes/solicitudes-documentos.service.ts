@@ -6,6 +6,10 @@ import {
   IStorageService,
   STORAGE_SERVICE,
 } from '../common/storage/storage.interface';
+import {
+  CarpetaAlmacenamientoService,
+  TIPO_ARCHIVO_URLS,
+} from '../common/storage/carpeta-almacenamiento.service';
 import { PermissionsService } from '../permissions/permissions.service';
 
 @Injectable()
@@ -14,6 +18,7 @@ export class SolicitudesDocumentosService {
     private readonly dataSource: DataSource,
     @Inject(STORAGE_SERVICE) private readonly storageService: IStorageService,
     private readonly permissionsService: PermissionsService,
+    private readonly carpetaAlmacenamiento: CarpetaAlmacenamientoService,
   ) {}
 
   async obtenerSolicitud(id: number) {
@@ -191,9 +196,8 @@ export class SolicitudesDocumentosService {
     usuarioId: number,
   ) {
     const [solicitud] = await this.dataSource.query(
-      `SELECT s.sol_numero_solicitud, co.cop_nombre
+      `SELECT s.sol_numero_solicitud
        FROM solicitudes s
-       LEFT JOIN Centro_operacion co ON co.cop_id = s.sol_co_id
        WHERE s.sol_id = @0`,
       [solicitudId],
     );
@@ -201,7 +205,10 @@ export class SolicitudesDocumentosService {
       throw new Error(`Solicitud ${solicitudId} no encontrada`);
     }
 
-    const carpeta = `documentos-solicitudes/${solicitud.cop_nombre}/soportes/${solicitud.sol_numero_solicitud}`;
+    const carpetaBase = await this.carpetaAlmacenamiento.obtenerBase(
+      TIPO_ARCHIVO_URLS.SOLICITUDES,
+    );
+    const carpeta = `${carpetaBase}soportes/${solicitud.sol_numero_solicitud}`;
     const nombreGuardado = `${Date.now()}_${file.originalname}`;
     const subida = await this.storageService.upload(file.buffer, {
       folder: carpeta,
@@ -247,6 +254,89 @@ export class SolicitudesDocumentosService {
        SET ssa_estado = 'inactivo'
        WHERE ssa_id = @0 AND ssa_sol_id = @1`,
       [ssaId, solicitudId],
+    );
+  }
+
+  // Evidencia por persona: un archivo por fila de una pregunta tipo TABLA
+  // (representante legal, suplentes, accionistas — ver
+  // FormularioRenderizableService.obtenerTablasCumplimiento), usado desde
+  // Gestión Oficial de Cumplimiento. Reemplazable: subir uno nuevo para la
+  // misma (solicitudId, fpId, filaIndex) inactiva el anterior en vez de
+  // acumular, mismo criterio de reemplazo que "Cambiar" en
+  // DocumentoTablaField.tsx.
+  async subirEvidenciaPersona(
+    solicitudId: number,
+    fpId: number,
+    filaIndex: number,
+    file: { buffer: Buffer; originalname: string; mimetype: string },
+    usuarioId: number,
+  ) {
+    const [solicitud] = await this.dataSource.query(
+      `SELECT s.sol_numero_solicitud
+       FROM solicitudes s
+       WHERE s.sol_id = @0`,
+      [solicitudId],
+    );
+    if (!solicitud) {
+      throw new Error(`Solicitud ${solicitudId} no encontrada`);
+    }
+
+    await this.dataSource.query(
+      `UPDATE Solicitud_evidencia_persona
+       SET sep_estado = 'inactivo'
+       WHERE sep_sol_id = @0 AND sep_fp_id = @1 AND sep_fila_index = @2 AND sep_estado = 'activo'`,
+      [solicitudId, fpId, filaIndex],
+    );
+
+    const carpetaBaseEvidencias = await this.carpetaAlmacenamiento.obtenerBase(
+      TIPO_ARCHIVO_URLS.SOLICITUDES,
+    );
+    const carpeta = `${carpetaBaseEvidencias}evidencias-personas/${solicitud.sol_numero_solicitud}`;
+    const nombreGuardado = `${Date.now()}_${file.originalname}`;
+    const subida = await this.storageService.upload(file.buffer, {
+      folder: carpeta,
+      filename: nombreGuardado,
+      mimetype: file.mimetype,
+    });
+
+    const [fila] = await this.dataSource.query(
+      `INSERT INTO Solicitud_evidencia_persona
+        (sep_sol_id, sep_fp_id, sep_fila_index, sep_nombre_original, sep_ruta_almacenamiento, sep_tipo_mime, sep_tamano_bytes, sep_usuario_id)
+       OUTPUT INSERTED.*
+       VALUES (@0, @1, @2, @3, @4, @5, @6, @7)`,
+      [
+        solicitudId,
+        fpId,
+        filaIndex,
+        file.originalname,
+        subida.url,
+        file.mimetype,
+        file.buffer.length,
+        usuarioId,
+      ],
+    );
+    return fila;
+  }
+
+  async obtenerEvidenciasPersona(solicitudId: number, fpId: number) {
+    return this.dataSource.query(
+      `SELECT sep.sep_id, sep.sep_sol_id, sep.sep_fp_id, sep.sep_fila_index,
+              sep.sep_nombre_original, sep.sep_ruta_almacenamiento,
+              sep.sep_tipo_mime, sep.sep_tamano_bytes, sep.sep_usuario_id,
+              sep.sep_created_at
+       FROM Solicitud_evidencia_persona sep
+       WHERE sep.sep_sol_id = @0 AND sep.sep_fp_id = @1 AND sep.sep_estado = 'activo'
+       ORDER BY sep.sep_fila_index`,
+      [solicitudId, fpId],
+    );
+  }
+
+  async eliminarEvidenciaPersona(solicitudId: number, sepId: number) {
+    await this.dataSource.query(
+      `UPDATE Solicitud_evidencia_persona
+       SET sep_estado = 'inactivo'
+       WHERE sep_id = @0 AND sep_sol_id = @1`,
+      [sepId, solicitudId],
     );
   }
 

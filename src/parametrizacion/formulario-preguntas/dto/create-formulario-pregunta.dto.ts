@@ -121,6 +121,26 @@ export class CreateFormularioPreguntaDto {
   fp_tabla_limite_reglas?: string | null;
 
   @IsOptional()
+  @IsString()
+  fp_catalogo_filtro_columna?: string | null;
+
+  @IsOptional()
+  @IsInt()
+  fp_catalogo_filtro_pregunta_id?: number | null;
+
+  @IsOptional()
+  @IsString()
+  fp_catalogo_filtro_reglas?: string | null;
+
+  @IsOptional()
+  @IsString()
+  fp_catalogo_columna_condicion?: string | null;
+
+  @IsOptional()
+  @IsString()
+  fp_catalogo_valor_condicion?: string | null;
+
+  @IsOptional()
   @IsBoolean()
   fp_oculto_en_formulario?: boolean;
 }

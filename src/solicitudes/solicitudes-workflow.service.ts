@@ -6,11 +6,17 @@ import { MailService } from '../mail/mail.service';
 import { WorkflowService } from './workflow.service';
 import { HistorialWorkflowService } from '../workflow/historial/historial-workflow.service';
 import { ClienteArchivoService } from '../cliente-archivo/cliente-archivo.service';
+import { ClienteDatosNormalizadosService } from '../cliente-datos-normalizados/cliente-datos-normalizados.service';
 import {
   IStorageService,
   STORAGE_SERVICE,
 } from '../common/storage/storage.interface';
+import {
+  CarpetaAlmacenamientoService,
+  TIPO_ARCHIVO_URLS,
+} from '../common/storage/carpeta-almacenamiento.service';
 import { SolicitudEstadosService } from '../common/solicitud-estados/solicitud-estados.service';
+import { generarCartaPdf } from '../common/utils/carta-pdf.util';
 
 @Injectable()
 export class SolicitudesWorkflowService {
@@ -21,8 +27,10 @@ export class SolicitudesWorkflowService {
     private readonly workflowService: WorkflowService,
     private readonly historialWorkflowService: HistorialWorkflowService,
     private readonly clienteArchivoService: ClienteArchivoService,
+    private readonly clienteDatosNormalizadosService: ClienteDatosNormalizadosService,
     @Inject(STORAGE_SERVICE) private readonly storageService: IStorageService,
     private readonly solicitudEstadosService: SolicitudEstadosService,
+    private readonly carpetaAlmacenamiento: CarpetaAlmacenamientoService,
   ) {}
 
   private async resolveLookupColumns() {
@@ -1204,6 +1212,15 @@ export class SolicitudesWorkflowService {
             sa_sol_id,
             queryRunner,
           );
+
+        // Materializa direcciones/contactos/representantes/etc. del cliente
+        // (ver problemas.md) — misma transacción: si falla, se revierte
+        // junto con el resto de la aprobación.
+        await this.clienteDatosNormalizadosService.promoverTablasNormalizadas(
+          clienteIdSolicitud,
+          sa_sol_id,
+          queryRunner,
+        );
       }
 
       const mensajeHistorial = aprobado
@@ -1406,13 +1423,12 @@ export class SolicitudesWorkflowService {
     );
     const version = solicitudActual?.sol_formulario_version ?? 1;
 
-    const preguntas: { fp_id: number; fp_descripcion: string }[] =
+    const preguntas: { fp_id: number; fp_codigo: string }[] =
       await this.dataSource.query(
-        `SELECT fp.fp_id, fp.fp_descripcion
-         FROM Formulario_pregunta fp
-         JOIN Formulario_secciones fs ON fs.fs_id = fp.seccion_id
-         WHERE fs.fs_nombre LIKE 'CONCEPTO DEL EJECUTIVO%' AND fp.fp_estado = 1
-           AND ISNULL(fp.fp_version, 1) = @0`,
+        `SELECT fp_id, fp_codigo FROM Formulario_pregunta
+         WHERE fp_codigo IN ('CONCEPTO_EJECUTIVO_NOMBRE', 'CONCEPTO_OBSERVACIONES',
+                              'CONCEPTO_CONSUMO_PROYECTADO', 'CONCEPTO_TONELADAS_PROYECTADO')
+           AND fp_estado = 1 AND ISNULL(fp_version, 1) = @0`,
         [version],
       );
     if (!preguntas.length) {
@@ -1421,14 +1437,10 @@ export class SolicitudesWorkflowService {
       );
       return;
     }
-    const porDescripcion = (texto: string) =>
-      preguntas.find(
-        (p) =>
-          p.fp_descripcion.trim().replace(/:$/, '').toUpperCase() ===
-          texto.toUpperCase(),
-      );
+    const porCodigo = (codigo: string) =>
+      preguntas.find((p) => p.fp_codigo === codigo);
 
-    const nombrePregunta = porDescripcion('Ejecutivo de negocios');
+    const nombrePregunta = porCodigo('CONCEPTO_EJECUTIVO_NOMBRE');
     if (nombrePregunta) {
       const [usr] = await this.dataSource.query(
         `SELECT usr_nombre FROM usuarios WHERE usr_id = @0`,
@@ -1445,7 +1457,7 @@ export class SolicitudesWorkflowService {
       }
     }
 
-    const consumoPregunta = porDescripcion('Consumo mes proyectado');
+    const consumoPregunta = porCodigo('CONCEPTO_CONSUMO_PROYECTADO');
     if (consumoPregunta && consumo_mensual_proyectado != null) {
       await this.upsertRespuestaFormulario(
         this.dataSource,
@@ -1456,7 +1468,7 @@ export class SolicitudesWorkflowService {
       );
     }
 
-    const toneladasPregunta = porDescripcion('Toneladas mes proyectado');
+    const toneladasPregunta = porCodigo('CONCEPTO_TONELADAS_PROYECTADO');
     if (toneladasPregunta && toneladas_proyectadas != null) {
       await this.upsertRespuestaFormulario(
         this.dataSource,
@@ -1467,7 +1479,7 @@ export class SolicitudesWorkflowService {
       );
     }
 
-    const obsPregunta = porDescripcion('Observaciones adicionales');
+    const obsPregunta = porCodigo('CONCEPTO_OBSERVACIONES');
     if (obsPregunta && observaciones) {
       await this.upsertRespuestaFormulario(
         this.dataSource,
@@ -1482,8 +1494,8 @@ export class SolicitudesWorkflowService {
   // La decisión del CC2 también se refleja como respuestas de la sección
   // "USO EXCLUSIVO DE CARTONERA NACIONAL S.A." del formulario (oculta al
   // cliente durante el diligenciamiento), para que aparezca diligenciada en
-  // el formulario completo y su PDF. Las preguntas se resuelven por nombre
-  // de sección + descripción para no depender de fp_ids fijos.
+  // el formulario completo y su PDF. Las preguntas se resuelven por
+  // fp_codigo (estable entre versiones) para no depender de fp_ids fijos.
   private async guardarRespuestasUsoExclusivo(
     queryRunner: any,
     sa_sol_id: number,
@@ -1497,28 +1509,22 @@ export class SolicitudesWorkflowService {
     );
     const version = solicitudActual?.sol_formulario_version ?? 1;
 
-    const preguntas: {
-      fp_id: number;
-      fp_descripcion: string;
-      fp_tipo: string;
-    }[] = await queryRunner.query(
-      `SELECT fp.fp_id, fp.fp_descripcion, fp.fp_tipo
-       FROM Formulario_pregunta fp
-       JOIN Formulario_secciones fs ON fs.fs_id = fp.seccion_id
-       WHERE fs.fs_nombre LIKE 'USO EXCLUSIVO%' AND fp.fp_estado = 1
-         AND ISNULL(fp.fp_version, 1) = @0`,
-      [version],
-    );
+    const preguntas: { fp_id: number; fp_codigo: string }[] =
+      await queryRunner.query(
+        `SELECT fp_id, fp_codigo FROM Formulario_pregunta
+         WHERE fp_codigo IN ('USO_EXCL_DECISION', 'USO_EXCL_CUPO', 'USO_EXCL_PLAZO_PAGO',
+                              'USO_EXCL_FORMA_PAGO', 'USO_EXCL_APRUEBA_NOMBRE', 'USO_EXCL_FIRMA')
+           AND fp_estado = 1 AND ISNULL(fp_version, 1) = @0`,
+        [version],
+      );
     if (!preguntas.length) {
       console.warn(
         '[guardarRespuestasUsoExclusivo] Sección USO EXCLUSIVO sin preguntas; se omite.',
       );
       return;
     }
-    const porDescripcion = (texto: string) =>
-      preguntas.find(
-        (p) => p.fp_descripcion.trim().toUpperCase() === texto.toUpperCase(),
-      );
+    const porCodigo = (codigo: string) =>
+      preguntas.find((p) => p.fp_codigo === codigo);
 
     const upsert = (
       fp_id: number,
@@ -1537,7 +1543,7 @@ export class SolicitudesWorkflowService {
       );
 
     // DECISION (SELECT): opción Aprobado/Negado por su fpo_valor
-    const decision = porDescripcion('DECISION');
+    const decision = porCodigo('USO_EXCL_DECISION');
     if (decision) {
       const [opcion] = await queryRunner.query(
         `SELECT fpo_id FROM Formulario_pregunta_opcion
@@ -1548,7 +1554,7 @@ export class SolicitudesWorkflowService {
     }
 
     // Nombre de quien aprueba (TEXTO): nombre real del usuario que decide
-    const nombrePregunta = porDescripcion('Nombre de quien aprueba');
+    const nombrePregunta = porCodigo('USO_EXCL_APRUEBA_NOMBRE');
     if (nombrePregunta) {
       const [usr] = await queryRunner.query(
         `SELECT usr_nombre FROM usuarios WHERE usr_id = @0`,
@@ -1560,12 +1566,12 @@ export class SolicitudesWorkflowService {
 
     // Condiciones financieras: solo aplican si la decisión fue Aprobado
     if (aprobado && condiciones) {
-      const cupoPregunta = porDescripcion('Cupo$');
+      const cupoPregunta = porCodigo('USO_EXCL_CUPO');
       if (cupoPregunta && condiciones.cupo !== undefined) {
         await upsert(cupoPregunta.fp_id, { numero: condiciones.cupo });
       }
 
-      const plazoPregunta = porDescripcion('Plazo de Pago');
+      const plazoPregunta = porCodigo('USO_EXCL_PLAZO_PAGO');
       if (plazoPregunta && condiciones.plazoPago !== undefined) {
         await upsert(plazoPregunta.fp_id, {
           texto: String(condiciones.plazoPago),
@@ -1574,7 +1580,7 @@ export class SolicitudesWorkflowService {
 
       // Forma de pago (SELECT_TABLA sobre Forma_pago): guarda el fpg_id en
       // fr_valor_numero, igual que el resto de respuestas SELECT_TABLA
-      const formaPregunta = porDescripcion('Forma de pago');
+      const formaPregunta = porCodigo('USO_EXCL_FORMA_PAGO');
       if (formaPregunta && condiciones.formaPago) {
         const [fp] = await queryRunner.query(
           `SELECT fpg_id FROM Forma_pago WHERE fpg_nombre = @0`,
@@ -1874,7 +1880,8 @@ export class SolicitudesWorkflowService {
       // vez (antes, con "TOP 1 ... WHERE cpv_activo=1" sin ORDER BY y más de
       // una fila activa, cuál se usaba de verdad era no determinista).
       const [plantillaCartaPDF] = await this.dataSource.query(
-        `SELECT TOP 1 tdo_plantilla_contenido, tdo_encabezado_tipo, tdo_encabezado_imagen_url
+        `SELECT TOP 1 tdo_plantilla_contenido, tdo_encabezado_tipo, tdo_encabezado_imagen_url,
+                tdo_pie_pagina_tipo, tdo_pie_pagina_texto, tdo_pie_pagina_imagen_url
          FROM Tipos_documentos
          WHERE tdo_origen = 'CARTA_APROBACION' AND tdo_estado = 1
          ORDER BY tdo_updated_at DESC`,
@@ -1923,9 +1930,11 @@ export class SolicitudesWorkflowService {
         contenidoCarta,
         solicitud.sol_numero_solicitud,
         solicitud.cliente_nombre,
-        plantillaCartaPDF.tdo_encabezado_tipo === 'IMAGEN'
-          ? plantillaCartaPDF.tdo_encabezado_imagen_url
-          : null,
+        plantillaCartaPDF.tdo_encabezado_tipo,
+        plantillaCartaPDF.tdo_encabezado_imagen_url,
+        plantillaCartaPDF.tdo_pie_pagina_tipo,
+        plantillaCartaPDF.tdo_pie_pagina_texto,
+        plantillaCartaPDF.tdo_pie_pagina_imagen_url,
       );
 
       // Persistir el PDF para que aparezca en "Mis Documentos" del cliente.
@@ -1936,7 +1945,10 @@ export class SolicitudesWorkflowService {
       // que se invoque esta función.
       try {
         const nombreArchivo = `carta-vinculacion-${solicitud.sol_numero_solicitud}.pdf`;
-        const carpeta = `documentos-solicitudes/${solicitud.centro_nombre || 'sin-centro'}/cartas/${solicitud.sol_numero_solicitud}`;
+        const carpetaBase = await this.carpetaAlmacenamiento.obtenerBase(
+          TIPO_ARCHIVO_URLS.SOLICITUDES,
+        );
+        const carpeta = `${carpetaBase}${solicitud.centro_nombre || 'sin-centro'}/cartas/${solicitud.sol_numero_solicitud}`;
         const subida = await this.storageService.upload(pdfBuffer, {
           folder: carpeta,
           filename: nombreArchivo,
@@ -2022,307 +2034,33 @@ export class SolicitudesWorkflowService {
     }
   }
 
-  // Clasifica el contenido de la carta (con placeholders ya reemplazados)
-  // en bloques de subtítulo/párrafo/lista, igual que construirCuerpoHtml en
-  // FRONTEND/src/lib/carta-pdf.util.ts — necesario porque pdfkit justifica
-  // TODAS las líneas de un mismo `.text()` salvo la última del bloque
-  // completo, no por párrafo: pasar toda la carta de un solo tirón con
-  // align:'justify' (como hacía la versión anterior) estira también las
-  // líneas cortas de la lista de términos, viéndose rarísimo.
-  private clasificarBloquesCarta(
-    contenido: string,
-  ): (
-    | { tipo: 'subtitulo'; texto: string }
-    | { tipo: 'parrafo'; texto: string }
-    | { tipo: 'lista'; lineas: string[] }
-  )[] {
-    const bloques = contenido
-      .split(/\n\s*\n/)
-      .map((bloque) =>
-        bloque
-          .split('\n')
-          .map((linea) => linea.trim())
-          .filter(Boolean),
-      )
-      .filter((lineas) => lineas.length > 0);
-
-    return bloques.map((lineas) => {
-      if (lineas.length === 1) {
-        const esSubtitulo = lineas[0].length <= 60 && lineas[0].endsWith(':');
-        return esSubtitulo
-          ? ({ tipo: 'subtitulo', texto: lineas[0] } as const)
-          : ({ tipo: 'parrafo', texto: lineas[0] } as const);
-      }
-      return { tipo: 'lista' as const, lineas };
-    });
-  }
-
-  // ===== Negrita/tamaño puntual dentro del texto de la carta — mismos
-  // marcadores que guarda PlantillaEditor.tsx (**negrita**,
-  // {{size:N}}...{{/size}}) para los tipos de documento con plantilla de
-  // texto. Se porta acá (en vez de compartir código con el frontend, que
-  // corre en el navegador) la misma segmentación en dos pasadas
-  // (tamaño por-fuera, negrita por-dentro) que usa
-  // palabrasConEstilosPdf/palabrasConNegritaPdf en carta-pdf.util.ts, para
-  // que lo que el usuario ve en el editor coincida con el PDF real que se
-  // envía por correo al aprobar. pdfkit no necesita el layout manual palabra
-  // por palabra que hace el frontend: basta con dibujar cada tramo con
-  // `continued: true` y dejar que el propio pdfkit haga el wrap de línea. =====
-  private segmentarNegritaCarta(
-    texto: string,
-    boldPorDefecto: boolean,
-  ): { contenido: string; bold: boolean; size?: number }[] {
-    const tramos: { contenido: string; bold: boolean; size?: number }[] = [];
-    for (const parte of texto.split(/(\*\*[^*]+\*\*)/g)) {
-      if (!parte) continue;
-      const esNegrita =
-        parte.startsWith('**') && parte.endsWith('**') && parte.length > 4;
-      const contenido = esNegrita ? parte.slice(2, -2) : parte;
-      tramos.push({ contenido, bold: esNegrita || boldPorDefecto });
-    }
-    return tramos;
-  }
-
-  private segmentarEstilosCarta(
-    texto: string,
-  ): { contenido: string; bold: boolean; size?: number }[] {
-    const tramos: { contenido: string; bold: boolean; size?: number }[] = [];
-    const regexTamaño = /\{\{size:(\d+)\}\}([\s\S]*?)\{\{\/size\}\}/g;
-    let cursor = 0;
-    let match: RegExpExecArray | null;
-
-    const agregarTramo = (fragmento: string, size?: number) => {
-      for (const tramo of this.segmentarNegritaCarta(fragmento, false)) {
-        tramos.push(size != null ? { ...tramo, size } : tramo);
-      }
-    };
-
-    while ((match = regexTamaño.exec(texto))) {
-      if (match.index > cursor) agregarTramo(texto.slice(cursor, match.index));
-      agregarTramo(match[2], Number(match[1]));
-      cursor = match.index + match[0].length;
-    }
-    if (cursor < texto.length) agregarTramo(texto.slice(cursor));
-
-    return tramos;
-  }
-
-  private dibujarTextoConEstilosCarta(
-    doc: any,
-    texto: string,
-    opts: {
-      fontSizeBase: number;
-      boldBase: boolean;
-      align: 'left' | 'justify';
-      lineGap?: number;
-    },
-  ) {
-    const tramos = this.segmentarEstilosCarta(texto);
-    if (tramos.length === 0) return;
-    doc.fillColor('#1a1a1a');
-    tramos.forEach((tramo, i) => {
-      doc
-        .font(
-          tramo.bold || opts.boldBase ? 'Helvetica-Bold' : 'Helvetica',
-        )
-        .fontSize(tramo.size ?? opts.fontSizeBase);
-      doc.text(tramo.contenido, {
-        continued: i < tramos.length - 1,
-        align: opts.align,
-        lineGap: opts.lineGap,
-      });
-    });
-  }
-
-  private dibujarBloqueCarta(
-    doc: any,
-    bloque:
-      | { tipo: 'subtitulo'; texto: string }
-      | { tipo: 'parrafo'; texto: string }
-      | { tipo: 'lista'; lineas: string[] },
-  ) {
-    if (bloque.tipo === 'subtitulo') {
-      this.dibujarTextoConEstilosCarta(doc, bloque.texto, {
-        fontSizeBase: 12,
-        boldBase: true,
-        align: 'left',
-      });
-      doc.moveDown(0.4);
-    } else if (bloque.tipo === 'parrafo') {
-      this.dibujarTextoConEstilosCarta(doc, bloque.texto, {
-        fontSizeBase: 11,
-        boldBase: false,
-        align: 'justify',
-        lineGap: 4,
-      });
-      doc.moveDown(0.7);
-    } else {
-      for (const linea of bloque.lineas) {
-        this.dibujarTextoConEstilosCarta(doc, linea, {
-          fontSizeBase: 11,
-          boldBase: false,
-          align: 'left',
-          lineGap: 3,
-        });
-      }
-      doc.moveDown(0.7);
-    }
-  }
-
-  // Encabezado alternativo para documentos de Tipos_documentos con
-  // tdo_encabezado_tipo='IMAGEN': una imagen que el usuario sube desde
-  // parametrizacion/documentos, dibujada tal cual arriba de cada página, en
-  // vez del membrete de texto fijo "CARTONERA NACIONAL S.A." / la tabla
-  // completa de "formato oficial" (esa sigue sin implementarse en el
-  // backend — ver comentario en TipoDocumento.encabezadoTipo). Alto fijo
-  // (no se calcula del tamaño real de la imagen) para que el resto del
-  // layout sea predecible sin importar la proporción de la imagen subida:
-  // pdfkit la encoge/centra dentro de esa caja con `fit`, nunca se sale.
-  private dibujarEncabezadoImagenCarta(doc: any, imagenBuffer: Buffer) {
-    const marginLeft = 50;
-    const anchoContenido = 495;
-    const altoCaja = 80;
-    doc.image(imagenBuffer, marginLeft, doc.y, {
-      fit: [anchoContenido, altoCaja],
-      align: 'center',
-    });
-    doc.y += altoCaja + 14;
-  }
-
-  private async obtenerImagenEncabezadoCarta(
-    url: string | null | undefined,
-  ): Promise<Buffer | null> {
-    if (!url) return null;
-    try {
-      const respuesta = await fetch(url);
-      if (!respuesta.ok) {
-        throw new Error(`HTTP ${respuesta.status}`);
-      }
-      const arrayBuffer = await respuesta.arrayBuffer();
-      return Buffer.from(arrayBuffer);
-    } catch (error) {
-      console.error(
-        `⚠️ [obtenerImagenEncabezadoCarta] No se pudo descargar la imagen de encabezado (${url}):`,
-        error,
-      );
-      return null;
-    }
-  }
-
+  // Arma la carta con el mismo motor pdf-lib que usa el frontend para la
+  // vista previa "Ver Carta PDF" (F_PortalClientes/src/lib/carta-pdf.util.ts
+  // ::generarCartaPdf, portado a '../common/utils/carta-pdf.util' porque
+  // backend y frontend son repos sin paquete compartido) — antes esta
+  // función dibujaba el PDF a mano con pdfkit, con su propio motor de
+  // negrita/tamaño/bloques, y el resultado divergía visualmente de la
+  // vista previa del frontend aunque el contenido fuera idéntico. Ver
+  // "Documentos Cartonera/documentacion/mejoras/unificacion-carta-vinculacion-tipos-documentos.md".
   private async generarPDFCarta(
     contenidoCarta: string,
     numeroSolicitud: string,
-    clienteNombre?: string,
-    encabezadoImagenUrl?: string | null,
+    clienteNombre: string | undefined,
+    encabezadoTipo: 'NINGUNO' | 'IMAGEN' | 'FORMATO_OFICIAL' | null | undefined,
+    encabezadoImagenUrl: string | null | undefined,
+    piePaginaTipo: 'NINGUNO' | 'TEXTO' | 'IMAGEN' | null | undefined,
+    piePaginaTexto: string | null | undefined,
+    piePaginaImagenUrl: string | null | undefined,
   ): Promise<Buffer> {
-    const imagenEncabezado = await this.obtenerImagenEncabezadoCarta(
+    return generarCartaPdf({
+      contenido: contenidoCarta,
+      asunto: `Aprobación de solicitud de vinculación comercial No. ${numeroSolicitud}`,
+      destinatarioNombre: clienteNombre || '-',
+      encabezadoTipo: encabezadoTipo || 'NINGUNO',
       encabezadoImagenUrl,
-    );
-
-    return new Promise((resolve, reject) => {
-      try {
-        const PDFDocument = require('pdfkit');
-        const chunks: Buffer[] = [];
-        const doc = new PDFDocument({
-          size: 'A4',
-          margin: 50,
-          bufferPages: true,
-        });
-
-        doc.on('data', (chunk: Buffer) => chunks.push(chunk));
-        doc.on('end', () => resolve(Buffer.concat(chunks)));
-        doc.on('error', reject);
-
-        const fecha = new Date().toLocaleDateString('es-CO', {
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric',
-        });
-
-        if (imagenEncabezado) {
-          // Se repite en cada página nueva que agregue pdfkit por
-          // desbordamiento de texto — sin esto, solo la primera página
-          // tendría encabezado.
-          doc.on('pageAdded', () =>
-            this.dibujarEncabezadoImagenCarta(doc, imagenEncabezado),
-          );
-          this.dibujarEncabezadoImagenCarta(doc, imagenEncabezado);
-        } else {
-          // Membrete de texto — el de siempre, cuando el documento no tiene
-          // imagen de encabezado configurada (tdo_encabezado_tipo='NINGUNO').
-          doc
-            .fontSize(15)
-            .font('Helvetica-Bold')
-            .fillColor('#1a1a1a')
-            .text('CARTONERA NACIONAL S.A.', { align: 'center' });
-          doc
-            .fontSize(9)
-            .font('Helvetica-Oblique')
-            .fillColor('#555555')
-            .text('Vinculación Comercial', { align: 'center' });
-          doc.moveDown(0.6);
-          doc
-            .strokeColor('#999999')
-            .lineWidth(1)
-            .moveTo(50, doc.y)
-            .lineTo(545, doc.y)
-            .stroke();
-          doc.moveDown(1.4);
-        }
-
-        // Fecha
-        doc
-          .fontSize(11)
-          .font('Helvetica')
-          .fillColor('#1a1a1a')
-          .text(`Bogotá D.C., ${fecha}`, { align: 'right' });
-        doc.moveDown(1);
-
-        // Destinatario
-        doc.fontSize(12).font('Helvetica').text('Señor(a)');
-        doc.font('Helvetica-Bold').text(clienteNombre || '-');
-        doc.font('Helvetica').text('Ciudad');
-        doc.moveDown(1);
-
-        // Asunto
-        doc
-          .fontSize(12)
-          .font('Helvetica-Bold')
-          .text('Asunto: ', { continued: true })
-          .font('Helvetica')
-          .text(
-            `Aprobación de solicitud de vinculación comercial No. ${numeroSolicitud}`,
-          );
-        doc.moveDown(1.2);
-
-        // Cuerpo, clasificado en subtítulo/párrafo/lista
-        const bloques = this.clasificarBloquesCarta(contenidoCarta);
-        for (const bloque of bloques) {
-          this.dibujarBloqueCarta(doc, bloque);
-        }
-
-        // Cierre
-        doc.moveDown(0.5);
-        doc
-          .strokeColor('#dddddd')
-          .lineWidth(1)
-          .moveTo(50, doc.y)
-          .lineTo(545, doc.y)
-          .stroke();
-        doc.moveDown(0.5);
-        doc
-          .fontSize(8)
-          .font('Helvetica')
-          .fillColor('#888888')
-          .text(
-            `Documento generado electrónicamente el ${fecha} · Sistema de Vinculación Comercial`,
-            { align: 'center' },
-          );
-
-        doc.end();
-      } catch (error) {
-        reject(error);
-      }
+      piePaginaTipo: piePaginaTipo || 'NINGUNO',
+      piePaginaTexto,
+      piePaginaImagenUrl,
     });
   }
 

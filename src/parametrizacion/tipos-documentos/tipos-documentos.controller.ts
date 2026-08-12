@@ -59,7 +59,7 @@ export class TiposDocumentosController {
   // Imagen de encabezado (tdo_encabezado_tipo = 'IMAGEN') — se dibuja arriba
   // de cada página del PDF de documentos de origen CARTA_APROBACION en vez
   // de la tabla de "formato oficial" completa (ver
-  // solicitudes-workflow.service.ts::dibujarEncabezadoImagenCarta).
+  // common/utils/carta-pdf.util.ts::resolverEncabezadoDocumento).
   @Post(':id/encabezado-imagen')
   @UseInterceptors(FileInterceptor('archivo'))
   async subirEncabezadoImagen(

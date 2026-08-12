@@ -36,6 +36,8 @@ export class MaestrosController {
     @Query('columna_id') columnaId?: string,
     @Query('columna_filtro') columnaFiltro?: string,
     @Query('valor_filtro') valorFiltro?: string,
+    @Query('columna_condicion') columnaCondicion?: string,
+    @Query('valor_condicion') valorCondicion?: string,
   ) {
     return this.maestrosService.getCatalogo(
       tabla,
@@ -44,6 +46,8 @@ export class MaestrosController {
       columnaId,
       columnaFiltro,
       valorFiltro,
+      columnaCondicion,
+      valorCondicion,
     );
   }
 

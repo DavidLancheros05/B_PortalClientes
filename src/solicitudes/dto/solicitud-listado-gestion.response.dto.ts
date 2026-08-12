@@ -30,6 +30,8 @@ export class SolicitudListadoGestionDto {
 
   // Fecha base
   sol_fecha_creacion: Date;
+  sol_fecha_envio?: Date | null;
+  sol_fecha_aprobacion?: Date | null;
 
   // Aprobación financiera
   sol_cupo_aprobado?: number;

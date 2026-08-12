@@ -196,6 +196,8 @@ export class MaestrosService {
     columnaId?: string,
     columnaFiltro?: string,
     valorFiltro?: string,
+    columnaCondicion?: string,
+    valorCondicion?: string,
   ) {
     if (!tabla) {
       throw new BadRequestException('El parámetro tabla es requerido');
@@ -221,14 +223,20 @@ export class MaestrosService {
       throw new BadRequestException('Nombre de columna de filtro inválido');
     }
 
-    let valorFiltroNum: number | null = null;
-    if (columnaFiltro) {
-      valorFiltroNum = valorFiltro ? parseInt(valorFiltro, 10) : NaN;
-      if (Number.isNaN(valorFiltroNum)) {
-        throw new BadRequestException(
-          'valor_filtro debe ser un número cuando se indica columna_filtro',
-        );
-      }
+    if (columnaFiltro && !valorFiltro) {
+      throw new BadRequestException(
+        'valor_filtro es requerido cuando se indica columna_filtro',
+      );
+    }
+
+    if (columnaCondicion && !this.isSafeIdentifier(columnaCondicion)) {
+      throw new BadRequestException('Nombre de columna de condición inválido');
+    }
+
+    if (columnaCondicion && !valorCondicion) {
+      throw new BadRequestException(
+        'valor_condicion es requerido cuando se indica columna_condicion',
+      );
     }
 
     const currentDbResult = await this.dataSource.query(
@@ -239,20 +247,39 @@ export class MaestrosService {
 
     // Si ya nos dan columna de valor Y columna llave explícitas, no hace
     // falta consultar INFORMATION_SCHEMA completo para adivinarlas (nos
-    // ahorramos esa ida y vuelta) — pero sí buscamos puntualmente una
-    // columna de estado/activo para no traer catálogos con filas dadas de
-    // baja (ej. Ciudads tiene ciu_id duplicados donde el viejo quedó con
-    // ciu_estado='I' al crear el nuevo — sin este filtro aparecían los dos
-    // en el selector, ver documentacion/).
+    // ahorramos esa ida y vuelta) — pero sí filtramos para no traer
+    // catálogos con filas dadas de baja (ej. Ciudads tiene ciu_id duplicados
+    // donde el viejo quedó con ciu_estado='I' al crear el nuevo).
+    // `columnaCondicion`/`valorCondicion` (configurados desde el editor de
+    // preguntas, fp_catalogo_columna_condicion/fp_catalogo_valor_condicion o
+    // su equivalente por columna dentro de una TABLA) son una condición
+    // estática explícita — cualquier "columna = valor", no solo
+    // activo/inactivo — y tienen prioridad total sobre adivinar por
+    // convención de nombre cuando se configuran. Si no se configuran, cae al
+    // comportamiento de siempre: adivinar la columna de estado por nombre y
+    // aceptar los valores típicos de "activo" — ver
+    // documentacion/Problemas serios/tipo_de_pregunta.md, problema 2.
     if (columnaDescripcion && columnaId) {
-      const estadoCol = await this.detectarColumnaEstado(targetDb, tabla);
       const condicionesDirecto: string[] = [];
-      if (estadoCol) {
+      const paramsDirecto: any[] = [];
+
+      if (columnaCondicion && valorCondicion) {
         condicionesDirecto.push(
-          `(TRY_CONVERT(BIT, [${estadoCol}]) = 1 OR UPPER(LTRIM(RTRIM(CAST([${estadoCol}] AS NVARCHAR(20))))) IN ('TRUE', 'ACTIVO', 'A', 'SI', 'S'))`,
+          `UPPER(LTRIM(RTRIM(CAST([${columnaCondicion}] AS NVARCHAR(255))))) = UPPER(@${paramsDirecto.length})`,
         );
+        paramsDirecto.push(valorCondicion);
+      } else {
+        const estadoCol = await this.detectarColumnaEstado(targetDb, tabla);
+        if (estadoCol) {
+          condicionesDirecto.push(
+            `(TRY_CONVERT(BIT, [${estadoCol}]) = 1 OR UPPER(LTRIM(RTRIM(CAST([${estadoCol}] AS NVARCHAR(20))))) IN ('TRUE', 'ACTIVO', 'A', 'SI', 'S'))`,
+          );
+        }
       }
-      if (columnaFiltro) condicionesDirecto.push(`[${columnaFiltro}] = @0`);
+      if (columnaFiltro) {
+        condicionesDirecto.push(`[${columnaFiltro}] = @${paramsDirecto.length}`);
+        paramsDirecto.push(valorFiltro);
+      }
       const whereFiltroDirecto =
         condicionesDirecto.length > 0
           ? `WHERE ${condicionesDirecto.join(' AND ')}`
@@ -268,7 +295,7 @@ export class MaestrosService {
       `;
       const dataResultDirecto = await this.dataSource.query(
         dataQueryDirecta,
-        columnaFiltro ? [valorFiltroNum] : [],
+        paramsDirecto,
       );
       return dataResultDirecto
         .filter((row: any) => row.op_id !== null && row.op_descripcion !== null)
@@ -343,8 +370,19 @@ export class MaestrosService {
     }
 
     const condiciones: string[] = [];
-    if (activeColumn) condiciones.push(`[${activeColumn}] = 1`);
-    if (columnaFiltro) condiciones.push(`[${columnaFiltro}] = @0`);
+    const paramsGeneral: any[] = [];
+    if (columnaCondicion && valorCondicion) {
+      condiciones.push(
+        `UPPER(LTRIM(RTRIM(CAST([${columnaCondicion}] AS NVARCHAR(255))))) = UPPER(@${paramsGeneral.length})`,
+      );
+      paramsGeneral.push(valorCondicion);
+    } else if (activeColumn) {
+      condiciones.push(`[${activeColumn}] = 1`);
+    }
+    if (columnaFiltro) {
+      condiciones.push(`[${columnaFiltro}] = @${paramsGeneral.length}`);
+      paramsGeneral.push(valorFiltro);
+    }
     const whereClause =
       condiciones.length > 0 ? `WHERE ${condiciones.join(' AND ')}` : '';
 
@@ -357,10 +395,7 @@ export class MaestrosService {
       ORDER BY [${effectiveLabelColumn}]
     `;
 
-    const dataResult = await this.dataSource.query(
-      dataQuery,
-      columnaFiltro ? [valorFiltroNum] : [],
-    );
+    const dataResult = await this.dataSource.query(dataQuery, paramsGeneral);
 
     return dataResult
       .filter((row: any) => row.op_id !== null && row.op_descripcion !== null)

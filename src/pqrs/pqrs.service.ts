@@ -21,6 +21,10 @@ import {
   IStorageService,
   STORAGE_SERVICE,
 } from '../common/storage/storage.interface';
+import {
+  CarpetaAlmacenamientoService,
+  TIPO_ARCHIVO_URLS,
+} from '../common/storage/carpeta-almacenamiento.service';
 
 @Injectable()
 export class PQRSService {
@@ -43,6 +47,7 @@ export class PQRSService {
     private readonly asignacionRepository: Repository<PQRSAsignacionEntity>,
     @Inject(STORAGE_SERVICE)
     private readonly storageService: IStorageService,
+    private readonly carpetaAlmacenamiento: CarpetaAlmacenamientoService,
   ) {}
 
   async getTipos() {
@@ -347,7 +352,10 @@ export class PQRSService {
       );
     }
 
-    const carpeta = `pqrs/${pqrs.pqrs_numero}`;
+    const carpetaBase = await this.carpetaAlmacenamiento.obtenerBase(
+      TIPO_ARCHIVO_URLS.PQRS,
+    );
+    const carpeta = `${carpetaBase}${pqrs.pqrs_numero}`;
     const nombreGuardado = `${Date.now()}_${file.originalname}`;
     const subida = await this.storageService.upload(file.buffer, {
       folder: carpeta,

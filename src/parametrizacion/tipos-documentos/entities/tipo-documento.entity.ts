@@ -115,12 +115,16 @@ export class TipoDocumento {
   origen: 'CLIENTE' | 'CARTA_APROBACION';
 
   // Encabezado que se dibuja arriba de cada página del PDF de este
-  // documento. Para origen CARTA_APROBACION lo dibuja el backend (pdfkit,
-  // solicitudes-workflow.service.ts) y solo soporta 'NINGUNO'/'IMAGEN' —
-  // 'FORMATO_OFICIAL' (tabla logo/código de FORMATO/página/revisión) sigue
-  // reservado sin implementar ahí. Para origen CLIENTE con
-  // tipoPlantilla='TEXTO' lo dibuja el frontend (pdf-lib,
-  // carta-pdf.util.ts), donde sí soporta los 3 valores.
+  // documento. Para origen CARTA_APROBACION lo dibuja el backend con el
+  // mismo motor pdf-lib que el frontend (common/utils/carta-pdf.util.ts,
+  // portado de F_PortalClientes/src/lib/carta-pdf.util.ts — ver
+  // "Documentos Cartonera/documentacion/mejoras/unificacion-carta-vinculacion-tipos-documentos.md"),
+  // pero el formulario de edición (DocumentosForm.tsx) solo ofrece
+  // 'NINGUNO'/'IMAGEN' para este origen — 'FORMATO_OFICIAL' (tabla logo/
+  // código de FORMATO/página/revisión) ya está implementado en el motor,
+  // simplemente no se expuso en la UI para Carta de Aprobación. Para
+  // origen CLIENTE con tipoPlantilla='TEXTO' lo dibuja el frontend
+  // (pdf-lib, carta-pdf.util.ts), donde sí se ofrecen los 3 valores.
   @Column({
     name: 'tdo_encabezado_tipo',
     type: 'varchar',

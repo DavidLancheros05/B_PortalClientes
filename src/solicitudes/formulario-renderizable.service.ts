@@ -48,6 +48,12 @@ export interface PreguntaRenderizable {
   espacio_lineas?: number;
 }
 
+export interface TablaPersonaResuelta {
+  fp_id: number;
+  columnas: string[];
+  filas: Record<string, string>[];
+}
+
 export interface FormularioRenderable {
   sol_id: number;
   sol_numero_solicitud: string;
@@ -392,6 +398,115 @@ export class FormularioRenderizableService {
         tiene_respuesta: valor !== 'Sin respuesta',
       };
     });
+  }
+
+  // Resuelve las 3 tablas KYC (persona por fila) que necesita la pantalla
+  // de Gestión Oficial de Cumplimiento — mismo espíritu liviano que
+  // obtenerRespuestasPorCodigo (no renderiza el formulario completo).
+  // representanteLegal/representantesSuplentes/accionistas se anclan por
+  // fp_codigo (estable en todas las versiones: REP_LEGAL_TABLA,
+  // REP_LEGAL_SUPLENTES, ACCIONISTAS_TABLA).
+  async obtenerTablasCumplimiento(solicitudId: number): Promise<{
+    representanteLegal: TablaPersonaResuelta | null;
+    representantesSuplentes: TablaPersonaResuelta | null;
+    accionistas: TablaPersonaResuelta | null;
+  }> {
+    const { formularioId, version } =
+      await this.resolverFormularioVersion(solicitudId);
+    if (!formularioId) {
+      return {
+        representanteLegal: null,
+        representantesSuplentes: null,
+        accionistas: null,
+      };
+    }
+
+    const preguntas = await this.dataSource.query(
+      `SELECT fp_id, fp_codigo, fp_tabla_columnas
+       FROM Formulario_pregunta
+       WHERE formulario_id = @0 AND fp_version = @1 AND fp_estado = 1
+         AND fp_tipo = 'TABLA'
+         AND fp_codigo IN ('REP_LEGAL_TABLA', 'REP_LEGAL_SUPLENTES', 'ACCIONISTAS_TABLA')`,
+      [formularioId, version],
+    );
+
+    const preguntaRepLegal = preguntas.find(
+      (p: any) => p.fp_codigo === 'REP_LEGAL_TABLA',
+    );
+    const preguntaSuplentes = preguntas.find(
+      (p: any) => p.fp_codigo === 'REP_LEGAL_SUPLENTES',
+    );
+    const preguntaAccionistas = preguntas.find(
+      (p: any) => p.fp_codigo === 'ACCIONISTAS_TABLA',
+    );
+
+    const [representanteLegal, representantesSuplentes, accionistas] =
+      await Promise.all([
+        this.resolverTablaPersona(solicitudId, preguntaRepLegal),
+        this.resolverTablaPersona(solicitudId, preguntaSuplentes),
+        this.resolverTablaPersona(solicitudId, preguntaAccionistas),
+      ]);
+
+    return { representanteLegal, representantesSuplentes, accionistas };
+  }
+
+  // Ancla compartida por obtenerTablasCumplimiento — no reutiliza la
+  // resolución inline de obtenerFormularioRenderizable a propósito: ese
+  // método ya está afinado (queries en paralelo) para el render completo
+  // del formulario, y encadenar esta resolución ahí arriesgaba una
+  // regresión de rendimiento en un camino ya optimizado a propósito.
+  private async resolverFormularioVersion(
+    solicitudId: number,
+  ): Promise<{ formularioId: number | null; version: number }> {
+    const [solicitud] = await this.dataSource.query(
+      `SELECT sol_formulario_version FROM solicitudes WHERE sol_id = @0`,
+      [solicitudId],
+    );
+    if (!solicitud) {
+      throw new Error('Solicitud no encontrada');
+    }
+    const version = solicitud.sol_formulario_version || 1;
+
+    const formResult = await this.dataSource.query(
+      `SELECT fv_frm_id FROM Formulario_versiones
+       WHERE fv_numero = @0 AND fv_frm_id IN (
+         SELECT frm_id FROM formularios WHERE frm_activo = 1
+       )`,
+      [version],
+    );
+
+    return { formularioId: formResult[0]?.fv_frm_id ?? null, version };
+  }
+
+  private async resolverTablaPersona(
+    solicitudId: number,
+    pregunta: { fp_id: number; fp_tabla_columnas: string | null } | undefined,
+  ): Promise<TablaPersonaResuelta | null> {
+    if (!pregunta) return null;
+
+    const [respuesta] = await this.dataSource.query(
+      `SELECT TOP 1 fr_valor_texto
+       FROM Formulario_respuesta
+       WHERE fr_solicitud_id = @0 AND fr_fp_id = @1
+       ORDER BY fr_updated_at DESC`,
+      [solicitudId, pregunta.fp_id],
+    );
+
+    let filas: Record<string, string>[] = [];
+    if (respuesta?.fr_valor_texto) {
+      try {
+        const parsed = JSON.parse(respuesta.fr_valor_texto);
+        if (Array.isArray(parsed)) filas = parsed;
+      } catch {
+        // Ignorar JSON inválido
+      }
+    }
+
+    return {
+      fp_id: pregunta.fp_id,
+      columnas: this.parseTablaColumnas(pregunta.fp_tabla_columnas),
+      filas,
+    };
   }
 
   private parseTablaColumnas(fpTablaColumnas?: string | null): string[] {

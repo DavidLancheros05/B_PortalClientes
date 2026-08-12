@@ -8,12 +8,17 @@ import {
   IStorageService,
   STORAGE_SERVICE,
 } from '../common/storage/storage.interface';
+import {
+  CarpetaAlmacenamientoService,
+  TIPO_ARCHIVO_URLS,
+} from '../common/storage/carpeta-almacenamiento.service';
 
 @Injectable()
 export class SolicitudesRespuestasService {
   constructor(
     private readonly dataSource: DataSource,
     @Inject(STORAGE_SERVICE) private readonly storageService: IStorageService,
+    private readonly carpetaAlmacenamiento: CarpetaAlmacenamientoService,
   ) {}
 
   /**
@@ -347,7 +352,7 @@ export class SolicitudesRespuestasService {
     try {
       // Obtener datos de la solicitud (nit, número solicitud, centro operación)
       const solicitudSQL = `
-        SELECT sol_nit_documento, sol_numero_solicitud, sol_co_id
+        SELECT sol_nit_documento, sol_numero_solicitud
         FROM solicitudes
         WHERE sol_id = @0
       `;
@@ -358,27 +363,14 @@ export class SolicitudesRespuestasService {
         throw new Error(`Solicitud con id ${sa_sol_id} no encontrada`);
       }
 
-      const { sol_nit_documento, sol_numero_solicitud, sol_co_id } =
-        solicitudResult[0];
+      const { sol_nit_documento, sol_numero_solicitud } = solicitudResult[0];
 
-      // Obtener nombre del centro de operación
-      const centroSQL = `
-        SELECT cop_nombre
-        FROM Centro_operacion
-        WHERE cop_id = @0
-      `;
-      const centroResult = await queryRunner.query(centroSQL, [sol_co_id]);
-      if (!centroResult || centroResult.length === 0) {
-        throw new Error(
-          `Centro de operación con id ${sol_co_id} no encontrado`,
-        );
-      }
-
-      const { cop_nombre } = centroResult[0];
-
-      // Subir al almacenamiento configurado, espejando la estructura de
-      // carpetas que se usaba en disco: documentos-solicitudes/{centro}/formularios/{numero_solicitud}
-      const carpetaAlmacenamiento = `documentos-solicitudes/${cop_nombre}/formularios/${sol_numero_solicitud}`;
+      // Carpeta base leída de Urls.url_nombre (url_tipo_archivo=5) en vez de
+      // escrita a mano — ver carpeta-almacenamiento.service.ts.
+      const carpetaBase = await this.carpetaAlmacenamiento.obtenerBase(
+        TIPO_ARCHIVO_URLS.SOLICITUDES,
+      );
+      const carpetaAlmacenamiento = `${carpetaBase}formularios/${sol_numero_solicitud}`;
       const subida = await this.storageService.upload(file.buffer, {
         folder: carpetaAlmacenamiento,
         filename: nombreGuardado,
