@@ -105,8 +105,8 @@ export class FormularioPregunta {
   @Column({ type: 'nvarchar', length: 'MAX', nullable: true })
   fp_tabla_columnas: string | null;
 
-  @Column({ type: 'bit', default: false })
-  fp_ancho_completo: boolean;
+  @Column({ type: 'tinyint', default: 1 })
+  fp_ancho_columnas: number;
 
   @Column({ type: 'varchar', length: 20, nullable: true })
   fp_tabla_limite_modo: string | null;

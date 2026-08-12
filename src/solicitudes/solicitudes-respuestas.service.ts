@@ -331,7 +331,7 @@ export class SolicitudesRespuestasService {
     }
 
     const preguntaTipoResult = await this.dataSource.query(
-      `SELECT fp_tipo FROM Formulario_pregunta WHERE fp_id = @0`,
+      `SELECT fp_tipo, fp_maximo FROM Formulario_pregunta WHERE fp_id = @0`,
       [fp_id],
     );
     const fpTipo = preguntaTipoResult?.[0]?.fp_tipo;
@@ -339,6 +339,26 @@ export class SolicitudesRespuestasService {
       throw new BadRequestException(
         'Esta pregunta solo admite archivos de imagen (jpg, png, etc.)',
       );
+    }
+
+    // fp_maximo en una pregunta ARCHIVO/IMAGEN es la cantidad máxima de
+    // archivos que admite (NULL o 1 = un solo archivo, comportamiento de
+    // siempre). En modo múltiple no se reemplaza nada, solo se valida el
+    // cupo; en modo simple, subir uno nuevo REEMPLAZA el anterior (antes no
+    // se desactivaba la fila vieja, y el botón "Cambiar" dejaba 2 filas
+    // 'activo' para el mismo fp_id).
+    const maximoArchivos = Number(preguntaTipoResult?.[0]?.fp_maximo) || 1;
+    const activosResult = await this.dataSource.query(
+      `SELECT sa_id FROM Solicitud_archivo
+       WHERE sa_sol_id = @0 AND sa_fp_id = @1 AND sa_estado = 'activo'`,
+      [sa_sol_id, fp_id],
+    );
+    if (maximoArchivos > 1) {
+      if ((activosResult?.length || 0) >= maximoArchivos) {
+        throw new BadRequestException(
+          `Esta pregunta admite máximo ${maximoArchivos} archivos`,
+        );
+      }
     }
 
     const checksum = createHash('sha256').update(file.buffer).digest('hex');
@@ -420,6 +440,14 @@ export class SolicitudesRespuestasService {
             fp_id,
           );
         }
+      }
+
+      if (maximoArchivos <= 1 && (activosResult?.length || 0) > 0) {
+        await queryRunner.query(
+          `UPDATE Solicitud_archivo SET sa_estado = 'inactivo', sa_updated_at = GETDATE()
+           WHERE sa_sol_id = @0 AND sa_fp_id = @1 AND sa_estado = 'activo'`,
+          [sa_sol_id, fp_id],
+        );
       }
 
       const sqlArchivo = `

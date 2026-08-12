@@ -707,7 +707,7 @@ export class FormulariosService {
           fp_precarga_fuente,
           fp_precarga_campo_cliente,
           fp_tabla_columnas,
-          fp_ancho_completo,
+          fp_ancho_columnas,
           fp_tabla_limite_modo,
           fp_tabla_limite_pregunta_id,
           fp_tabla_limite_reglas

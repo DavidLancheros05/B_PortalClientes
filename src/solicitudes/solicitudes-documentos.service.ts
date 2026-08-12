@@ -72,8 +72,10 @@ export class SolicitudesDocumentosService {
       SELECT sa.sa_id, sa.sa_sol_id, sa.sa_fp_id AS fp_id, sa.sa_nombre_original, sa.sa_nombre_guardado,
              sa.sa_tamaño_bytes, sa.sa_tipo_mime, sa.sa_ruta_almacenamiento, sa.sa_cargado_por,
              sa.sa_estado, sa.sa_created_at as fecha_carga,
-             sa.sa_fecha_emision AS sd_fecha_emision, sa.sa_fecha_vencimiento AS sd_fecha_vencimiento
+             sa.sa_fecha_emision AS sd_fecha_emision, sa.sa_fecha_vencimiento AS sd_fecha_vencimiento,
+             fp.fp_maximo
       FROM Solicitud_archivo sa
+      LEFT JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
       WHERE sa.sa_sol_id = @0 AND sa.sa_estado = 'activo'
       ORDER BY sa.sa_created_at DESC
     `;

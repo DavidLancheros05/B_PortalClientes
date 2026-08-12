@@ -1,5 +1,6 @@
 import {
   IsEnum,
+  IsIn,
   IsInt,
   IsBoolean,
   IsOptional,
@@ -105,8 +106,8 @@ export class CreateFormularioPreguntaDto {
   fp_tabla_columnas?: string | null;
 
   @IsOptional()
-  @IsBoolean()
-  fp_ancho_completo?: boolean;
+  @IsIn([1, 2, 3])
+  fp_ancho_columnas?: number;
 
   @IsOptional()
   @IsString()
