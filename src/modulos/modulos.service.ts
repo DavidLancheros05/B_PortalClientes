@@ -508,7 +508,12 @@ export class ModulosService {
   async findByRol(rolId: number) {
     const modulos = await this.moduloRepository
       .createQueryBuilder('m')
-      .leftJoin('m.roles', 'rm', 'rm.rm_rol_id = :rolId', { rolId })
+      .leftJoin(
+        'pc_rol_modulo',
+        'rm',
+        'rm.rm_mod_id = m.mod_id AND rm.rm_rol_id = :rolId',
+        { rolId },
+      )
       .select([
         'm.mod_id as mod_id',
         'm.mod_nombre as mod_nombre',
