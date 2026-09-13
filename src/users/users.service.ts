@@ -68,27 +68,28 @@ export class UsersService {
   }
 
   async getUserCentrosOperacion(usr_id: number) {
+    // Detalle_usuario_sucursal no tiene columna de "default" propia; se toma
+    // el primer registro activo (dusrs_id más antiguo) como centro default.
     const centrosResult = await this.dataSource.query(
       `
       SELECT
-        uco.uco_id,
-        uco.uco_co_id AS co_id,
+        dus.dusrs_id,
+        dus.cop_id AS co_id,
         c.cop_nombre AS nombre,
-        c.cop_estado AS activo,
-        uco.uco_es_default AS es_default
-      FROM usuarios_centros_operacion uco
-      INNER JOIN Centro_operacion c ON uco.uco_co_id = c.cop_id
-      WHERE uco.uco_usr_id = @0
-      ORDER BY uco.uco_es_default DESC, uco.uco_id ASC
+        c.cop_estado AS activo
+      FROM Detalle_usuario_sucursal dus
+      INNER JOIN Centro_operacion c ON dus.cop_id = c.cop_id
+      WHERE dus.usr_id = @0 AND dus.dusrs_estado = 'A'
+      ORDER BY dus.dusrs_id ASC
       `,
       [usr_id],
     );
 
-    return centrosResult.map((row: any) => ({
+    return centrosResult.map((row: any, index: number) => ({
       co_id: row.co_id,
       nombre: row.nombre,
       activo: row.activo,
-      es_default: Boolean(row.es_default),
+      es_default: index === 0,
     }));
   }
 
