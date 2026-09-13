@@ -87,10 +87,9 @@ export class SolicitudesService {
     try {
       // 1. Validar
       const clienteId = body.cliente_id || body.solicitud?.cliente_id;
-      const coId = body.co_id || body.solicitud?.co_id;
 
-      if (!clienteId || !coId) {
-        throw new Error('Faltan cliente_id o co_id');
+      if (!clienteId) {
+        throw new Error('Falta cliente_id');
       }
 
       // 1.5. Validar que no exista ya una solicitud en trámite (BORRADOR,
@@ -129,10 +128,8 @@ export class SolicitudesService {
       console.log('⚠️  Usando esZonaFranca:', esZonaFranca);
 
       // 3. Generar número único del consecutivo
-      const numeroSolicitud = await this.obtenerSiguienteNumeroSolicitud(
-        coId,
-        queryRunner,
-      );
+      const numeroSolicitud =
+        await this.obtenerSiguienteNumeroSolicitud(queryRunner);
       const now = new Date();
 
       // Obtener días configurados para cada etapa del workflow — una sola
@@ -174,14 +171,11 @@ export class SolicitudesService {
 
       let festivos: any[] = [];
       try {
-        const festivosResult = await queryRunner.query(
-          `
+        const festivosResult = await queryRunner.query(`
           SELECT fes_fecha AS fecha
           FROM Festivos
-          WHERE fes_co_id = @0 OR fes_co_id IS NULL
-        `,
-          [coId],
-        );
+          WHERE fes_co_id IS NULL
+        `);
         festivos = (festivosResult || [])
           .map((row: any) => row?.fecha)
           .filter((value: any) => Boolean(value));
@@ -192,14 +186,11 @@ export class SolicitudesService {
 
       let diasNoHabilesSemana: number[] | undefined;
       try {
-        const diasNoHabilesResult = await queryRunner.query(
-          `
+        const diasNoHabilesResult = await queryRunner.query(`
           SELECT dsh_dia_semana AS dia
           FROM param_dias_no_habiles_semana
-          WHERE (dsh_co_id = @0 OR dsh_co_id IS NULL) AND dsh_activo = 1
-        `,
-          [coId],
-        );
+          WHERE dsh_co_id IS NULL AND dsh_activo = 1
+        `);
         diasNoHabilesSemana = (diasNoHabilesResult || [])
           .map((row: any) => Number(row?.dia))
           .filter((value: number) => !Number.isNaN(value));
@@ -261,21 +252,25 @@ export class SolicitudesService {
         formularioActivoResult?.[0]?.formulario_version ?? 1,
       );
 
-      // 3.5 Obtener datos del cliente (ejecutivo e identificación)
+      // 3.5 Obtener datos del cliente (ejecutivo)
       const clienteResult = await queryRunner.query(
-        `SELECT ejng_id, cli_nro_identificacion FROM clientes WHERE cli_id = @0`,
+        `SELECT ejng_id FROM clientes WHERE cli_id = @0`,
         [clienteId],
       );
       const ejecutivoId = clienteResult?.[0]?.ejng_id || null;
-      const nroIdentificacionCliente =
-        clienteResult?.[0]?.cli_nro_identificacion || null;
 
       // 4. SQL para insertar solicitud - USAR @0, @1, @2... para SQL Server
+      // sol_consumo_mensual_proyectado NO se llena aquí: lo que declaró el
+      // cliente ya vive en Formulario_respuesta; esta columna se reserva
+      // para cuando el Ejecutivo de Negocios la ajuste al gestionar (ver
+      // solicitudes-workflow.service.ts::guardarGestionEjecutivo) — antes
+      // se llenaba en ambos momentos con el mismo campo, perdiendo la
+      // distinción entre "lo que pidió el cliente" y "lo que ajustó el
+      // Ejecutivo" en cuanto este último gestionaba.
       const insertSolicitudSQL = `
         INSERT INTO solicitudes (
-          sol_cliente_id, sol_estado_id, sol_co_id,
-          sol_razon_social, sol_nit_documento, sol_direccion, sol_telefono,
-          sol_consumo_mensual_proyectado, sol_fecha_creacion, sol_created_at,
+          sol_cliente_id, sol_estado_id,
+          sol_fecha_creacion, sol_created_at,
           sol_updated_at, sol_version, sol_formulario_version, sol_usuario_crea,
           sol_numero_solicitud, sol_es_zona_franca,
           sol_ejecutivo_id, sol_fecha_envio,
@@ -285,9 +280,10 @@ export class SolicitudesService {
           sol_motivo_rechazo_id, sol_usuario_modifica,
           sol_etapa_actual_id, sol_resultado_etapa_id, sol_observacion_cliente
         ) VALUES (
-          @0, @1, @2, @3, @4, @5, @6, @7, @8, @9,
-          @10, @11, @12, @13, @14, @15, @16, @17, @18, @19,
-          @20, @21, @22, @23, @24, @25, @26, @27
+          @0, @1, @2, @3,
+          @4, @5, @6, @7, @8, @9,
+          @10, @11, @12, @13, @14, @15,
+          @16, @17, @18, @19, @20, @21
         );
 
         SELECT SCOPE_IDENTITY() AS sol_id;
@@ -375,52 +371,39 @@ export class SolicitudesService {
         // Campos NOT NULL
         clienteId, // @0
         estadoId, // @1 estado_id (1=BORRADOR, 2=PENDIENTE, 3=REVISIÓN, 4=COMPLETADA)
-        coId, // @2
-
-        // Campos NULLABLE
-        body.razonSocial || body.solicitud?.razonSocial || null, // @3
-        body.nitDocumento ||
-          body.solicitud?.nitDocumento ||
-          nroIdentificacionCliente ||
-          null, // @4
-        body.direccion || body.solicitud?.direccion || null, // @5
-        body.telefono || body.solicitud?.telefono || null, // @6
-        body.consumoMensualProyectado ||
-          body.solicitud?.consumoMensualProyectado ||
-          null, // @7
 
         // Fechas
-        now, // @8 fecha_creacion
-        now, // @9 created_at
-        now, // @10 updated_at
+        now, // @2 fecha_creacion
+        now, // @3 created_at
+        now, // @4 updated_at
 
         // Versiones
-        1, // @11 version
-        formularioVersion, // @12 formulario_version
+        1, // @5 version
+        formularioVersion, // @6 formulario_version
 
         // Usuario (puede ser NULL si es un cliente)
-        body.usuario_crea || null, // @13 usuario_crea
+        body.usuario_crea || null, // @7 usuario_crea
 
         // Número de solicitud y zona franca
-        numeroSolicitud, // @14 numero_solicitud
-        esZonaFranca ? 1 : 0, // @15 es_zona_franca
+        numeroSolicitud, // @8 numero_solicitud
+        esZonaFranca ? 1 : 0, // @9 es_zona_franca
 
         // ejecutivo_id heredado del cliente
-        ejecutivoId, // @16 ejecutivo_id
-        fechaEnvio, // @17 fecha_envio (now si estado_id=2, null si estado_id=1)
+        ejecutivoId, // @10 ejecutivo_id
+        fechaEnvio, // @11 fecha_envio (now si estado_id=2, null si estado_id=1)
 
         // Fechas estimadas para cada etapa del workflow
-        fechaEstimadaEjecutivo, // @18 sol_fecha_estimada_ejecutivo
-        fechaEstimadaAuxiliar, // @19 sol_fecha_estimada_auxiliar_servicio_cliente
-        fechaEstimadaOficial, // @20 sol_fecha_estimada_oficial_cumplimiento
-        fechaEstimadaCC1, // @21 sol_fecha_estimada_comite_credito_1
-        fechaEstimadaCC2, // @22 sol_fecha_estimada_comite_credito_2
+        fechaEstimadaEjecutivo, // @12 sol_fecha_estimada_ejecutivo
+        fechaEstimadaAuxiliar, // @13 sol_fecha_estimada_auxiliar_servicio_cliente
+        fechaEstimadaOficial, // @14 sol_fecha_estimada_oficial_cumplimiento
+        fechaEstimadaCC1, // @15 sol_fecha_estimada_comite_credito_1
+        fechaEstimadaCC2, // @16 sol_fecha_estimada_comite_credito_2
 
-        null, // @23 motivo_rechazo_id
-        null, // @24 usuario_modifica
-        etapaActualId, // @25 sol_etapa_actual_id (CLI si BORRADOR, EJN si PENDIENTE)
-        resultadoFinalId, // @26 sol_resultado_etapa_id (PENDIENTE, o PEND_DOCS si faltan documentos diferidos)
-        observacionClienteInicial, // @27 sol_observacion_cliente
+        null, // @17 motivo_rechazo_id
+        null, // @18 usuario_modifica
+        etapaActualId, // @19 sol_etapa_actual_id (CLI si BORRADOR, EJN si PENDIENTE)
+        resultadoFinalId, // @20 sol_resultado_etapa_id (PENDIENTE, o PEND_DOCS si faltan documentos diferidos)
+        observacionClienteInicial, // @21 sol_observacion_cliente
       ];
 
       console.log('🚀 Ejecutando SQL directo para solicitud...');
@@ -1594,7 +1577,6 @@ export class SolicitudesService {
   }
 
   private async obtenerSiguienteNumeroSolicitud(
-    copId: number,
     queryRunner?: any,
   ): Promise<string> {
     const runner = queryRunner || this.dataSource.createQueryRunner();
@@ -1603,9 +1585,8 @@ export class SolicitudesService {
     try {
       const result = await runner.query(
         `DECLARE @numero_solicitud INT;
-         EXEC sp_ObtenerSiguienteNumeroSolicitud @cop_id = @0, @numero_solicitud = @numero_solicitud OUTPUT;
+         EXEC sp_ObtenerSiguienteNumeroSolicitud @numero_solicitud = @numero_solicitud OUTPUT;
          SELECT @numero_solicitud as numero_solicitud;`,
-        [copId],
       );
 
       if (result && result.length > 0) {

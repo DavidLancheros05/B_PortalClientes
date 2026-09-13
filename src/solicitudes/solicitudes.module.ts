@@ -12,7 +12,6 @@ import { SolicitudesController } from './solicitudes.controller';
 import { MailModule } from '../mail/mail.module';
 import { AuthModule } from '../auth/auth.module';
 import { ClienteEntity } from 'src/clientes/entities/clientes.entity';
-import { FormularioRespuestaEntity } from './entities/solicitud-respuesta.entity';
 import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 import { WorkflowModule } from '../workflow/workflow.module';
 import { WorkflowService } from './workflow.service';

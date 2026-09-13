@@ -30,6 +30,8 @@ import { ClienteArchivoService } from '../cliente-archivo/cliente-archivo.servic
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
+import { RequierePermiso } from '../permissions/requiere-permiso.decorator';
+import { SoloAutenticado } from '../auth/solo-autenticado.decorator';
 import { SolicitudRespuestaDto } from './dto/solicitud-respuesta.response.dto';
 import { ParamDiasRespuestaResponseDto } from './dto/param-dias-respuesta.response.dto';
 import { WorkflowEtapaResponseDto } from './dto/workflow-etapa.response.dto';
@@ -102,21 +104,15 @@ export class SolicitudesController {
       );
 
       const cliente_id = dto.cliente_id;
-      const co_id = dto.co_id;
 
       if (!cliente_id) {
         console.warn('❌ cliente_id está vacío o nulo:', cliente_id);
         throw new Error('cliente_id es obligatorio');
       }
-      if (!co_id) {
-        console.warn('❌ co_id está vacío o nulo:', co_id);
-        throw new Error('co_id es obligatorio');
-      }
 
       const resultado = await this.solicitudesService.crearSolicitud({
         ...dto,
         cliente_id,
-        co_id,
       });
 
       return {
@@ -253,9 +249,14 @@ export class SolicitudesController {
     if (!ultima) {
       return null;
     }
-    const respuestas = await this.respuestasService.obtenerRespuestas(
-      ultima.sol_id,
-    );
+    // Las respuestas solo hacen falta para precargar el formulario cuando el
+    // cliente va a seguir editando un BORRADOR (1). En PENDIENTE/REVISIÓN el
+    // frontend solo muestra un mensaje de bloqueo — traerlas ahí era una
+    // consulta extra a la BD remota sin ningún uso.
+    const respuestas =
+      Number(ultima.sol_estado_id) === 1
+        ? await this.respuestasService.obtenerRespuestas(ultima.sol_id)
+        : [];
     return {
       sol_id: ultima.sol_id,
       sol_numero_solicitud: ultima.sol_numero_solicitud,
@@ -319,10 +320,14 @@ export class SolicitudesController {
     @Param('clienteId', ParseIntPipe) clienteId: number,
     @Query('searchTerm') searchTerm?: string,
     @Query('estado') estado?: string,
+    @Query('fechaDesde') fechaDesde?: string,
+    @Query('fechaHasta') fechaHasta?: string,
   ): Promise<SolicitudClienteDto[]> {
     return this.listadosService.obtenerSolicitudesPorCliente(clienteId, {
       searchTerm,
       estado,
+      fechaDesde,
+      fechaHasta,
     });
   }
 
@@ -388,7 +393,6 @@ export class SolicitudesController {
     console.log('🟡 [BACKEND-CONTROLLER] Tipos de parámetros:', {
       fecha_desde: typeof query.fecha_desde,
       fecha_hasta: typeof query.fecha_hasta,
-      co_id: typeof query.co_id,
       cliente_id: typeof query.cliente_id,
       ejecutivo_id: typeof query.ejecutivo_id,
       estado_id: typeof query.estado_id,
@@ -630,42 +634,6 @@ export class SolicitudesController {
         error instanceof Error ? error.message : 'Error al descargar archivo',
         404,
       );
-    }
-  }
-
-  @Get('por-centro-operacion')
-  async getSolicitudesPorCentro(
-    @Query('co_id', ParseIntPipe) coId: number,
-    @Query('estado_id') estadoId?: string,
-    @Query('estado_ids') estadoIds?: string,
-  ) {
-    try {
-      const estadoIdNum = estadoId ? Number(estadoId) : undefined;
-      const estadoIdsArray = estadoIds
-        ? estadoIds
-            .split(',')
-            .map((id) => Number(id.trim()))
-            .filter(Boolean)
-        : undefined;
-
-      return await this.listadosService.getSolicitudesPorCentro(
-        coId,
-        estadoIdNum,
-        estadoIdsArray,
-      );
-    } catch (error: any) {
-      throw new HttpException(error.message || 'Error interno', 500);
-    }
-  }
-
-  @Get('por-ejecutivo')
-  async getSolicitudesPorEjecutivo(
-    @Query('ejecutivo_id', ParseIntPipe) ejecutivoId: number,
-  ) {
-    try {
-      return await this.listadosService.getSolicitudesPorEjecutivo(ejecutivoId);
-    } catch (error: any) {
-      throw new HttpException(error.message || 'Error interno', 500);
     }
   }
 
@@ -1328,8 +1296,13 @@ export class SolicitudesController {
     }
   }
 
+  // Sin @RequierePermiso a propósito, mismo caso que resultado-pendiente
+  // arriba: lo llama el propio CLIENTE al enviar su solicitud
+  // (FRONTEND/src/services/solicitudes.service.ts::guardarSolicitud, pasa
+  // a ESTADO_SOLICITUD.PENDIENTE) — autoservicio, no acción administrativa.
   @Patch(':id/estado')
   @UseGuards(JwtAuthGuard)
+  @SoloAutenticado()
   async cambiarEstado(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { estadoId: number },
@@ -1339,8 +1312,14 @@ export class SolicitudesController {
     return this.workflowService.cambiarEstado(id, body.estadoId, usuarioId);
   }
 
+  // Sin @RequierePermiso a propósito: lo llama el propio CLIENTE al
+  // reenviar una solicitud tras una corrección pedida por ASC
+  // (FRONTEND/src/services/solicitudes.service.ts::guardarSolicitud,
+  // rama isCorrecionASC) — es autoservicio sobre su propia solicitud, no
+  // una acción administrativa que deba restringirse por módulo/rol.
   @Patch(':id/resultado-pendiente')
   @UseGuards(JwtAuthGuard)
+  @SoloAutenticado()
   async actualizarResultadoPendiente(
     @Param('id', ParseIntPipe) id: number,
     @Req() req: Request & { user: { usr_id?: number; id?: number; tipo?: string } },
@@ -1384,8 +1363,13 @@ export class SolicitudesController {
     }
   }
 
+  // Confirmado (2026-09-13) que el único llamador real en el frontend es
+  // gestion-auxiliar-servicio-al-cliente/[id]/gestionar/page.tsx
+  // (workflowSolicitudesService.registrarAprobacion) — es la aprobación/
+  // rechazo de ASC, mismo módulo que concepto-servicio-cliente.
   @Put(':id/aprobacion')
   @UseGuards(JwtAuthGuard)
+  @RequierePermiso('/solicitudes/gestion-auxiliar-servicio-al-cliente', 'aprobar')
   async aprobarRechazarSolicitud(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: any,
@@ -1515,6 +1499,7 @@ export class SolicitudesController {
 
   @Put(':id/concepto-servicio-cliente')
   @UseGuards(JwtAuthGuard)
+  @RequierePermiso('/solicitudes/gestion-auxiliar-servicio-al-cliente', 'aprobar')
   async guardarGestionAuxiliarServicioCliente(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: any,
@@ -1545,6 +1530,7 @@ export class SolicitudesController {
 
   @Put(':id/concepto-oficial-cumplimiento')
   @UseGuards(JwtAuthGuard)
+  @RequierePermiso('/solicitudes/gestion-oficial-de-cumplimiento', 'aprobar')
   async guardarConceptoOficialCumplimiento(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: any,
@@ -1577,6 +1563,7 @@ export class SolicitudesController {
 
   @Put(':id/concepto-comite-credito-1')
   @UseGuards(JwtAuthGuard)
+  @RequierePermiso('/solicitudes/gestion-comite-credito-1', 'aprobar')
   async guardarConceptoComiteCredito1(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: any,
@@ -1603,6 +1590,7 @@ export class SolicitudesController {
 
   @Put(':id/concepto-comite-credito-2')
   @UseGuards(JwtAuthGuard)
+  @RequierePermiso('/solicitudes/gestion-comite-credito-2', 'aprobar')
   async guardarConceptoComiteCredito2(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: any,
@@ -1687,8 +1675,15 @@ export class SolicitudesController {
     }
   }
 
+  // Confirmado (2026-09-13) que ningún page/hook/componente del frontend
+  // llama esto hoy (solo existe como wrapper sin uso en
+  // workflow-solicitudes.service.ts) — permite forzar
+  // estado/etapa/resultado directamente por parámetro, saltándose el motor
+  // de transiciones. Sin un caller real que dicte el rol correcto, se
+  // restringe a ADMIN en vez de dejarlo abierto a cualquier autenticado.
   @Put(':id/estado-flujo')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
   async actualizarEstadoFlujo(
     @Param('id', ParseIntPipe) id: number,
     @Body()
@@ -1713,8 +1708,10 @@ export class SolicitudesController {
     }
   }
 
+  // Mismo caso que estado-flujo arriba: sin caller real confirmado hoy.
   @Put(':id/estado-flujo-automatico')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
   async actualizarEstadoFlujoAutomatico(
     @Param('id', ParseIntPipe) id: number,
     @Body()

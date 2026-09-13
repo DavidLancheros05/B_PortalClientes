@@ -3,11 +3,9 @@ export class SolicitudPendienteDto {
   sol_id: number;
   sol_numero_solicitud: string;
 
-  // Contexto - de quién, dónde
+  // Contexto - de quién
   sol_cliente_id: number;
   cliente_nombre: string;
-  sol_co_id: number;
-  centro_operacion_nombre: string;
 
   // Estado - para badges/colores/iconos
   sol_estado_id: number;

@@ -58,7 +58,6 @@ export interface FormularioRenderable {
   sol_id: number;
   sol_numero_solicitud: string;
   cliente_nombre: string;
-  centro_operacion_nombre: string;
   formulario_nombre: string;
   formulario_version: number;
   preguntas: PreguntaRenderizable[];
@@ -79,11 +78,10 @@ export class FormularioRenderizableService {
     const [solicitud, respuestas, archivosResult] = await Promise.all([
       this.dataSource.query(
         `SELECT
-        sol_id, sol_numero_solicitud, cli_razon_social, cop_nombre, sol_fecha_envio,
+        sol_id, sol_numero_solicitud, cli_razon_social, sol_fecha_envio,
         sol_formulario_version
       FROM solicitudes s
       LEFT JOIN Clientes c ON c.cli_id = s.sol_cliente_id
-      LEFT JOIN Centro_operacion co ON co.cop_id = s.sol_co_id
       WHERE s.sol_id = @0`,
         [solicitudId],
       ),
@@ -145,7 +143,6 @@ export class FormularioRenderizableService {
     const {
       sol_numero_solicitud,
       cli_razon_social,
-      cop_nombre,
       sol_fecha_envio,
       sol_formulario_version,
     } = solicitud[0];
@@ -339,7 +336,6 @@ export class FormularioRenderizableService {
       sol_id: solicitudId,
       sol_numero_solicitud,
       cliente_nombre: cli_razon_social || 'N/A',
-      centro_operacion_nombre: cop_nombre || 'N/A',
       formulario_nombre: formularioNombre,
       formulario_version: version,
       preguntas: preguntasRenderizables,

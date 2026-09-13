@@ -7,10 +7,6 @@ export class SolicitudListadoGestionDto {
   sol_cliente_id: number;
   cliente_nombre: string;
 
-  // Centro Operación
-  sol_co_id: number;
-  centro_operacion_nombre: string;
-
   // Ejecutivo
   sol_ejecutivo_id: number;
   ejecutivo_nombre: string;
@@ -43,11 +39,6 @@ export class SolicitudListadoGestionDto {
 
   // Timeline: Respuesta Comercial
   sol_fecha_estimada_respuesta_comercial?: Date;
-  sol_fecha_real_respuesta_comercial?: Date;
-
-  // Timeline: Respuesta Financiera
-  sol_fecha_estimada_respuesta_financiera?: Date;
-  sol_fecha_real_respuesta_financiera?: Date;
 
   // Timeline: Oficial Cumplimiento
   sol_fecha_estimada_oficial_cumplimiento?: Date;

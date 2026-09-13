@@ -10,9 +10,5 @@ export class UpdateSolicitudDto {
   @IsNotEmpty()
   observaciones_comercial?: string;
 
-  @IsOptional()
-  @IsNumber()
-  sol_co_id?: number;
-
   // agrega otros campos que quieras permitir actualizar
 }

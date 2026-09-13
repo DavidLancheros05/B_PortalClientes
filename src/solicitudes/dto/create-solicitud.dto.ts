@@ -39,27 +39,6 @@ export class CreateSolicitudDto {
   @IsNotEmpty()
   sol_cliente_id: number;
 
-  @IsString()
-  @IsOptional()
-  sol_razon_social?: string;
-
-  @IsString()
-  @IsOptional()
-  sol_nit_documento?: string;
-
-  @IsString()
-  @IsOptional()
-  sol_direccion?: string;
-
-  @IsString()
-  @IsOptional()
-  sol_telefono?: string;
-
-  // ===== Centro de operación =====
-  @IsInt()
-  @IsNotEmpty()
-  sol_co_id: number;
-
   // ===== Datos de la solicitud =====
   @IsNumber()
   @IsOptional()

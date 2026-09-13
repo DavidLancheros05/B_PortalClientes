@@ -30,17 +30,39 @@ export class SolicitudesDocumentosService {
           c.cli_razon_social as cliente_nombre,
           c.cli_nro_identificacion as cliente_nit,
           c.cli_direccion as cliente_direccion,
-          co.cop_nombre as centro_operacion_nombre,
           u_crea.usr_nombre as usuario_registro,
           u_crea.usr_id as usuario_registro_id,
           COALESCE(ejn.ejng_nombre, u_ej.usr_nombre) as ejecutivo_nombre,
           u_rev.usr_nombre as usuario_revision,
           seh.seh_fecha_hora as fecha_revision,
           we.wet_nombre as etapa_nombre,
-          wr.wee_nombre as resultado_nombre
+          wr.wee_nombre as resultado_nombre,
+          CASE WHEN s.sol_estado_id = 5 THEN COALESCE(
+            (
+              SELECT MAX(seh_ap.seh_fecha_hora)
+              FROM Solicitudes_estados_hist seh_ap
+              WHERE seh_ap.seh_sol_id = s.sol_id AND seh_ap.seh_estado_id = 5
+            ),
+            s.sol_fecha_real_comite_credito_2
+          ) END as fecha_aprobacion,
+          (
+            SELECT TOP 1 fr.fr_valor_numero
+            FROM Formulario_respuesta fr
+            JOIN Formulario_pregunta fp ON fp.fp_id = fr.fr_fp_id
+            WHERE fr.fr_solicitud_id = s.sol_id
+              AND fp.fp_codigo = 'CONCEPTO_CONSUMO_PROYECTADO'
+              AND ISNULL(fp.fp_version, 1) = s.sol_formulario_version
+          ) as cliente_consumo_mensual_proyectado,
+          (
+            SELECT TOP 1 fr.fr_valor_numero
+            FROM Formulario_respuesta fr
+            JOIN Formulario_pregunta fp ON fp.fp_id = fr.fr_fp_id
+            WHERE fr.fr_solicitud_id = s.sol_id
+              AND fp.fp_codigo = 'CONCEPTO_TONELADAS_PROYECTADO'
+              AND ISNULL(fp.fp_version, 1) = s.sol_formulario_version
+          ) as cliente_toneladas_proyectadas
         FROM solicitudes s
         LEFT JOIN clientes c ON s.sol_cliente_id = c.cli_id
-        LEFT JOIN Centro_operacion co ON s.sol_co_id = co.cop_id
         LEFT JOIN usuarios u_crea ON s.sol_usuario_crea = u_crea.usr_id
         LEFT JOIN Ejecutivo_negocio ejn ON ejn.ejng_id = s.sol_ejecutivo_id
         LEFT JOIN usuarios u_ej ON s.sol_ejecutivo_id = u_ej.usr_id
@@ -394,15 +416,13 @@ export class SolicitudesDocumentosService {
           WHEN CAST(sa.sa_fecha_vencimiento AS DATE) < CAST(GETDATE() AS DATE) THEN 'VENCIDO'
           ELSE 'VIGENTE'
         END AS estado_vencimiento,
-        c.cli_razon_social AS cliente_nombre,
-        co.cop_nombre AS centro_operacion_nombre
+        c.cli_razon_social AS cliente_nombre
       FROM Solicitud_archivo sa
       INNER JOIN solicitudes s ON sa.sa_sol_id = s.sol_id
       INNER JOIN solicitud_estados ses ON s.sol_estado_id = ses.ses_id
       LEFT JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
       LEFT JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tipo_documento_id
       INNER JOIN Clientes c ON s.sol_cliente_id = c.cli_id
-      INNER JOIN Centro_operacion co ON s.sol_co_id = co.cop_id
       WHERE sa.sa_estado = 'activo'
       ORDER BY sa.sa_created_at DESC
     `;

@@ -37,14 +37,12 @@ export class AmpliacionCupoService {
   ) {}
 
   private async obtenerSiguienteNumeroSolicitud(
-    copId: number,
     queryRunner: any,
   ): Promise<string> {
     const result = await queryRunner.query(
       `DECLARE @numero_solicitud INT;
-       EXEC sp_ObtenerSiguienteNumeroSolicitud @cop_id = @0, @numero_solicitud = @numero_solicitud OUTPUT;
+       EXEC sp_ObtenerSiguienteNumeroSolicitud @numero_solicitud = @numero_solicitud OUTPUT;
        SELECT @numero_solicitud as numero_solicitud;`,
-      [copId],
     );
 
     if (result && result.length > 0) {
@@ -108,8 +106,7 @@ export class AmpliacionCupoService {
 
       // 2. Obtener cliente
       const clienteResult = await queryRunner.query(
-        `SELECT ejng_id, cli_nro_identificacion
-         FROM clientes WHERE cli_id = @0`,
+        `SELECT ejng_id FROM clientes WHERE cli_id = @0`,
         [dto.clienteId],
       );
 
@@ -118,31 +115,10 @@ export class AmpliacionCupoService {
       }
 
       const ejecutivoId = clienteResult[0].ejng_id;
-      const nitCliente = clienteResult[0].cli_nro_identificacion;
-
-      // 2.1 Obtener centro de operación del cliente (el primero asignado)
-      const coResult = await queryRunner.query(
-        `SELECT TOP 1 dcc.cop_id
-         FROM Detalle_cliente_centro dcc
-         JOIN Centro_operacion co ON co.cop_id = dcc.cop_id
-         WHERE dcc.cli_id = @0 AND dcc.dclc_estado = 'A'
-         ORDER BY dcc.dclc_fecha_usr DESC`,
-        [dto.clienteId],
-      );
-
-      if (!coResult || coResult.length === 0) {
-        throw new Error(
-          `Cliente ${dto.clienteId} no tiene centro de operación asignado`,
-        );
-      }
-
-      const coId = coResult[0].cop_id;
 
       // 3. Obtener número de solicitud
-      const numeroSolicitud = await this.obtenerSiguienteNumeroSolicitud(
-        coId,
-        queryRunner,
-      );
+      const numeroSolicitud =
+        await this.obtenerSiguienteNumeroSolicitud(queryRunner);
 
       // 4. Obtener versión activa del formulario (fijada a mano con
       // activarVersion, o si nadie la fijó, la más reciente)
@@ -189,14 +165,14 @@ export class AmpliacionCupoService {
       const now = new Date();
       const insertSolicitudSQL = `
         INSERT INTO solicitudes (
-          sol_cliente_id, sol_estado_id, sol_co_id,
-          sol_nit_documento, sol_fecha_creacion, sol_created_at, sol_updated_at,
+          sol_cliente_id, sol_estado_id,
+          sol_fecha_creacion, sol_created_at, sol_updated_at,
           sol_version, sol_formulario_version, sol_numero_solicitud, sol_es_zona_franca,
           sol_ejecutivo_id, sol_etapa_actual_id, sol_resultado_etapa_id,
           sol_cupo_solicitado, sol_justificacion_ampliacion, sol_cupo_actual_referencia,
           sol_consumo_mensual_proyectado, sol_toneladas_proyectadas
         ) VALUES (
-          @0, @1, @2, @3, @4, @5, @6, @7, @8, @9, @10, @11, @12, @13, @14, @15, @16, @17, @18
+          @0, @1, @2, @3, @4, @5, @6, @7, @8, @9, @10, @11, @12, @13, @14, @15, @16
         );
         SELECT SCOPE_IDENTITY() AS sol_id;
       `;
@@ -204,23 +180,21 @@ export class AmpliacionCupoService {
       const solicitudParams = [
         dto.clienteId, // @0
         estadoId, // @1 (2=PENDIENTE, 3=EN REVISIÓN)
-        coId, // @2
-        nitCliente, // @3
-        now, // @4 fecha_creacion
-        now, // @5 created_at
-        now, // @6 updated_at
-        1, // @7 version
-        formularioVersion, // @8 formulario_version
-        numeroSolicitud, // @9 numero_solicitud
-        0, // @10 es_zona_franca
-        ejecutivoId, // @11 ejecutivo_id
-        etapaId, // @12 etapa_actual_id
-        resultadoId, // @13 resultado_etapa_id
-        dto.nuevoCupo, // @14 cupo_solicitado
-        dto.justificacion, // @15 justificacion_ampliacion
-        dto.cupoActualReferencia ?? null, // @16 cupo_actual_referencia
-        dto.consumoMensualProyectado, // @17 consumo_mensual_proyectado
-        dto.toneladasProyectadas, // @18 toneladas_proyectadas
+        now, // @2 fecha_creacion
+        now, // @3 created_at
+        now, // @4 updated_at
+        1, // @5 version
+        formularioVersion, // @6 formulario_version
+        numeroSolicitud, // @7 numero_solicitud
+        0, // @8 es_zona_franca
+        ejecutivoId, // @9 ejecutivo_id
+        etapaId, // @10 etapa_actual_id
+        resultadoId, // @11 resultado_etapa_id
+        dto.nuevoCupo, // @12 cupo_solicitado
+        dto.justificacion, // @13 justificacion_ampliacion
+        dto.cupoActualReferencia ?? null, // @14 cupo_actual_referencia
+        dto.consumoMensualProyectado, // @15 consumo_mensual_proyectado
+        dto.toneladasProyectadas, // @16 toneladas_proyectadas
       ];
 
       const solicitudResult = await queryRunner.query(

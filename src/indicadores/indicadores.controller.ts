@@ -19,7 +19,6 @@ export class IndicadoresController {
     query: {
       fecha_desde?: string;
       fecha_hasta?: string;
-      co_id?: string;
     },
   ) {
     try {
@@ -52,7 +51,6 @@ export class IndicadoresController {
       area: string;
       fecha_desde?: string;
       fecha_hasta?: string;
-      co_id?: string;
     },
   ) {
     if (!query.area)

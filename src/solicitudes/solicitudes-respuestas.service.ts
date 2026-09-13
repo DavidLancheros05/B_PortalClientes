@@ -370,9 +370,9 @@ export class SolicitudesRespuestasService {
     await queryRunner.startTransaction();
 
     try {
-      // Obtener datos de la solicitud (nit, número solicitud, centro operación)
+      // Obtener número de solicitud (para la carpeta de almacenamiento)
       const solicitudSQL = `
-        SELECT sol_nit_documento, sol_numero_solicitud
+        SELECT sol_numero_solicitud
         FROM solicitudes
         WHERE sol_id = @0
       `;
@@ -383,7 +383,7 @@ export class SolicitudesRespuestasService {
         throw new Error(`Solicitud con id ${sa_sol_id} no encontrada`);
       }
 
-      const { sol_nit_documento, sol_numero_solicitud } = solicitudResult[0];
+      const { sol_numero_solicitud } = solicitudResult[0];
 
       // Carpeta base leída de Urls.url_nombre (url_tipo_archivo=5) en vez de
       // escrita a mano — ver carpeta-almacenamiento.service.ts.

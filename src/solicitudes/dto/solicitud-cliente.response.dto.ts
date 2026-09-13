@@ -8,12 +8,10 @@ export class SolicitudClienteDto {
   sol_etapa_actual_id: number;
   sol_resultado_etapa_id: number;
 
-  // Cliente y Centro
+  // Cliente
   sol_cliente_id: number;
   cliente_nombre: string;
   cliente_nit: string;
-  sol_co_id: number;
-  centro_operacion_nombre: string;
 
   // Timeline
   sol_fecha_creacion: Date;

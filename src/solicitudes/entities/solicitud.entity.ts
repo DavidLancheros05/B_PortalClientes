@@ -9,9 +9,8 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { ClienteEntity } from '../../clientes/entities/clientes.entity';
-import { FormularioRespuestaEntity } from './solicitud-respuesta.entity';
+import { FormularioRespuestaEntity } from '../../formulario/respuestas/entities/formulario-respuesta.entity';
 import { UsuarioEntity } from 'src/usuarios/entities/usuario.entity';
-import { CentroOperacionEntity } from '../../centros-operacion/entities/centro-operacion.entity';
 import { WorkflowEtapaEntity } from '../../workflow/etapas/entities/workflow-etapa.entity';
 import { WorkflowResultadoEntity } from '../../workflow/resultados/entities/workflow-resultado.entity';
 
@@ -26,10 +25,6 @@ export class SolicitudEntity {
 
   @Column({ name: 'sol_estado_id', type: 'int' })
   sol_estado_id: number;
-
-  @ManyToOne(() => CentroOperacionEntity)
-  @JoinColumn({ name: 'sol_co_id' })
-  sol_co_id: CentroOperacionEntity;
 
   @ManyToOne(() => UsuarioEntity, { nullable: true })
   @JoinColumn({ name: 'sol_ejecutivo_id' })
@@ -68,38 +63,6 @@ export class SolicitudEntity {
   sol_es_zona_franca: boolean;
 
   @Column({
-    name: 'sol_razon_social',
-    type: 'nvarchar',
-    length: 200,
-    nullable: true,
-  })
-  sol_razon_social: string | null;
-
-  @Column({
-    name: 'sol_nit_documento',
-    type: 'nvarchar',
-    length: 50,
-    nullable: true,
-  })
-  sol_nit_documento: string | null;
-
-  @Column({
-    name: 'sol_direccion',
-    type: 'nvarchar',
-    length: 200,
-    nullable: true,
-  })
-  sol_direccion: string | null;
-
-  @Column({
-    name: 'sol_telefono',
-    type: 'nvarchar',
-    length: 50,
-    nullable: true,
-  })
-  sol_telefono: string | null;
-
-  @Column({
     name: 'sol_consumo_mensual_proyectado',
     type: 'decimal',
     precision: 18,
@@ -132,60 +95,6 @@ export class SolicitudEntity {
     nullable: true,
   })
   sol_fecha_estimada_respuesta_comercial: Date | null;
-
-  @Column({
-    name: 'sol_fecha_estimada_respuesta',
-    type: 'datetime2',
-    nullable: true,
-  })
-  sol_fecha_estimada_respuesta: Date | null;
-
-  @Column({
-    name: 'sol_formulario_progreso_porcentaje',
-    type: 'int',
-    nullable: true,
-    default: 0,
-  })
-  sol_formulario_progreso_porcentaje: number | null;
-
-  @Column({
-    name: 'sol_campos_completados',
-    type: 'int',
-    nullable: true,
-    default: 0,
-  })
-  sol_campos_completados: number | null;
-
-  @Column({
-    name: 'sol_campos_totales',
-    type: 'int',
-    nullable: true,
-    default: 0,
-  })
-  sol_campos_totales: number | null;
-
-  @Column({
-    name: 'sol_fecha_inicio_llenado',
-    type: 'datetime2',
-    nullable: true,
-  })
-  sol_fecha_inicio_llenado: Date | null;
-
-  @Column({
-    name: 'sol_fecha_ultima_respuesta',
-    type: 'datetime2',
-    nullable: true,
-  })
-  sol_fecha_ultima_respuesta: Date | null;
-
-  @Column({
-    name: 'sol_estado_llenado',
-    type: 'varchar',
-    length: 20,
-    nullable: true,
-    default: 'vacio',
-  })
-  sol_estado_llenado: string | null;
 
   @Column({
     name: 'sol_fecha_estimada_comite_credito_1_ejecutivo',

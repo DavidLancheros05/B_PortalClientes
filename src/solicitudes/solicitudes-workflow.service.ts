@@ -1331,7 +1331,8 @@ export class SolicitudesWorkflowService {
   // Marca que el ejecutivo de negocios ya gestionó manualmente (fuera del
   // sistema) el seguimiento con el cliente tras un rechazo de OFC/CC2. No
   // toca sol_estado_id/sol_etapa_actual_id/sol_resultado_etapa_id — esos
-  // siguen terminando en RECHAZADA como documenta FLUJO_ETAPAS.md; esto es
+  // siguen terminando en RECHAZADA como documenta
+  // documentacion/Portal Clientes/Solicitudes/FLUJO_ETAPAS.md; esto es
   // un tracker aparte, no una transición de workflow, así que no pasa por
   // guardarConceptoGenerico ni necesita transacción (un solo UPDATE sin
   // efectos dependientes).
@@ -1856,11 +1857,9 @@ export class SolicitudesWorkflowService {
           c.cli_correo AS cliente_email,
           s.sol_cupo_aprobado,
           s.sol_plazo_pago,
-          s.sol_forma_pago,
-          co.cop_nombre AS centro_nombre
+          s.sol_forma_pago
         FROM solicitudes s
         LEFT JOIN clientes c ON c.${lookup.cliId} = s.sol_cliente_id
-        LEFT JOIN Centro_operacion co ON co.cop_id = s.sol_co_id
         WHERE s.sol_id = @0`,
         [sa_sol_id],
       );
@@ -1948,7 +1947,7 @@ export class SolicitudesWorkflowService {
         const carpetaBase = await this.carpetaAlmacenamiento.obtenerBase(
           TIPO_ARCHIVO_URLS.SOLICITUDES,
         );
-        const carpeta = `${carpetaBase}${solicitud.centro_nombre || 'sin-centro'}/cartas/${solicitud.sol_numero_solicitud}`;
+        const carpeta = `${carpetaBase}cartas/${solicitud.sol_numero_solicitud}`;
         const subida = await this.storageService.upload(pdfBuffer, {
           folder: carpeta,
           filename: nombreArchivo,

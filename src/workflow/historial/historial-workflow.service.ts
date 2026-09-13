@@ -54,17 +54,10 @@ export class HistorialWorkflowService {
 
     let fechaEstimada: Date | null = null;
     if (dias != null) {
-      const [solicitud] = await queryRunner.query(
-        `SELECT sol_co_id FROM solicitudes WHERE sol_id = @0`,
-        [solicitudId],
-      );
-      const coId = solicitud?.sol_co_id ?? null;
-
       let festivos: any[] = [];
       try {
         const festivosResult = await queryRunner.query(
-          `SELECT fes_fecha AS fecha FROM Festivos WHERE fes_co_id = @0 OR fes_co_id IS NULL`,
-          [coId],
+          `SELECT fes_fecha AS fecha FROM Festivos WHERE fes_co_id IS NULL`,
         );
         festivos = (festivosResult || [])
           .map((row: any) => row?.fecha)
@@ -76,8 +69,7 @@ export class HistorialWorkflowService {
       let diasNoHabilesSemana: number[] | undefined;
       try {
         const diasNoHabilesResult = await queryRunner.query(
-          `SELECT dsh_dia_semana AS dia FROM param_dias_no_habiles_semana WHERE (dsh_co_id = @0 OR dsh_co_id IS NULL) AND dsh_activo = 1`,
-          [coId],
+          `SELECT dsh_dia_semana AS dia FROM param_dias_no_habiles_semana WHERE dsh_co_id IS NULL AND dsh_activo = 1`,
         );
         diasNoHabilesSemana = (diasNoHabilesResult || [])
           .map((row: any) => Number(row?.dia))
@@ -117,7 +109,7 @@ export class HistorialWorkflowService {
         `
       SELECT
         sol_fecha_creacion,
-        COALESCE(c.cli_razon_social COLLATE SQL_Latin1_General_CP1_CI_AS, s.sol_razon_social, 'Cliente') as cliente_nombre
+        COALESCE(c.cli_razon_social COLLATE SQL_Latin1_General_CP1_CI_AS, 'Cliente') as cliente_nombre
       FROM solicitudes s
       LEFT JOIN Clientes c ON s.sol_cliente_id = c.cli_id
       WHERE s.sol_id = @0

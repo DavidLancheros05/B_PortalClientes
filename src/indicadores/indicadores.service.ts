@@ -40,19 +40,14 @@ export class IndicadoresService {
     private readonly dataSource: DataSource,
   ) {}
 
-  async getCumplimiento(query: {
-    fecha_desde?: string;
-    fecha_hasta?: string;
-    co_id?: string;
-  }) {
+  async getCumplimiento(query: { fecha_desde?: string; fecha_hasta?: string }) {
     const fechaDesde = query.fecha_desde || null;
     const fechaHasta = query.fecha_hasta || null;
-    const coId = query.co_id ? parseInt(query.co_id, 10) : null;
 
     const [resumen, porArea, porMes] = await Promise.all([
-      this.queryResumen(fechaDesde, fechaHasta, coId),
-      this.queryPorArea(fechaDesde, fechaHasta, coId),
-      this.queryPorMes(coId),
+      this.queryResumen(fechaDesde, fechaHasta),
+      this.queryPorArea(fechaDesde, fechaHasta),
+      this.queryPorMes(),
     ]);
 
     const totalConFecha = porArea.reduce((acc, a) => acc + (a.total || 0), 0);
@@ -70,7 +65,6 @@ export class IndicadoresService {
   private async queryResumen(
     fechaDesde: string | null,
     fechaHasta: string | null,
-    coId: number | null,
   ) {
     const sql = `
       SELECT
@@ -83,13 +77,8 @@ export class IndicadoresService {
       WHERE se.ses_codigo != 'BORRADOR'
         AND (@0 IS NULL OR s.sol_fecha_envio >= @0)
         AND (@1 IS NULL OR s.sol_fecha_envio <= @1)
-        AND (@2 IS NULL OR s.sol_co_id = @2)
     `;
-    const rows = await this.dataSource.query(sql, [
-      fechaDesde,
-      fechaHasta,
-      coId,
-    ]);
+    const rows = await this.dataSource.query(sql, [fechaDesde, fechaHasta]);
     const r = rows[0] || {};
     return {
       total_solicitudes: Number(r.total_solicitudes || 0),
@@ -102,7 +91,6 @@ export class IndicadoresService {
   private async queryPorArea(
     fechaDesde: string | null,
     fechaHasta: string | null,
-    coId: number | null,
   ): Promise<AreaKPI[]> {
     const areas = [
       {
@@ -168,13 +156,8 @@ export class IndicadoresService {
         WHERE s.${a.col_real} IS NOT NULL
           AND (@0 IS NULL OR s.sol_fecha_envio >= @0)
           AND (@1 IS NULL OR s.sol_fecha_envio <= @1)
-          AND (@2 IS NULL OR s.sol_co_id = @2)
       `;
-      const rows = await this.dataSource.query(sql, [
-        fechaDesde,
-        fechaHasta,
-        coId,
-      ]);
+      const rows = await this.dataSource.query(sql, [fechaDesde, fechaHasta]);
       const r = rows[0] || {};
       const total = Number(r.total || 0);
       const a_tiempo = Number(r.a_tiempo || 0);
@@ -211,10 +194,9 @@ export class IndicadoresService {
       SELECT TOP 1
         s.sol_id,
         s.sol_numero_solicitud,
-        ISNULL(s.sol_razon_social, '') AS razon_social,
-        ISNULL(s.sol_nit_documento, '') AS nit,
+        ISNULL(c.cli_razon_social, '') AS razon_social,
+        ISNULL(c.cli_nro_identificacion, '') AS nit,
         CONVERT(varchar(10), s.sol_fecha_envio, 23) AS fecha_envio,
-        co.cop_nombre AS centro_operacion,
         ISNULL(se.ses_codigo, '') AS estado,
 
         -- EJECUTIVO
@@ -241,7 +223,7 @@ export class IndicadoresService {
         (SELECT TOP 1 pdr_dias FROM param_dias_respuesta_solicitudes WHERE UPPER(LTRIM(RTRIM(pdr_area))) = 'COMERCIAL' AND pdr_estado = 1 ORDER BY pdr_id DESC) AS sla_comercial
 
       FROM solicitudes s
-      LEFT JOIN Centro_operacion co ON s.sol_co_id = co.cop_id
+      LEFT JOIN clientes c ON c.cli_id = s.sol_cliente_id
       LEFT JOIN solicitud_estados se ON s.sol_estado_id = se.ses_id
       OUTER APPLY (
         SELECT TOP 1 swh.swh_fecha_estimada FROM solicitud_workflow_historial swh
@@ -354,7 +336,6 @@ export class IndicadoresService {
       razon_social: r.razon_social || '',
       nit: r.nit || '',
       fecha_envio: fechaEnvio || '',
-      centro_operacion: r.centro_operacion || '',
       estado: r.estado || '',
       areas,
     };
@@ -370,7 +351,6 @@ export class IndicadoresService {
     area: string;
     fecha_desde?: string;
     fecha_hasta?: string;
-    co_id?: string;
   }): Promise<SolicitudDetalle[]> {
     const AREAS: Record<
       string,
@@ -408,13 +388,12 @@ export class IndicadoresService {
 
     const fechaDesde = query.fecha_desde || null;
     const fechaHasta = query.fecha_hasta || null;
-    const coId = query.co_id ? parseInt(query.co_id, 10) : null;
 
     const sql = `
       SELECT
         s.sol_id,
         s.sol_numero_solicitud,
-        ISNULL(s.sol_razon_social, '') AS razon_social,
+        ISNULL(c.cli_razon_social, '') AS razon_social,
         CONVERT(varchar(10), s.sol_fecha_envio, 23) AS fecha_envio,
         CONVERT(varchar(10), COALESCE(fe.swh_fecha_estimada, s.${cols.col_est}), 23) AS fecha_estimada,
         CONVERT(varchar(10), s.${cols.col_real}, 23) AS fecha_real,
@@ -422,6 +401,7 @@ export class IndicadoresService {
         DATEDIFF(day, s.sol_fecha_envio, COALESCE(fe.swh_fecha_estimada, s.${cols.col_est})) AS dias_estimados,
         DATEDIFF(day, COALESCE(fe.swh_fecha_estimada, s.${cols.col_est}), s.${cols.col_real}) AS diferencia
       FROM solicitudes s
+      LEFT JOIN clientes c ON c.cli_id = s.sol_cliente_id
       OUTER APPLY (
         SELECT TOP 1 swh.swh_fecha_estimada
         FROM solicitud_workflow_historial swh
@@ -432,15 +412,10 @@ export class IndicadoresService {
       WHERE s.${cols.col_real} IS NOT NULL
         AND (@0 IS NULL OR s.sol_fecha_envio >= @0)
         AND (@1 IS NULL OR s.sol_fecha_envio <= @1)
-        AND (@2 IS NULL OR s.sol_co_id = @2)
       ORDER BY diferencia DESC
     `;
 
-    const rows = await this.dataSource.query(sql, [
-      fechaDesde,
-      fechaHasta,
-      coId,
-    ]);
+    const rows = await this.dataSource.query(sql, [fechaDesde, fechaHasta]);
     return rows.map((r: any) => ({
       sol_id: Number(r.sol_id),
       numero_solicitud: r.sol_numero_solicitud || '',
@@ -455,7 +430,7 @@ export class IndicadoresService {
     }));
   }
 
-  private async queryPorMes(coId: number | null): Promise<MesTendencia[]> {
+  private async queryPorMes(): Promise<MesTendencia[]> {
     const sql = `
       SELECT
         FORMAT(s.sol_fecha_envio, 'yyyy-MM') AS mes,
@@ -467,11 +442,10 @@ export class IndicadoresService {
       WHERE se.ses_codigo != 'BORRADOR'
         AND s.sol_fecha_envio IS NOT NULL
         AND s.sol_fecha_envio >= DATEADD(month, -6, GETDATE())
-        AND (@0 IS NULL OR s.sol_co_id = @0)
       GROUP BY FORMAT(s.sol_fecha_envio, 'yyyy-MM')
       ORDER BY mes
     `;
-    const rows = await this.dataSource.query(sql, [coId]);
+    const rows = await this.dataSource.query(sql);
     return rows.map((r: any) => ({
       mes: r.mes,
       total: Number(r.total || 0),
