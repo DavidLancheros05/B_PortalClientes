@@ -6,10 +6,12 @@ import {
   Logger,
   UnauthorizedException,
 } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
+import { IS_PUBLIC_KEY } from './public.decorator';
 
 // Roles válidos para acceder a la API. Un JWT con firma correcta pero un rol
 // fuera de esta lista se rechaza igual (ver también proxy.ts en el
@@ -31,6 +33,7 @@ export class JwtAuthGuard implements CanActivate {
   private readonly logger = new Logger(JwtAuthGuard.name);
 
   constructor(
+    private readonly reflector: Reflector,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     @InjectDataSource()
@@ -38,6 +41,17 @@ export class JwtAuthGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    // Ola 1 de documentacion/plan-solucion-autorizacion-endpoints.md: este
+    // guard ahora se registra global (APP_GUARD en app.module.ts), así que
+    // corre para TODO endpoint salvo que se marque @Public() a propósito.
+    const esPublico = this.reflector.getAllAndOverride<boolean>(
+      IS_PUBLIC_KEY,
+      [context.getHandler(), context.getClass()],
+    );
+    if (esPublico) {
+      return true;
+    }
+
     const request = context.switchToHttp().getRequest();
     const authHeader = request.headers.authorization;
 

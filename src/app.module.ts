@@ -1,9 +1,13 @@
 // backend/src/app.module.ts
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
+import { JwtAuthGuard } from './auth/jwt-auth.guard';
+import { PermissionsModule } from './permissions/permissions.module';
+import { ModulePermissionGuard } from './permissions/module-permission.guard';
 import { UsuarioModule } from './usuarios/usuario.module';
 import { UsuarioEntity } from './usuarios/entities/usuario.entity';
 import { SolicitudesModule } from './solicitudes/solicitudes.module';
@@ -103,6 +107,23 @@ import { UnoModule } from './integraciones/uno/uno.module';
     ExistenciasModule,
     CarteraModule,
     UnoModule,
+    PermissionsModule,
+  ],
+  providers: [
+    // Ola 1 de documentacion/plan-solucion-autorizacion-endpoints.md:
+    // antes no había NINGÚN guard global — cada controller dependía de
+    // acordarse de poner @UseGuards(JwtAuthGuard) a mano (varios no lo
+    // tenían, ver auditoria-permisos-endpoints-backend.md). Ahora aplica a
+    // toda la app por defecto; @Public() (auth/public.decorator.ts) es la
+    // única forma de excluir un endpoint a propósito.
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+    // Ola 2: permisos finos por rol×módulo×acción, consultando
+    // pc_rol_modulo (antes solo alimentaba el menú, nunca protegía nada).
+    // Debe ir DESPUÉS del guard de arriba — necesita request.user ya
+    // puesto. Es "opt-in": un endpoint sin @RequierePermiso(...) sigue
+    // pasando igual que antes, así que activar esto no rompe nada hasta
+    // que se empiece a decorar (ver ModulePermissionGuard).
+    { provide: APP_GUARD, useClass: ModulePermissionGuard },
   ],
 })
 export class AppModule {}

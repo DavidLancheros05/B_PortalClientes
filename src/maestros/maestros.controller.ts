@@ -4,8 +4,12 @@ import {
   Query,
   ParseIntPipe,
   BadRequestException,
+  UseGuards,
+  ForbiddenException,
 } from '@nestjs/common';
 import { MaestrosService } from './maestros.service';
+import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from '../auth/roles.decorator';
 
 @Controller('maestros')
 export class MaestrosController {
@@ -56,13 +60,26 @@ export class MaestrosController {
     return this.maestrosService.getCatalogoDocumentos(mode || 'options');
   }
 
+  // Navegador genérico de esquema de BD (lista bases/tablas/columnas y
+  // ejecuta SELECT arbitrarios vía getCatalogo). Confirmado que ningún
+  // GET /maestros/catalogo-esquema/page.tsx del frontend lo consume — es
+  // herramienta de debug huérfana, no una función de negocio (a diferencia
+  // de getCatalogo, que sí usa el formulario real para preguntas tipo
+  // catálogo). Ver documentacion/auditoria-permisos-endpoints-backend.md.
   @Get('catalogo-esquema')
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN')
   getCatalogoEsquema(
     @Query('mode') mode: 'databases' | 'tables' | 'columns' = 'databases',
     @Query('base_datos') baseDatos?: string,
     @Query('tabla') tabla?: string,
     @Query('q') q?: string,
   ) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new ForbiddenException(
+        'catalogo-esquema es una herramienta de desarrollo, deshabilitada en producción',
+      );
+    }
     return this.maestrosService.getCatalogoEsquema(mode, baseDatos, tabla, q);
   }
 }

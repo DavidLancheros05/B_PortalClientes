@@ -6,6 +6,7 @@ import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { Public } from './public.decorator';
 
 interface AuthRequest extends Request {
   user: { usr_id: number; tipo: 'cliente' | 'usuario' };
@@ -42,25 +43,34 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   // Fase 1 de la migración de auth a cookie httpOnly (ver
-  // documentacion/migracion-auth-httponly.md): el login ahora ADEMÁS de
-  // devolver el JWT en el body (compatibilidad, no se rompe nada existente)
-  // lo manda como cookie httpOnly — el navegador no puede leerla con JS, a
-  // diferencia de localStorage/la cookie que hoy pone el frontend a mano
-  // (AuthContext.tsx::Cookies.set). Frontend (Vercel) y backend (Render) son
-  // dominios distintos (cross-site, confirmado en vivo) — de ahí
-  // SameSite=None, que a su vez exige Secure, así que en local (http) no se
-  // puede usar ninguno de los dos y se cae a Lax/no-secure.
+  // documentacion/migracion-auth-httponly.md): el login manda el JWT como
+  // cookie httpOnly además de en el body — el navegador no puede leerla con
+  // JS, a diferencia de localStorage/la cookie que ponía el frontend a mano
+  // (AuthContext.tsx::Cookies.set, retirado en Fase 2).
+  //
+  // Fase 3 (CSRF, 2026-09-12): originalmente esto usaba `SameSite=None` en
+  // producción, asumiendo frontend (Vercel) y backend (Render) cross-site
+  // de verdad. Eso cambió: el frontend ahora llama a `/api/*` en su propio
+  // dominio y usa un rewrite de Next.js (`next.config.ts`) como proxy hacia
+  // este backend (ver comentario en `FRONTEND/src/services/core/api.ts`) —
+  // para el navegador, el request es same-site. `SameSite=None` ya no hace
+  // falta para que la cookie funcione, y mantenerlo dejaba la puerta abierta
+  // a CSRF (una página de otro origen podía disparar POST/PUT/PATCH/DELETE
+  // y el navegador adjuntaba igual la cookie). `Lax` es suficiente: el
+  // navegador ya no manda esta cookie en un request cross-site, y sigue
+  // funcionando igual para toda la navegación normal de la app.
   private setAuthCookie(res: Response, token: string) {
     const esProduccion = process.env.NODE_ENV === 'production';
     res.cookie('pc_token', token, {
       httpOnly: true,
       secure: esProduccion,
-      sameSite: esProduccion ? 'none' : 'lax',
+      sameSite: 'lax',
       maxAge: expiresToMs(process.env.JWT_EXPIRES_IN || '7d'),
       path: '/',
     });
   }
 
+  @Public()
   @Post('login')
   async login(
     @Body() body: LoginDto,
@@ -77,18 +87,28 @@ export class AuthController {
       );
       this.setAuthCookie(res, result.token);
       this.logger.log(`Login successful: ${identifier}`);
-      return result;
+      // Fase 4 (2026-09-12): el JWT ya no viaja en el body — solo en la
+      // cookie httpOnly. Antes se devolvía también acá "por compatibilidad"
+      // pero nada lo consumía (AuthContext.login ignora el `token` que
+      // recibe, ver FRONTEND/src/context/AuthContext.tsx) y dejaba una
+      // ventana de robo por XSS activo justo durante el login (interceptar
+      // la respuesta del fetch/XHR, algo que la cookie httpOnly no evita
+      // porque el body sigue siendo legible por JS de la página).
+      const { token: _token, ...resultSinToken } = result;
+      return resultSinToken;
     } catch (error) {
       this.logger.warn(`Login failed for ${identifier}: ${error.message}`);
       throw error;
     }
   }
 
+  @Public()
   @Post('forgot-password')
   async forgotPassword(@Body() body: ForgotPasswordDto) {
     return this.authService.forgotPassword(body.identifier, body.accessType);
   }
 
+  @Public()
   @Post('reset-password')
   async resetPassword(@Body() body: ResetPasswordDto) {
     return this.authService.resetPassword(body.token, body.newPassword);
@@ -108,13 +128,15 @@ export class AuthController {
       req.user.usr_id,
       req.user.tipo === 'cliente' ? 'cliente' : 'usuario',
     );
-    // Mismos atributos que al ponerla (path/secure/sameSite) — el navegador
-    // solo borra una cookie si el clearCookie coincide en esos campos.
+    // Mismos atributos que al ponerla (path/secure/sameSite, ver
+    // setAuthCookie) — el navegador solo borra una cookie si el
+    // clearCookie coincide en Domain/Path (SameSite/Secure/HttpOnly no
+    // afectan la identidad de la cookie a efectos de sobreescribirla).
     const esProduccion = process.env.NODE_ENV === 'production';
     res.clearCookie('pc_token', {
       httpOnly: true,
       secure: esProduccion,
-      sameSite: esProduccion ? 'none' : 'lax',
+      sameSite: 'lax',
       path: '/',
     });
     return { ok: true };
