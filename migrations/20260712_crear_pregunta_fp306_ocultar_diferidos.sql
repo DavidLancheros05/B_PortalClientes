@@ -3,7 +3,8 @@
 -- de F-P3-06 (tdo_id=24) en la sección ACUERDO (fs_id=2007), también oculta.
 -- Ambas quedan como "documentos diferidos": no se piden mientras el cliente
 -- llena el formulario, pero bloquean el paso a Ejecutivo de Negocios hasta
--- que se generen/suban desde Mis Documentos (ver FLUJO_ETAPAS.md).
+-- que se generen/suban desde Mis Documentos (ver
+-- documentacion/Portal Clientes/Solicitudes/FLUJO_ETAPAS.md).
 
 UPDATE Formulario_pregunta
 SET fp_oculto_en_formulario = 1

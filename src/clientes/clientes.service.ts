@@ -133,7 +133,7 @@ export class ClientesService {
   // ========================
   // SOLO CLIENTES YA APROBADOS (con al menos una solicitud en sol_estado_id
   // = 5/APROBADA según la tabla real `solicitud_estados` — ver
-  // BACKEND/FLUJO_ETAPAS.md; ojo, NO es el mismo id que
+  // documentacion/Portal Clientes/Solicitudes/FLUJO_ETAPAS.md; ojo, NO es el mismo id que
   // FRONTEND/src/constants/estado-solicitud.ts, que tiene APROBADA=4 y no
   // coincide con este catálogo) — para selectores donde no aplica cualquier
   // registro de Clientes, como el de "Ampliación de Cupo" (ver

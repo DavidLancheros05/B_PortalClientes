@@ -3,7 +3,7 @@
 -- Cumplimiento o Comité de Crédito 2. NO reemplaza ni toca
 -- sol_estado_id/sol_etapa_actual_id/sol_resultado_etapa_id, que siguen
 -- terminando en RECHAZADA exactamente igual que documenta
--- documentacion/FLUJO_ETAPAS.md. Ver notificaciones.service.ts::
+-- documentacion/Portal Clientes/Solicitudes/FLUJO_ETAPAS.md. Ver notificaciones.service.ts::
 -- notificarRechazoAlEjecutivo y solicitudes-listados.service.ts::
 -- getSolicitudesRechazadasPorEjecutivoId / getRechazoEjecutivoDetalle.
 --

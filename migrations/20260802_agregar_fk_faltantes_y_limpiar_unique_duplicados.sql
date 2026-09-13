@@ -1,7 +1,7 @@
 -- Continúa el trabajo de 20260722_fk_cascade_tablas_hijas_solicitudes.sql:
 -- agrega las FK que ese script no cubrió (columnas que apuntan a catálogos/
 -- usuarios, no a `solicitudes` misma) y limpia los UNIQUE duplicados
--- detectados en documentacion/diagnostico-llaves-y-fk-solicitudes-workflow.md.
+-- detectados en documentacion/Portal Clientes/Solicitudes/integridad.md.
 --
 -- Todas las FK nuevas van con ON DELETE NO ACTION (a diferencia de las de
 -- 20260722): estas SÍ son relaciones "hijo -> catálogo/usuario", borrar un
