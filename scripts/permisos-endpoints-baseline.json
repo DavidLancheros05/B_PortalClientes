@@ -1,0 +1,236 @@
+[
+  {
+    "archivo": "src/auth/auth.controller.ts",
+    "linea": 122,
+    "decorador": "@Post('logout')",
+    "rutaParcial": "logout"
+  },
+  {
+    "archivo": "src/documentos/documentos.controller.ts",
+    "linea": 30,
+    "decorador": "@Post()",
+    "rutaParcial": ""
+  },
+  {
+    "archivo": "src/documentos/documentos.controller.ts",
+    "linea": 35,
+    "decorador": "@Put(':id')",
+    "rutaParcial": ":id"
+  },
+  {
+    "archivo": "src/documentos/documentos.controller.ts",
+    "linea": 43,
+    "decorador": "@Delete(':id')",
+    "rutaParcial": ":id"
+  },
+  {
+    "archivo": "src/parametrizacion/correos-por-rol/correos-por-rol.controller.ts",
+    "linea": 39,
+    "decorador": "@Post()",
+    "rutaParcial": ""
+  },
+  {
+    "archivo": "src/parametrizacion/correos-por-rol/correos-por-rol.controller.ts",
+    "linea": 55,
+    "decorador": "@Put(':id')",
+    "rutaParcial": ":id"
+  },
+  {
+    "archivo": "src/parametrizacion/correos-por-rol/correos-por-rol.controller.ts",
+    "linea": 80,
+    "decorador": "@Patch(':id/estado')",
+    "rutaParcial": ":id/estado"
+  },
+  {
+    "archivo": "src/parametrizacion/estados/estados.controller.ts",
+    "linea": 30,
+    "decorador": "@Post()",
+    "rutaParcial": ""
+  },
+  {
+    "archivo": "src/parametrizacion/estados/estados.controller.ts",
+    "linea": 41,
+    "decorador": "@Put(':estadoId')",
+    "rutaParcial": ":estadoId"
+  },
+  {
+    "archivo": "src/parametrizacion/estados/estados.controller.ts",
+    "linea": 56,
+    "decorador": "@Delete(':estadoId')",
+    "rutaParcial": ":estadoId"
+  },
+  {
+    "archivo": "src/parametrizacion/formulario-secciones/formulario-secciones.controller.ts",
+    "linea": 44,
+    "decorador": "@Post()",
+    "rutaParcial": ""
+  },
+  {
+    "archivo": "src/parametrizacion/formulario-secciones/formulario-secciones.controller.ts",
+    "linea": 61,
+    "decorador": "@Put(':id')",
+    "rutaParcial": ":id"
+  },
+  {
+    "archivo": "src/parametrizacion/formulario-secciones/formulario-secciones.controller.ts",
+    "linea": 69,
+    "decorador": "@Delete(':id')",
+    "rutaParcial": ":id"
+  },
+  {
+    "archivo": "src/parametrizacion/formularios/formularios.controller.ts",
+    "linea": 65,
+    "decorador": "@Post()",
+    "rutaParcial": ""
+  },
+  {
+    "archivo": "src/parametrizacion/formularios/formularios.controller.ts",
+    "linea": 79,
+    "decorador": "@Delete(':id')",
+    "rutaParcial": ":id"
+  },
+  {
+    "archivo": "src/parametrizacion/formularios/formularios.controller.ts",
+    "linea": 108,
+    "decorador": "@Patch(':id/activar-version')",
+    "rutaParcial": ":id/activar-version"
+  },
+  {
+    "archivo": "src/parametrizacion/formularios/formularios.controller.ts",
+    "linea": 126,
+    "decorador": "@Delete(':id/versiones/:versionNumero')",
+    "rutaParcial": ":id/versiones/:versionNumero"
+  },
+  {
+    "archivo": "src/parametrizacion/formularios/formularios.controller.ts",
+    "linea": 141,
+    "decorador": "@Post(':id/nueva-version')",
+    "rutaParcial": ":id/nueva-version"
+  },
+  {
+    "archivo": "src/parametrizacion/notificaciones/notificaciones.controller.ts",
+    "linea": 30,
+    "decorador": "@Put(':codigo')",
+    "rutaParcial": ":codigo"
+  },
+  {
+    "archivo": "src/pqrs/pqrs.controller.ts",
+    "linea": 45,
+    "decorador": "@Post()",
+    "rutaParcial": ""
+  },
+  {
+    "archivo": "src/pqrs/pqrs.controller.ts",
+    "linea": 78,
+    "decorador": "@Post(':id/comentarios')",
+    "rutaParcial": ":id/comentarios"
+  },
+  {
+    "archivo": "src/pqrs/pqrs.controller.ts",
+    "linea": 100,
+    "decorador": "@Post(':id/adjuntos')",
+    "rutaParcial": ":id/adjuntos"
+  },
+  {
+    "archivo": "src/solicitudes/solicitudes.controller.ts",
+    "linea": 74,
+    "decorador": "@Post()",
+    "rutaParcial": ""
+  },
+  {
+    "archivo": "src/solicitudes/solicitudes.controller.ts",
+    "linea": 919,
+    "decorador": "@Post(':id/soportes-analisis')",
+    "rutaParcial": ":id/soportes-analisis"
+  },
+  {
+    "archivo": "src/solicitudes/solicitudes.controller.ts",
+    "linea": 973,
+    "decorador": "@Delete(':id/soportes-analisis/:ssaId')",
+    "rutaParcial": ":id/soportes-analisis/:ssaId"
+  },
+  {
+    "archivo": "src/solicitudes/solicitudes.controller.ts",
+    "linea": 1016,
+    "decorador": "@Post(':id/evidencias-persona')",
+    "rutaParcial": ":id/evidencias-persona"
+  },
+  {
+    "archivo": "src/solicitudes/solicitudes.controller.ts",
+    "linea": 1072,
+    "decorador": "@Delete(':id/evidencias-persona/:sepId')",
+    "rutaParcial": ":id/evidencias-persona/:sepId"
+  },
+  {
+    "archivo": "src/solicitudes/solicitudes.controller.ts",
+    "linea": 1113,
+    "decorador": "@Delete(':id/respuestas/archivo/:saId')",
+    "rutaParcial": ":id/respuestas/archivo/:saId"
+  },
+  {
+    "archivo": "src/solicitudes/solicitudes.controller.ts",
+    "linea": 1142,
+    "decorador": "@Post('respuestas')",
+    "rutaParcial": "respuestas"
+  },
+  {
+    "archivo": "src/solicitudes/solicitudes.controller.ts",
+    "linea": 1162,
+    "decorador": "@Post('respuestas/archivo')",
+    "rutaParcial": "respuestas/archivo"
+  },
+  {
+    "archivo": "src/solicitudes/solicitudes.controller.ts",
+    "linea": 1224,
+    "decorador": "@Post('respuestas/archivo/reutilizar')",
+    "rutaParcial": "respuestas/archivo/reutilizar"
+  },
+  {
+    "archivo": "src/solicitudes/solicitudes.controller.ts",
+    "linea": 1260,
+    "decorador": "@Patch(':id/respuestas/documento/fecha')",
+    "rutaParcial": ":id/respuestas/documento/fecha"
+  },
+  {
+    "archivo": "src/solicitudes/solicitudes.controller.ts",
+    "linea": 1345,
+    "decorador": "@Patch(':id/documentos-diferidos/verificar')",
+    "rutaParcial": ":id/documentos-diferidos/verificar"
+  },
+  {
+    "archivo": "src/solicitudes/solicitudes.controller.ts",
+    "linea": 1636,
+    "decorador": "@Delete(':id')",
+    "rutaParcial": ":id"
+  },
+  {
+    "archivo": "src/usuarios/usuario.controller.ts",
+    "linea": 102,
+    "decorador": "@Patch('change-password')",
+    "rutaParcial": "change-password"
+  },
+  {
+    "archivo": "src/usuarios/usuario.controller.ts",
+    "linea": 129,
+    "decorador": "@Post(':userId/centros')",
+    "rutaParcial": ":userId/centros"
+  },
+  {
+    "archivo": "src/usuarios/usuario.controller.ts",
+    "linea": 138,
+    "decorador": "@Post(':userId/centros/multiple')",
+    "rutaParcial": ":userId/centros/multiple"
+  },
+  {
+    "archivo": "src/usuarios/usuario.controller.ts",
+    "linea": 147,
+    "decorador": "@Patch(':userId/centros/default')",
+    "rutaParcial": ":userId/centros/default"
+  },
+  {
+    "archivo": "src/usuarios/usuario.controller.ts",
+    "linea": 156,
+    "decorador": "@Delete(':userId/centros/:centroId')",
+    "rutaParcial": ":userId/centros/:centroId"
+  }
+]
