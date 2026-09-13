@@ -26,15 +26,82 @@ gratis), así que la migración completa requiere protección CSRF explícita
 
 ## Plan por fases (para minimizar riesgo — auth es sensible)
 
-- **Fase 1 — Backend, compatibilidad** ✅ hecha esta sesión (ver abajo).
-- **Fase 2 — Frontend**: `axios` con `withCredentials: true`; eliminar
-  `Cookies.set()`/`localStorage.token` de `AuthContext.tsx`; dejar solo
-  `user` (perfil, no credencial) en estado/localStorage.
-- **Fase 3 — CSRF**: patrón double-submit para `POST/PUT/PATCH/DELETE`.
-- **Fase 4 — Limpieza**: backend deja de devolver el JWT en el body de
-  `/auth/login`; el guard retira el soporte al header `Authorization` (solo
-  si no quedan consumidores dependiendo de él — scripts, Playwright, etc.);
-  eliminar código legado (`interceptors.ts`, lecturas de `document.cookie`).
+- **Fase 1 — Backend, compatibilidad** ✅ hecha (ver abajo).
+- **Fase 2 — Frontend** ✅ hecha (no documentada en su momento en este
+  archivo — confirmado en código 2026-09-12): `api.ts` tiene
+  `withCredentials: true`; `AuthContext.tsx` ya no usa `Cookies.set()` ni
+  `localStorage.token` — solo guarda `user` (perfil, no credencial). Además,
+  el frontend agregó un rewrite en `next.config.ts` (`/api/:path*` → este
+  backend) para que las requests salgan same-origin desde el navegador —
+  ver la nota de Fase 3 abajo, cambia el diagnóstico de "cross-site" que
+  motivaba `SameSite=None`.
+- **Fase 3 — CSRF** ✅ hecha 2026-09-12, con un enfoque más simple que el
+  double-submit planeado originalmente — ver detalle abajo.
+- **Fase 4 — Limpieza**: hecha parcialmente 2026-09-12, a propósito — ver
+  detalle abajo. Retirar el soporte al header `Authorization` **se evaluó y
+  se descartó**: `scripts/mint-jwt.mjs` sigue siendo el mecanismo principal
+  de pruebas por `curl` contra el backend (usado en la verificación de
+  varios documentos de esta carpeta), y quitarlo no cierra ninguna
+  vulnerabilidad real (ver razonamiento abajo) — solo rompería ese flujo.
+  Queda como está indefinidamente, no como "pendiente".
+
+## Fase 4 — hecha parcialmente (2026-09-12)
+
+**Se quitó `token` del body de `/auth/login`** (`AuthController.login`,
+`resultSinToken`) — nada lo consumía ya (`AuthContext.login` en el frontend
+ignoraba el valor desde Fase 2), y dejaba una ventana de robo por XSS activo
+justo durante el login (interceptar la respuesta del `fetch`/`XHR`, algo que
+la cookie httpOnly no evita porque el body sigue siendo legible por JS de la
+página). Se ajustó en cascada: `login/page.tsx` ya no valida `data.token`
+(solo `data.user`), `AuthContext.login()` perdió el parámetro `token` que
+nunca usaba, y `LoginResponse` (`login.service.ts`) ya no declara ese campo.
+`tsc --noEmit` limpio en ambos repos tras el cambio.
+
+**Se descartó retirar el soporte al header `Authorization` en
+`JwtAuthGuard`.** Razón: un JWT es un *bearer token* — quien lo tenga puede
+autenticarse sin importar si lo manda por cookie o por header; que el guard
+acepte ambos no agrega superficie de ataque nueva, porque un XSS no puede
+fabricar ese header sin ya tener el token por otro medio (y la cookie sigue
+siendo httpOnly, inalcanzable para JS de la página). Es decir, quitarlo
+sería limpieza sin beneficio de seguridad real, con un costo concreto:
+rompe `mint-jwt.mjs` (firma un JWT y se salta el login por completo — no
+tiene cookie que mandar) y con él todo el flujo de pruebas manuales por
+`curl -H "Authorization: Bearer ..."` documentado en varios archivos de esta
+carpeta. Se mantiene indefinidamente el doble soporte (cookie + header).
+
+Pendiente sin evaluar todavía: eliminar código legado
+(`interceptors.ts`, lecturas de `document.cookie`) — no se investigó si
+sigue existiendo o si ya quedó obsoleto por Fase 2.
+
+## Fase 3 — hecha (2026-09-12): `SameSite=Lax` en vez de double-submit
+
+El plan original asumía frontend (Vercel) y backend (Render) cross-site de
+verdad, lo que forzaba `SameSite=None` (ver Fase 1 abajo) y a su vez exigía
+un mecanismo CSRF aparte (double-submit: cookie `pc_csrf` legible + header
+`X-CSRF-Token`).
+
+Pero para cuando se llegó a implementar esto, el frontend ya no le pega
+directo a `onrender.com` — agregó un rewrite en `next.config.ts`
+(`/api/:path*` → backend) para que el navegador vea todo como mismo origen
+(arreglo para el bloqueo de cookies de terceros de Safari ITP/Chrome, ver
+comentario en `FRONTEND/src/services/core/api.ts`). Confirmado por grep que
+ya no queda ningún consumidor pegándole directo a la URL absoluta del
+backend (`NEXT_PUBLIC_API_URL`/`onrender.com`) — todo pasa por `/api`
+relativo.
+
+Con eso, `SameSite=None` ya no es necesario para que la cookie funcione, y
+mantenerlo era la puerta abierta a CSRF real: una página de otro origen
+podía disparar `POST/PUT/PATCH/DELETE` contra el backend y el navegador
+adjuntaba la cookie igual. Cambiar a `SameSite=Lax` (`AuthController`,
+`setAuthCookie`/`logout`) cierra eso solo con ese ajuste — el navegador deja
+de mandar `pc_token` en un request cross-site, sin necesidad de tokens ni
+código nuevo que mantener. Se evaluó también implementar el double-submit
+completo como capa adicional; se descartó por ahora (complejidad extra sin
+beneficio claro dado que el proxy ya resuelve el problema de raíz) — queda
+como opción si en el futuro se deja de usar el proxy y se vuelve a un
+escenario cross-site real.
+
+`tsc --noEmit` limpio tras el cambio.
 
 ## Fase 1 — hecha y verificada en vivo (2026-08-02)
 

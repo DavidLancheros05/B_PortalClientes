@@ -1,6 +1,6 @@
 # Funcionalidades del Portal de Clientes (Cartonera)
 
-> Inventario de funcionalidades identificadas en el código (BACKEND + FRONTEND) y en `FLUJO_ETAPAS.md`. Generado 2026-07-18 — verificar contra el código si pasa mucho tiempo desde esta fecha.
+> Inventario de funcionalidades identificadas en el código (BACKEND + FRONTEND) y en `../Portal Clientes/Solicitudes/FLUJO_ETAPAS.md`. Generado 2026-07-18 — verificar contra el código si pasa mucho tiempo desde esta fecha.
 
 ## 1. Autenticación y Seguridad
 - Login con dos tipos de acceso (cliente / usuario interno)
@@ -194,7 +194,7 @@
 ---
 
 ### Notas
-- `src/workflow/estados/estados.controller.ts` y `src/workflow/transiciones/transiciones.controller.ts` están vacíos — la lógica real del workflow vive en `solicitudes-workflow.service.ts` (documentada en `FLUJO_ETAPAS.md`).
+- `src/workflow/estados/estados.controller.ts` y `src/workflow/transiciones/transiciones.controller.ts` están vacíos — la lógica real del workflow vive en `solicitudes-workflow.service.ts` (documentada en `../Portal Clientes/Solicitudes/FLUJO_ETAPAS.md`).
 - El dominio de roles/módulos está expuesto por tres superficies distintas (`/roles`, `/api/seguridad/roles`, `seguridad.controller.ts`), probablemente por evolución histórica del código — es una única funcionalidad de negocio aunque técnicamente esté triplicada.
 - **"Tipo de solicitud" (auto-selección Cliente Nuevo / Ampliación de cupo, sección 6)** se identificaba correctamente por `fp_codigo = 'TIPO_SOLICITUD'` en un lugar, pero en otros tres (`SolicitudFormContent.tsx`, `PreguntaRenderer.tsx`) tenía el `fp_id=1171` de esa pregunta escrito directo en el código — ya corregido para usar `fp_codigo` en todos lados (2026-07-18). Importa junto con el **Versionamiento de formularios (sección 8)**: `crearNuevaVersion` clona cada pregunta como fila nueva con `fp_id` distinto, así que cualquier referencia a un `fp_id` fijo en vez de por `fp_codigo`/texto se rompe en silencio en cuanto se activa una versión nueva. Ver `Versionado-de-Formularios.md` para el detalle completo de esa auditoría.
 - Se detectó (2026-07-18, solicitud `sol_id=2183`) un caso real de esa respuesta faltante en `Formulario_respuesta` pese a que el resto del formulario se guardó bien — no se confirmó la causa exacta (no reproducible en el momento, sin logs de esa sesión); comparado contra solicitudes anteriores (`2174`, `2175`) que sí la tienen guardada, no parece ser un fallo sistemático. Si se repite, reproducir en vivo para diagnosticar.

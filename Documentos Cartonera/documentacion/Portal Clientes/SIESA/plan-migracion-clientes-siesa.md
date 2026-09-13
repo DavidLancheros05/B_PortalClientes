@@ -567,7 +567,7 @@ Igual que ya se hace en `BACKEND/src/ampliacion-cupo/ampliacion-cupo.service.ts`
 (inserta una solicitud saltándose etapas): `INSERT` directo en `solicitudes`
 con:
 - `sol_estado_id = 5` (APROBADA, tabla real `solicitud_estados` — ver
-  `documentacion/FLUJO_ETAPAS.md`)
+  `documentacion/Portal Clientes/Solicitudes/FLUJO_ETAPAS.md`)
 - `sol_etapa_actual_id` = CC2, `sol_resultado_etapa_id` = APROBADO
 - `sol_cupo_aprobado` / `sol_plazo_pago` / `sol_forma_pago` ya poblados con
   lo que traiga SIESA

@@ -18,7 +18,7 @@ Una solicitud "es una ampliación de cupo" si `sol_cupo_solicitado IS NOT
 NULL`. No hay ninguna otra marca especial: mismas columnas de etapa
 (`sol_etapa_actual_id`), estado (`sol_estado_id`) y resultado
 (`sol_resultado_etapa_id`) que cualquier otra solicitud — ver
-`BACKEND/FLUJO_ETAPAS.md`.
+`FLUJO_ETAPAS.md` (mismo directorio).
 
 (Antes hubo una `AmpliacionCupoEntity`/tabla `ampliacion_cupo` planeada,
 pero se descartó por redundante — sus otros campos eran copias de

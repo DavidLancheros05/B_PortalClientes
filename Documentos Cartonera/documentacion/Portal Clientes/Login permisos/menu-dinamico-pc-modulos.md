@@ -91,3 +91,45 @@ node scripts/db-query.mjs "SELECT rm.rm_rol_id, r.rol_nombre, rm.rm_ver FROM pc_
 Roles activos hoy (`pc_roles`): `1=ADMIN`, `2=CLIENTE`, `3=EJECUTIVO`,
 `4=COMERCIAL`, `5=AUXILIAR SERVICIO CLIENTE`, `6=OFICIAL DE CUMPLIMIENTO`,
 `7=COMITE CREDITO 1`, `8=COMITE CREDITO 2`.
+
+## Actualización 2026-09-13: módulos padre y validación de `mod_ruta`
+
+Dos hallazgos posteriores, al depurar por qué "Listado de clientes"
+(`mod_id=93`) nunca aparecía en el menú de nadie:
+
+1. **Un módulo padre con hijos nunca es clickeable por sí mismo en el
+   menú, solo se despliega con la flechita.** `Header.tsx` es así por
+   diseño (confirmado con el usuario): si un nodo tiene `subModulos` con
+   permiso, solo renderiza el botón toggle (`ChevronDown`), nunca un
+   `<Link>` a su propio `mod_ruta`. Si un módulo padre necesita ser
+   "visitable" (como "Clientes"), la solución es darle un **hijo propio**
+   que apunte a esa misma ruta del padre — no convertir el padre en link.
+
+2. **`mod_ruta` ya no se escribe libremente.** La causa raíz de que
+   "Listado de clientes" apuntara a una ruta que nunca existió
+   (`/parametrizacion/clientes/listado-de-clientes`, cuando el listado
+   real vive en `/parametrizacion/clientes`, la ruta del padre) fue que la
+   pantalla `seguridad/modulos/page.tsx` **generaba la ruta sola** a
+   partir de nombre-hijo + ruta-padre, sin permitir corregirla a mano.
+   Fix: se reemplazó esa autogeneración por un `<select>` que solo deja
+   elegir entre páginas que **ya existen de verdad**:
+   - `FRONTEND/scripts/generate-app-routes.ts` (`npm run routes:generate`)
+     escanea `src/app` y escribe todas las rutas reales a
+     `FRONTEND/src/data/app-routes.json`.
+   - `seguridad/modulos/page.tsx` filtra esa lista según el módulo padre
+     elegido (rutas iguales o anidadas bajo la ruta del padre; todas las
+     rutas si es un módulo raíz) y la ofrece como `<select>` al crear y al
+     editar.
+
+   **Orden de trabajo correcto ahora**: construir la página primero,
+   correr `npm run routes:generate`, y recién ahí crear/editar el módulo
+   de menú (vía la pantalla, ya no hace falta migración SQL manual para
+   el paso 2 del checklist si se usa esta pantalla). Si el campo de ruta
+   sale vacío o falta la página que buscas, casi siempre es porque
+   `app-routes.json` está desactualizado.
+
+   Si de todos modos un módulo "no aparece en el menú" y los permisos en
+   `pc_rol_modulo` se ven bien, revisar también que `mod_ruta` sea una
+   página que de verdad exista — un módulo mal configurado así no da
+   ningún error visible, simplemente el link nunca aparece o apunta a un
+   404 silencioso.

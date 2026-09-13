@@ -19,13 +19,19 @@
 >   (`cliente-archivo.service.ts`) trata **cero filas para el cliente**
 >   (no solo cero vencidas) como vencido — conservador, no depende de que el
 >   backfill haya corrido.
-> - Sección 3 (frontend: ofrecer reutilización en "Nueva solicitud")
->   **no se implementó** — sigue pendiente. `obtenerArchivoCliente` ya está
->   expuesto en `GET /cliente-archivo/cliente/:clienteId`
->   (`src/cliente-archivo/`), listo para que el frontend lo consuma cuando
->   se construya esa pieza.
+> - **Actualización 2026-09-12**: la sección 3 (frontend: ofrecer
+>   reutilización en "Nueva solicitud") **sí se implementó** (esta nota
+>   decía lo contrario y estaba desactualizada) — `SolicitudFormContent.tsx`
+>   consulta `clienteArchivoService.obtenerArchivoCliente()` y arma
+>   `documentosClienteMap` filtrando los vencidos con el mismo criterio que
+>   el backend; el botón "Usar este documento" está en `ArchivoField.tsx` y
+>   `DocumentoTablaField.tsx`, alimentado por `PreguntaRenderer.tsx`.
 > - El punto "fuera de alcance" de abajo (qué pasa si el cliente sube un
 >   documento *distinto* al archivado) sigue sin resolver — no se tocó.
+> - **Los otros dos temas de este mismo documento (Soportes de análisis y
+>   Carta de Vinculación) también quedaron implementados** — ver las notas
+>   "Actualización 2026-09-12" al final de cada sección respectiva, más
+>   abajo.
 > - **Gap encontrado 2026-08-02, resuelto el mismo día**: `Cliente_archivo`
 >   no tenía columnas `ca_cloudinary_public_id`/`ca_resource_type`, así que
 >   `promoverDocumentos` solo podía copiar `sa_ruta_almacenamiento` — el
@@ -79,7 +85,7 @@ Esto ata la promoción de documentos al mismo punto donde ya se define
 función del checklist de ASC; corregido tras confirmar en código el 2026-07-13,
 línea 847 en adelante, `sol_cupo_aprobado` se setea en el bloque que arma
 `updateSQL` a partir de `condiciones` — invocado desde `PUT
-:id/concepto-comite-credito-2` — ver `FLUJO_ETAPAS.md`) — mismo bloque,
+:id/concepto-comite-credito-2` — ver `../Portal Clientes/Solicitudes/FLUJO_ETAPAS.md`) — mismo bloque,
 misma transacción (la que abre `queryRunner.startTransaction()` en la línea
 866 y cierra con `commitTransaction()` en la línea 1036).
 
@@ -354,6 +360,21 @@ dentro de la columna del formulario (`col-span-2`/`flex-1`), cerca de
    archivo desde la UI nueva, confirmar que aparece en la lista y que "Ver"
    abre el archivo real.
 
+> **Actualización 2026-09-12 — Implementado y extendido más allá de OFC.**
+> Migración `20260716_crear_soportes_analisis.sql`, tabla
+> `Solicitud_soporte_analisis` y endpoints `POST/GET/DELETE
+> :id/soportes-analisis` ya existen en `solicitudes.controller.ts`. El
+> componente `SoportesAnalisis.tsx` terminó insertado no solo en
+> `gestion-oficial-de-cumplimiento/[id]/gestionar/page.tsx`, sino también en
+> `gestion-comite-credito-1/[id]/gestionar/page.tsx`,
+> `gestion-comite-credito-2/[id]/gestionar/page.tsx` y en modo lectura en
+> `[id]/detalle/page.tsx` — tal como anticipaba el diseño ("genérica por
+> etapa a propósito... ASC/CC1/CC2 previsiblemente van a querer lo mismo").
+> Esto además confirma que ya estaba implementado antes del 2026-07-21,
+> fecha en que `PQRS_IMPLEMENTATION.md` reutilizó este mismo patrón
+> (`solicitudes.controller.ts::subirSoporteAnalisis`) para los adjuntos de
+> PQRS.
+
 ---
 
 # Persistir la Carta de Vinculación en "Mis Documentos" del cliente
@@ -481,3 +502,27 @@ emitió.
    solicitud y confirmar que la carta aparece y que "Ver" abre el PDF real
    (mismo contenido que llegó por correo), y que no tiene botones de
    reemplazar/eliminar.
+
+> **Actualización 2026-09-12 — Implementado, y evolucionó más allá de lo
+> planeado aquí.** Tabla `Solicitud_carta_vinculacion` (migración
+> `20260718_crear_carta_vinculacion.sql`) y el INSERT/UPDATE en
+> `solicitudes-workflow.service.ts` (líneas ~1957-1981) están en código, así
+> como el `UNION ALL` en `obtenerDocumentosConVigencia`
+> (`solicitudes-documentos.service.ts`, línea ~140). Además, una migración
+> posterior no prevista por este documento —
+> `20260727_unificar_carta_vinculacion_en_tipos_documentos.sql` — fusionó la
+> carta con el sistema de plantillas de `Tipos_documentos` (agrega
+> `tdo_origen` para distinguir "lo sube el cliente" de "lo genera el
+> sistema al aprobar", y `tdo_encabezado_tipo` para una imagen de
+> encabezado configurable), reemplazando la pantalla aparte
+> `/parametrizacion/carta-pdf-vinculacion` que existía antes.
+>
+> **El "Pendiente de decidir" de la sección 3 sigue sin resolverse a nivel
+> de código**: `esDocumentoEditable()` en `mis-documentos/page.tsx` decide
+> si se muestran "Reemplazar"/"Eliminar" solo en función de `puedeCorregir`
+> (el estado general de corrección de la solicitud) y del vencimiento —
+> nunca mira si la fila es la carta del sistema (`fp_id`/`tdo_id` nulos vs.
+> `tdo_origen`). En la práctica esto no se ha visto fallar porque
+> `puedeCorregir` normalmente ya es `false` para una solicitud que llegó a
+> CC2 aprobada (que es cuando existe la carta), pero no hay una protección
+> explícita en el código si ese supuesto cambia.

@@ -119,7 +119,7 @@ para que no se vuelvan a "redescubrir" de casualidad:
   column name" en cualquier intento.
 - **Botón "Eliminar" del cliente comparaba contra el estado equivocado**
   (`sol_estado_id === 5`, que es *Aprobada*, no *Borrador* — el real es `1`,
-  ver `FLUJO_ETAPAS.md`). Corregido.
+  ver `../Portal Clientes/Solicitudes/FLUJO_ETAPAS.md`). Corregido.
 
 ## 5. Recomendación
 

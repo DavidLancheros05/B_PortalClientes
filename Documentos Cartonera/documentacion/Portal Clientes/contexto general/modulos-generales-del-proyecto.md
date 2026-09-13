@@ -19,7 +19,7 @@ Panorama cruzado entre `BACKEND/src/` y `FRONTEND/src/app/` (ambos repos).
 ## 3. Solicitudes de vinculación comercial (core del negocio)
 - Diligenciamiento (`solicitudes/nueva`, `[id]/editar`, `[id]/detalle`)
 - Flujo de aprobación por etapa (Ejecutivo → Auxiliar SC → Oficial Cumplimiento → Comité Crédito 1 → Comité Crédito 2), cada una con su página de gestión propia
-- Máquina de estados del workflow (`workflow/estados`, `etapas`, `resultados`, `transiciones`, `historial` — ver `FLUJO_ETAPAS.md`)
+- Máquina de estados del workflow (`workflow/estados`, `etapas`, `resultados`, `transiciones`, `historial` — ver `../Solicitudes/FLUJO_ETAPAS.md`)
 - Listados y consultas (`solicitudes-listados.service.ts`, `listado-de-solicitudes`)
 - Condiciones financieras y Carta de Vinculación en PDF (`condiciones-financieras`, `carta-pdf-vinculacion`)
 - Ampliación de cupo (`ampliacion-cupo`)
