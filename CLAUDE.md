@@ -45,7 +45,7 @@ parado (`git -C BACKEND status`, `git -C FRONTEND status`), nunca asumir.
   ```
   Nest tarda ~60-90s en recompilar y levantar — un solo `ScheduleWakeup` de
   90s suele bastar antes de volver a probar. Detalle completo en
-  [`documentacion/mejoras/COSTOS_DE_SESION.md`](documentacion/mejoras/COSTOS_DE_SESION.md).
+  [`documentacion/mejoras/COSTOS_DE_SESION.md`](Documentos%20Cartonera/documentacion/mejoras/COSTOS_DE_SESION.md).
 
 ## Base de datos — convenciones y documentación
 
@@ -68,7 +68,7 @@ parado (`git -C BACKEND status`, `git -C FRONTEND status`), nunca asumir.
 - **`BACKEND/migrations/`** tiene el historial real de cambios de esquema en
   orden cronológico (nombre = fecha) — es la fuente más confiable de qué
   columnas existen hoy si `DATABASE.md` está desactualizado.
-- **`documentacion/FLUJO_ETAPAS.md`**: tabla de referencia completa de la
+- **`documentacion/Portal Clientes/Solicitudes/FLUJO_ETAPAS.md`**: tabla de referencia completa de la
   máquina de estados del workflow (`sol_estado_id` × `sol_etapa_actual_id` ×
   `sol_resultado_etapa_id` → quién debe actuar y qué endpoint usa). Consultar
   esto en vez de reconstruir la lógica de estados desde cero.
@@ -106,7 +106,7 @@ parado (`git -C BACKEND status`, `git -C FRONTEND status`), nunca asumir.
   formulario, pero si faltan al enviar, la solicitud se queda en
   `sol_estado_id=2, sol_etapa_actual_id=1(CLI), sol_resultado_etapa_id=5
   (PEND_DOCS)` en vez de pasar a Ejecutivo de Negocios — ver
-  `documentacion/FLUJO_ETAPAS.md`.
+  `documentacion/Portal Clientes/Solicitudes/FLUJO_ETAPAS.md`.
 
 ## Arquitectura frontend
 
@@ -138,19 +138,24 @@ parado (`git -C BACKEND status`, `git -C FRONTEND status`), nunca asumir.
 ## Documentación existente — vigencia
 
 Toda la documentación de análisis/diagnóstico que no sea código vive
-centralizada en **`documentacion/`** (carpeta suelta en la raíz de
-`PROYECTO/`, fuera de ambos repos git — ni `BACKEND` ni `FRONTEND` la
-versionan). Antes vivía repartida en la raíz de cada repo; se movió ahí
-el 2026-07-13 a pedido del usuario. Incluye, entre otros:
+centralizada en **`documentacion/`** (ruta real:
+`BACKEND/Documentos Cartonera/documentacion/`). **Corregido 2026-09-13**: a
+diferencia de lo que decía esta sección antes, **sí está versionada — es
+parte del repo `BACKEND`** (confirmado con `git rev-parse --show-toplevel`
+desde dentro de la carpeta: apunta a la raíz de `BACKEND`, mismo remoto de
+GitHub). `FRONTEND` no la toca. Antes vivía repartida en la raíz de cada
+repo; se movió ahí el 2026-07-13 a pedido del usuario. Incluye, entre
+otros:
 `ANALISIS_BACKEND.md`, `ANALISIS_FRONTEND.md`, `ARCHITECTURE.md`,
 `TIPOS_API_AUDITORIA.md` (generados en mayo 2026: pueden servir de punto de
 partida rápido, pero **no son necesariamente exactos hoy** — el esquema y
 varios flujos (rename a prefijo `sa_`, documentos diferidos, tipo de
-plantilla) cambiaron después), `FLUJO_ETAPAS.md`, `mejoras/COSTOS_DE_SESION.md`,
+plantilla) cambiaron después), `Portal Clientes/Solicitudes/FLUJO_ETAPAS.md`,
+`mejoras/COSTOS_DE_SESION.md`,
 `mejoras/LOADING_UX_AUDIT.md`, y análisis puntuales por tema (ampliación de
 cupo, almacenamiento de archivos, etc.). Antes de citar cualquiera de estos
 como verdad actual, contrastar con el código o con
-`git log`/`documentacion/FLUJO_ETAPAS.md`. Si se crea documentación nueva de
+`git log`/`documentacion/Portal Clientes/Solicitudes/FLUJO_ETAPAS.md`. Si se crea documentación nueva de
 este tipo, va en `documentacion/`, no en la raíz de `BACKEND`/`FRONTEND`.
 
 Excepción: **`FRONTEND/DATABASE.md`** se queda en `FRONTEND/` porque
@@ -230,6 +235,85 @@ hardcodeado — moverlo requeriría cambiar esa ruta en el script.
   "correcta" (no solo mostrar el string crudo) saldría 5 horas adelantada o
   atrasada según el sentido de la conversión. No investigado a fondo ni
   arreglado — el usuario pidió dejarlo así por ahora.
+
+- **El puerto del frontend debe coincidir exactamente con `CORS_ORIGINS` del
+  backend, o cualquier request falla como si fuera un 500.** `FRONTEND` no
+  tenía puerto fijo (`"dev": "next dev"` en `package.json` cae a `3000` por
+  defecto), pero `BACKEND/.env::CORS_ORIGINS` está fijado a
+  `http://localhost:4002`. Si el frontend arranca en un puerto distinto de
+  `4002`, el navegador manda un `Origin` que el backend rechaza en el
+  callback de CORS (`main.ts`), y eso se ve en el navegador como un `500` en
+  cualquier endpoint (ej. `/auth/login`) — no como un error de CORS
+  explícito. Fix aplicado: `PORT=4002` en `FRONTEND/.env.local` (Next.js lee
+  `PORT` del entorno si no se pasa `-p`). Si se cambia el puerto de un lado,
+  hay que cambiar el otro (`CORS_ORIGINS` en `BACKEND/.env` o `PORT` en
+  `FRONTEND/.env.local`) a la vez.
+- **Turbopack (Next 16) puede servir CSS cacheado y desactualizado incluso
+  después de reiniciar `npm run dev`.** Al agregar tokens nuevos dentro del
+  bloque `@theme` de `globals.css` (Tailwind v4), el navegador siguió
+  recibiendo un chunk `_next/static/chunks/src_app_globals_*.css` sin los
+  tokens nuevos aunque el proceso ya se había reiniciado — confirmado
+  comparando el CSS servido (`curl` al chunk) contra el archivo en disco.
+  Fix: borrar la carpeta `.next` (`rm -rf .next` / `Remove-Item -Recurse
+  -Force .next`) antes de volver a correr `npm run dev`. Reiniciar el
+  proceso solo, sin borrar `.next`, no fue suficiente.
+- **`ModulosService.findByRol` (`BACKEND/src/modulos/modulos.service.ts`)
+  hacía `leftJoin('m.roles', ...)` sobre una relación ORM que nunca existió**
+  (`ModuloEntity` solo tiene `padre`/`subModulos`; `RolModuloEntity` no
+  tiene relación hacia `ModuloEntity`, solo columnas `rm_mod_id`/`rm_rol_id`
+  crudas) — el endpoint `GET /seguridad/modulos/por-rol` daba 500 para
+  **cualquier** rol. No afectaba el login (`PermissionsService
+  .getModulesByRole`/`getModulesByUsuario` usan SQL crudo aparte y sí
+  funcionan), pero si algo más en el frontend llega a consumir ese
+  endpoint quedaría roto. Fix: `leftJoin('pc_rol_modulo', 'rm', 'rm.rm_mod_id
+  = m.mod_id AND rm.rm_rol_id = :rolId', { rolId })` — unir por nombre de
+  tabla en vez de por relación inexistente.
+- **Un módulo padre con hijos (ej. "Clientes") nunca es clickeable por sí
+  mismo en el menú, solo se despliega con la flechita** — `Header.tsx` es
+  así por diseño (confirmado con el usuario 2026-09-13, no es un bug): si
+  un nodo tiene subModulos con permiso, solo renderiza el botón toggle
+  (`ChevronDown`), nunca un `<Link>` a su propio `mod_ruta`. Si un módulo
+  padre necesita ser "visitable", la solución correcta es agregarle un
+  **hijo propio** que apunte a esa misma ruta (como ya existe el patrón
+  "Clientes" > "Listado de clientes" + "Acceso a Clientes"), no convertir
+  el padre en link. **Gotcha real encontrado**: el módulo hijo
+  `mod_id=93` "Listado de clientes" llevaba meses con la ruta mal escrita
+  (`/parametrizacion/clientes/listado-de-clientes`, que nunca existió
+  como página — el listado real vive en `/parametrizacion/clientes`, la
+  misma ruta del módulo padre `mod_id=92`) y sin ningún `rm_ver=1` en
+  `pc_rol_modulo` para ningún rol, así que nunca apareció en el menú de
+  nadie. Fix en `migrations/20260913_corregir_ruta_modulo_listado_clientes.sql`
+  (corrige `mod_ruta` + habilita `rm_ver=1` para ADMIN, mismo alcance que
+  el módulo padre). **Si un módulo "no aparece en el menú" y los permisos
+  en `pc_rol_modulo` se ven bien, revisar también que `mod_ruta` sea una
+  página que de verdad exista** — un módulo mal configurado así no da
+  ningún error visible, simplemente el link nunca aparece o apunta a un
+  404 silencioso. **Causa raíz real** (no un typo humano en un campo
+  libre, como se pensó al principio — esa pantalla, `seguridad/modulos/
+  crear/page.tsx`, resultó ser código huérfano sin ningún link hacia ella
+  en toda la app, y ya se borró): la pantalla que sí se usa
+  (`seguridad/modulos/page.tsx`) **generaba la ruta sola** a partir del
+  nombre del módulo + la ruta del padre (`generateRoute()`/
+  `slugifySegment()`, ya eliminados), sin dejar escribirla a mano. Al crear
+  "Listado de clientes" como hijo de "Clientes", el sistema generó
+  `.../clientes/listado-de-clientes` porque así lo dicta la fórmula
+  (nombre-hijo pegado a ruta-padre) — pero esa página nunca se construyó
+  aparte, el listado vive directo en la ruta del padre. La auto-generación
+  no tenía forma de detectar eso.
+  **Fix definitivo (2026-09-13, a pedido explícito del usuario tras
+  discutir el diseño)**: se reemplazó la auto-generación por un `<select>`
+  que **solo deja elegir entre páginas que ya existen** — ya no se puede
+  crear un módulo apuntando a una ruta inventada, ni por fórmula ni a
+  mano. `FRONTEND/scripts/generate-app-routes.ts` (`npm run
+  routes:generate`) escanea `src/app` y escribe todas las rutas reales a
+  `FRONTEND/src/data/app-routes.json`; `seguridad/modulos/page.tsx` filtra
+  esa lista según el módulo padre elegido (solo rutas iguales o anidadas
+  bajo la ruta del padre; todas las rutas si es un módulo raíz) y la
+  ofrece como `<select>` tanto al crear como al editar. **Orden de trabajo
+  correcto**: construir la página primero, correr `npm run
+  routes:generate`, y recién ahí crear/editar el módulo de menú — si el
+  campo de ruta se genera vacío o falta la página que buscas, casi
+  siempre es porque `app-routes.json` está desactualizado.
 
 ## Patrones de verificación que ya funcionan en este proyecto
 
