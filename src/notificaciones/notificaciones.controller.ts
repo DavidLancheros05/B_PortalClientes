@@ -12,6 +12,7 @@ import { NotificacionesService } from './notificaciones.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
+import { RequierePermiso } from '../permissions/requiere-permiso.decorator';
 
 @UseGuards(JwtAuthGuard)
 @Controller('notificaciones')
@@ -52,6 +53,10 @@ export class NotificacionesController {
     );
   }
 
+  // Hereda el mismo permiso que aprobar en CC2 (donde se fijan las
+  // condiciones que este endpoint envía por correo) — no tiene módulo de
+  // menú propio.
+  @RequierePermiso('/solicitudes/gestion-comite-credito-2', 'aprobar')
   @Post('condiciones/:solicitudId/enviar')
   async enviarCondiciones(
     @Param('solicitudId') solicitudId: number,
@@ -66,6 +71,10 @@ export class NotificacionesController {
     );
   }
 
+  // Hereda el mismo permiso que crear usuarios (este endpoint es parte de
+  // ese flujo: manda las credenciales generadas por correo) — no tiene
+  // módulo de menú propio.
+  @RequierePermiso('/seguridad/usuarios', 'crear')
   @Post('usuarios/credenciales/enviar')
   async enviarCredencialesUsuario(
     @Body()

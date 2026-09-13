@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RequierePermiso } from '../permissions/requiere-permiso.decorator';
 import { AmpliacionCupoService } from './ampliacion-cupo.service';
 import { CreateAmpliacionCupoDto, UpdateAmpliacionCupoDto } from './dto';
 
@@ -23,6 +24,7 @@ export class AmpliacionCupoController {
   constructor(private readonly service: AmpliacionCupoService) {}
 
   @Post()
+  @RequierePermiso('/solicitudes/solicitud-ampliacion-cupo', 'crear')
   async create(
     @Body() dto: CreateAmpliacionCupoDto,
     @Req() req: Request & { user: { usr_id: number } },
@@ -50,12 +52,14 @@ export class AmpliacionCupoController {
   }
 
   @Put(':id')
+  @RequierePermiso('/solicitudes/solicitud-ampliacion-cupo', 'editar')
   async update(@Param('id') id: number, @Body() dto: UpdateAmpliacionCupoDto) {
     this.logger.log(`Updating ampliacion-cupo ${id}`);
     return await this.service.update(+id, dto);
   }
 
   @Delete(':id')
+  @RequierePermiso('/solicitudes/solicitud-ampliacion-cupo', 'eliminar')
   async remove(@Param('id') id: number): Promise<void> {
     this.logger.log(`Deleting ampliacion-cupo ${id}`);
     await this.service.remove(+id);

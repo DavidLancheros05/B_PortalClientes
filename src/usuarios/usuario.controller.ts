@@ -15,6 +15,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RequierePermiso } from '../permissions/requiere-permiso.decorator';
 import { UsuarioService } from './usuario.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import {
@@ -34,11 +35,13 @@ export class UsuarioController {
   constructor(private readonly usersService: UsuarioService) {}
 
   @Get()
+  @RequierePermiso('/seguridad/usuarios', 'ver')
   async findAll() {
     return this.usersService.findAll();
   }
 
   @Post()
+  @RequierePermiso('/seguridad/usuarios', 'crear')
   async create(
     @Body()
     body: {
@@ -159,11 +162,13 @@ export class UsuarioController {
   }
 
   @Get(':usr_id')
+  @RequierePermiso('/seguridad/usuarios', 'ver')
   async findOne(@Param('usr_id', ParseIntPipe) usr_id: number) {
     return this.usersService.findById(usr_id);
   }
 
   @Post(':usr_id')
+  @RequierePermiso('/seguridad/usuarios', 'editar')
   async update(
     @Param('usr_id', ParseIntPipe) usr_id: number,
     @Body()
@@ -179,6 +184,7 @@ export class UsuarioController {
   }
 
   @Delete(':usr_id')
+  @RequierePermiso('/seguridad/usuarios', 'eliminar')
   async remove(@Param('usr_id', ParseIntPipe) usr_id: number) {
     return this.usersService.deleteUser(usr_id);
   }

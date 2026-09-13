@@ -14,6 +14,7 @@ import { ModulosService } from './modulos.service';
 import { CreateModuloDto } from './dto/create-modulo.dto';
 import { UpdateModuloDto } from './dto/update-modulo.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RequierePermiso } from '../permissions/requiere-permiso.decorator';
 
 @Controller('seguridad/modulos')
 @UseGuards(JwtAuthGuard)
@@ -39,11 +40,13 @@ export class ModulosController {
   }
 
   @Post()
+  @RequierePermiso('/seguridad/modulos', 'crear')
   async create(@Body() createModuloDto: CreateModuloDto) {
     return this.modulosService.create(createModuloDto);
   }
 
   @Put(':id')
+  @RequierePermiso('/seguridad/modulos', 'editar')
   async update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateModuloDto: UpdateModuloDto,
@@ -52,11 +55,13 @@ export class ModulosController {
   }
 
   @Delete(':id')
+  @RequierePermiso('/seguridad/modulos', 'eliminar')
   async remove(@Param('id', ParseIntPipe) id: number) {
     return this.modulosService.remove(id);
   }
 
   @Put(':id/activar')
+  @RequierePermiso('/seguridad/modulos', 'editar')
   async activate(@Param('id', ParseIntPipe) id: number) {
     return this.modulosService.activate(id);
   }

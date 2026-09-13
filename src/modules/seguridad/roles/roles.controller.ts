@@ -13,6 +13,7 @@ import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { AssignModuleDto } from './dto/assign-module.dto';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+import { RequierePermiso } from 'src/permissions/requiere-permiso.decorator';
 
 @Controller('api/seguridad/roles')
 @UseGuards(JwtAuthGuard)
@@ -20,6 +21,7 @@ export class RolesController {
   constructor(private readonly rolesService: RolesService) {}
 
   @Post()
+  @RequierePermiso('/seguridad/roles', 'crear')
   async create(@Body() createRoleDto: CreateRoleDto) {
     return this.rolesService.create(createRoleDto);
   }
@@ -35,11 +37,13 @@ export class RolesController {
   }
 
   @Put(':id')
+  @RequierePermiso('/seguridad/roles', 'editar')
   async update(@Param('id') id: string, @Body() updateRoleDto: UpdateRoleDto) {
     return this.rolesService.update(+id, updateRoleDto);
   }
 
   @Delete(':id')
+  @RequierePermiso('/seguridad/roles', 'eliminar')
   async remove(@Param('id') id: string) {
     return this.rolesService.remove(+id);
   }
@@ -49,7 +53,11 @@ export class RolesController {
     return this.rolesService.getModulesByRole(+id);
   }
 
+  // Escribe directamente pc_rol_modulo (rm_ver/crear/editar/eliminar/
+  // aprobar) — el hallazgo más sensible de este controller: permite
+  // otorgarle a un rol cualquier permiso sobre cualquier módulo.
   @Post(':rolId/modulos')
+  @RequierePermiso('/seguridad/roles', 'editar')
   async assignModuleToRole(
     @Param('rolId') rolId: string,
     @Body() assignModuleDto: AssignModuleDto,
@@ -64,6 +72,7 @@ export class RolesController {
   }
 
   @Delete(':rolId/modulos/:modId')
+  @RequierePermiso('/seguridad/roles', 'editar')
   async removeModuleFromRole(
     @Param('rolId') rolId: string,
     @Param('modId') modId: string,

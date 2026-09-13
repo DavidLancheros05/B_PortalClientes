@@ -15,6 +15,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RequierePermiso } from '../permissions/requiere-permiso.decorator';
 import { PQRSService } from './pqrs.service';
 import { CreatePQRSDto, UpdatePQRSDto, CreateComentarioDto } from './dto';
 
@@ -67,6 +68,7 @@ export class PQRSController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @RequierePermiso('/pqrs/bandeja', 'editar')
   @Put(':id')
   async update(@Param('id') id: number, @Body() updatePqrsDto: UpdatePQRSDto) {
     return this.pqrsService.update(id, updatePqrsDto);
@@ -109,6 +111,7 @@ export class PQRSController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @RequierePermiso('/pqrs/bandeja', 'editar')
   @Put(':id/asignar')
   async asignar(
     @Param('id') id: number,

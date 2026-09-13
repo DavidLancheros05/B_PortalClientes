@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { SeguridadService } from './seguridad.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RequierePermiso } from '../permissions/requiere-permiso.decorator';
 
 @UseGuards(JwtAuthGuard)
 @Controller('seguridad')
@@ -28,6 +29,7 @@ export class SeguridadController {
   }
 
   @Post('roles')
+  @RequierePermiso('/seguridad/roles', 'crear')
   async crearRol(@Body() body: any) {
     try {
       return await this.seguridadService.crearRol(body);
@@ -37,6 +39,7 @@ export class SeguridadController {
   }
 
   @Put('roles/:rolId')
+  @RequierePermiso('/seguridad/roles', 'editar')
   async actualizarRol(
     @Param('rolId', ParseIntPipe) rolId: number,
     @Body() body: any,
@@ -53,6 +56,7 @@ export class SeguridadController {
   }
 
   @Delete('roles/:rolId')
+  @RequierePermiso('/seguridad/roles', 'eliminar')
   async inactivarRol(@Param('rolId', ParseIntPipe) rolId: number) {
     try {
       if (!rolId) {

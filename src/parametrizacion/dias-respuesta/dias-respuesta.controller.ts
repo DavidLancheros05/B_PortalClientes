@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { DiasRespuestaService } from './dias-respuesta.service';
 import { CreateDiaRespuestaDto } from './dto/create-dia-respuesta.dto';
+import { RequierePermiso } from '../../permissions/requiere-permiso.decorator';
 
 @Controller('parametrizacion/dias-respuesta')
 export class DiasRespuestaController {
@@ -40,16 +41,19 @@ export class DiasRespuestaController {
   }
 
   @Post()
+  @RequierePermiso('/parametrizacion/dias-respuesta', 'crear')
   create(@Body() dto: CreateDiaRespuestaDto) {
     return this.service.create(dto);
   }
 
   @Put(':id')
+  @RequierePermiso('/parametrizacion/dias-respuesta', 'editar')
   update(@Param('id') id: number, @Body() body: any) {
     return this.service.update(+id, body);
   }
 
   @Patch(':id/estado')
+  @RequierePermiso('/parametrizacion/dias-respuesta', 'editar')
   cambiarEstado(
     @Param('id') id: number,
     @Body() body: { pdr_estado: boolean },

@@ -15,6 +15,7 @@ import { ClientesService } from './clientes.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
+import { RequierePermiso } from '../permissions/requiere-permiso.decorator';
 import { CreateClienteDto } from './dto/create-cliente.dto';
 import { UpdateClienteDto } from './dto/update-cliente.dto';
 import { CambiarPasswordClienteDto } from './dto/cambiar-password-cliente.dto';
@@ -72,6 +73,7 @@ export class ClientesController {
   }
 
   @Post()
+  @RequierePermiso('/parametrizacion/clientes', 'crear')
   async create(
     @Body() dto: CreateClienteDto,
   ): Promise<ClienteDetailResponseDto> {
@@ -106,6 +108,7 @@ export class ClientesController {
   }
 
   @Put(':id')
+  @RequierePermiso('/parametrizacion/clientes', 'editar')
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateClienteDto,
@@ -114,6 +117,7 @@ export class ClientesController {
   }
 
   @Delete(':id')
+  @RequierePermiso('/parametrizacion/clientes', 'eliminar')
   async delete(@Param('id') id: string): Promise<{ success: boolean }> {
     await this.clientesService.delete(+id);
     return { success: true };

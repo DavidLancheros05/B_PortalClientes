@@ -19,7 +19,11 @@ import { UpdateTipoDocumentoDto } from './dto/update-tipo-documento.dto';
 import { RevisionesDocumentosService } from '../revisiones-documentos/revisiones-documentos.service';
 import { CreateTipoDocumentoRevisionDto } from '../revisiones-documentos/dto/create-tipo-documento-revision.dto';
 import { UpdateTipoDocumentoRevisionDto } from '../revisiones-documentos/dto/update-tipo-documento-revision.dto';
+import { RequierePermiso } from '../../permissions/requiere-permiso.decorator';
 
+// Ojo: la ruta de menú real en pc_modulos es '/parametrizacion/documentos'
+// (mod_id 78, "Tipos de Documentos"), NO '/parametrizacion/tipos-documentos'
+// como el path de este controller — confirmado contra la BD antes de decorar.
 @Controller('parametrizacion/tipos-documentos')
 export class TiposDocumentosController {
   constructor(
@@ -39,11 +43,13 @@ export class TiposDocumentosController {
   }
 
   @Post()
+  @RequierePermiso('/parametrizacion/documentos', 'crear')
   create(@Body() createDto: CreateTipoDocumentoDto) {
     return this.tiposDocumentosService.create(createDto);
   }
 
   @Patch(':id')
+  @RequierePermiso('/parametrizacion/documentos', 'editar')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateDto: UpdateTipoDocumentoDto,
@@ -52,6 +58,7 @@ export class TiposDocumentosController {
   }
 
   @Delete(':id')
+  @RequierePermiso('/parametrizacion/documentos', 'eliminar')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.tiposDocumentosService.remove(id);
   }
@@ -61,6 +68,7 @@ export class TiposDocumentosController {
   // de la tabla de "formato oficial" completa (ver
   // common/utils/carta-pdf.util.ts::resolverEncabezadoDocumento).
   @Post(':id/encabezado-imagen')
+  @RequierePermiso('/parametrizacion/documentos', 'editar')
   @UseInterceptors(FileInterceptor('archivo'))
   async subirEncabezadoImagen(
     @Param('id', ParseIntPipe) id: number,
@@ -76,6 +84,7 @@ export class TiposDocumentosController {
   // abajo de cada página del PDF de documentos de origen CLIENTE con
   // tipoPlantilla='TEXTO' (frontend, pdf-lib, carta-pdf.util.ts).
   @Post(':id/pie-pagina-imagen')
+  @RequierePermiso('/parametrizacion/documentos', 'editar')
   @UseInterceptors(FileInterceptor('archivo'))
   async subirPiePaginaImagen(
     @Param('id', ParseIntPipe) id: number,
@@ -96,6 +105,7 @@ export class TiposDocumentosController {
   }
 
   @Post(':id/revisiones')
+  @RequierePermiso('/parametrizacion/documentos', 'crear')
   createRevision(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: CreateTipoDocumentoRevisionDto,
@@ -105,6 +115,7 @@ export class TiposDocumentosController {
   }
 
   @Patch(':id/revisiones/:revisionId')
+  @RequierePermiso('/parametrizacion/documentos', 'editar')
   updateRevision(
     @Param('id', ParseIntPipe) id: number,
     @Param('revisionId', ParseIntPipe) revisionId: number,
@@ -114,6 +125,7 @@ export class TiposDocumentosController {
   }
 
   @Delete(':id/revisiones/:revisionId')
+  @RequierePermiso('/parametrizacion/documentos', 'eliminar')
   removeRevision(
     @Param('id', ParseIntPipe) id: number,
     @Param('revisionId', ParseIntPipe) revisionId: number,

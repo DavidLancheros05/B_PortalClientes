@@ -13,6 +13,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
+import { RequierePermiso } from '../../permissions/requiere-permiso.decorator';
 import { FormularioPreguntasService } from './formulario-preguntas.service';
 import { OpcionesService } from '../opciones/opciones.service';
 import { CreateFormularioPreguntaDto } from './dto/create-formulario-pregunta.dto';
@@ -28,6 +29,7 @@ export class FormularioPreguntasController {
   ) {}
 
   @Post()
+  @RequierePermiso('/parametrizacion/formulario-preguntas', 'crear')
   create(@Body() dto: CreateFormularioPreguntaDto) {
     return this.service.create(dto);
   }
@@ -64,6 +66,7 @@ export class FormularioPreguntasController {
   }
 
   @Post(':id/opciones')
+  @RequierePermiso('/parametrizacion/formulario-preguntas', 'crear')
   createOpcion(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: CreateFormularioPreguntaOpcionDto,
@@ -73,6 +76,7 @@ export class FormularioPreguntasController {
   }
 
   @Put(':id/opciones/:opcionId')
+  @RequierePermiso('/parametrizacion/formulario-preguntas', 'editar')
   async updateOpcion(
     @Param('id', ParseIntPipe) id: number,
     @Param('opcionId', ParseIntPipe) opcionId: number,
@@ -89,6 +93,7 @@ export class FormularioPreguntasController {
   }
 
   @Delete(':id/opciones/:opcionId')
+  @RequierePermiso('/parametrizacion/formulario-preguntas', 'eliminar')
   async deleteOpcion(
     @Param('id', ParseIntPipe) id: number,
     @Param('opcionId', ParseIntPipe) opcionId: number,
@@ -110,6 +115,7 @@ export class FormularioPreguntasController {
   }
 
   @Put(':id')
+  @RequierePermiso('/parametrizacion/formulario-preguntas', 'editar')
   async update(
     @Param('id') id: number,
     @Body() dto: UpdateFormularioPreguntaDto,
@@ -125,6 +131,7 @@ export class FormularioPreguntasController {
   }
 
   @Delete(':id')
+  @RequierePermiso('/parametrizacion/formulario-preguntas', 'eliminar')
   async remove(@Param('id') id: number) {
     try {
       return await this.service.remove(+id);

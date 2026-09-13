@@ -8,6 +8,7 @@
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RequierePermiso } from '../permissions/requiere-permiso.decorator';
 import { UsuarioRolesService } from './usuario-roles.service';
 
 @UseGuards(JwtAuthGuard)
@@ -16,16 +17,19 @@ export class UsuarioRolesController {
   constructor(private readonly usuarioRolesService: UsuarioRolesService) {}
 
   @Get('usuarios')
+  @RequierePermiso('/seguridad/usuario-roles', 'ver')
   async getAllUsuarios() {
     return await this.usuarioRolesService.getAllUsuarios();
   }
 
   @Get(':usuarioId')
+  @RequierePermiso('/seguridad/usuario-roles', 'ver')
   async getByUsuario(@Param('usuarioId', ParseIntPipe) usuarioId: number) {
     return await this.usuarioRolesService.getByUsuario(usuarioId);
   }
 
   @Post(':usuarioId/:rolId')
+  @RequierePermiso('/seguridad/usuario-roles', 'crear')
   async assignRole(
     @Param('usuarioId', ParseIntPipe) usuarioId: number,
     @Param('rolId', ParseIntPipe) rolId: number,
@@ -34,6 +38,7 @@ export class UsuarioRolesController {
   }
 
   @Delete(':usuarioId/:rolId')
+  @RequierePermiso('/seguridad/usuario-roles', 'eliminar')
   async removeRole(
     @Param('usuarioId', ParseIntPipe) usuarioId: number,
     @Param('rolId', ParseIntPipe) rolId: number,
