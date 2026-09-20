@@ -594,6 +594,28 @@ export class ModulosService {
     const modulosMap = new Map();
     const result: any[] = [];
 
+    // mod_id -> mod_padre_id crudo, para detectar ciclos antes de armar el
+    // árbol (ej. A es padre de B y B es padre de A, o un módulo que es
+    // padre de sí mismo) — sin esto, `subModulos` termina con una
+    // referencia circular y cualquier recorrido recursivo (aquí o en el
+    // frontend) explota con "Maximum call stack size exceeded".
+    const padreIdPorModId = new Map<number, number>();
+    modulos.forEach((row) => {
+      if (row.mod_padre_id) {
+        padreIdPorModId.set(Number(row.mod_id), Number(row.mod_padre_id));
+      }
+    });
+    const formaCiclo = (modId: number): boolean => {
+      const visitados = new Set<number>([modId]);
+      let actual = padreIdPorModId.get(modId);
+      while (actual !== undefined) {
+        if (visitados.has(actual)) return true;
+        visitados.add(actual);
+        actual = padreIdPorModId.get(actual);
+      }
+      return false;
+    };
+
     modulos.forEach((row) => {
       const modulo = {
         mod_id: Number(row.mod_id),
@@ -620,8 +642,16 @@ export class ModulosService {
 
     modulos.forEach((row) => {
       if (row.mod_padre_id) {
+        const modId = Number(row.mod_id);
+        if (formaCiclo(modId)) {
+          console.warn(
+            `[ModulosService] mod_id=${modId} forma un ciclo con mod_padre_id=${row.mod_padre_id} — se trata como raíz para no romper el menú`,
+          );
+          result.push(modulosMap.get(modId));
+          return;
+        }
         const padre = modulosMap.get(Number(row.mod_padre_id));
-        const hijo = modulosMap.get(Number(row.mod_id));
+        const hijo = modulosMap.get(modId);
         if (padre && hijo) {
           padre.subModulos.push(hijo);
         }
