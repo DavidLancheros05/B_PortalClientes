@@ -8,11 +8,15 @@ import {
 import { DataSource } from 'typeorm';
 import { CreateAmpliacionCupoDto, UpdateAmpliacionCupoDto } from './dto';
 import { ClienteArchivoService } from '../cliente-archivo/cliente-archivo.service';
-import { IStorageService, STORAGE_SERVICE } from '../common/storage/storage.interface';
+import {
+  IStorageService,
+  STORAGE_SERVICE,
+} from '../common/storage/storage.interface';
 import {
   CarpetaAlmacenamientoService,
   TIPO_ARCHIVO_URLS,
 } from '../common/storage/carpeta-almacenamiento.service';
+import { HistorialWorkflowService } from '../workflow/historial/historial-workflow.service';
 
 const CAMPOS_SOLICITUD_AMPLIACION = `
   sol_id, sol_cliente_id, sol_cupo_solicitado, sol_cupo_actual_referencia,
@@ -34,6 +38,7 @@ export class AmpliacionCupoService {
     private readonly clienteArchivoService: ClienteArchivoService,
     @Inject(STORAGE_SERVICE) private readonly storageService: IStorageService,
     private readonly carpetaAlmacenamiento: CarpetaAlmacenamientoService,
+    private readonly historialWorkflowService: HistorialWorkflowService,
   ) {}
 
   private async obtenerSiguienteNumeroSolicitud(
@@ -259,12 +264,18 @@ export class AmpliacionCupoService {
         );
       }
 
-      // 7. Registrar en workflow_historial
-      await queryRunner.query(
-        `INSERT INTO solicitud_workflow_historial
-         (swh_sol_id, swh_etapa_id, swh_resultado_id, swh_usuario_id, swh_fecha)
-         VALUES (@0, @1, @2, @3, @4)`,
-        [solicitudId, etapaId, resultadoId, usuarioId, now],
+      // 7. Registrar en workflow_historial — mismo helper que usa el resto
+      // del workflow (ver solicitudes.service.ts:468), para que esta primera
+      // fila también calcule swh_fecha_estimada (ver
+      // Documentos Cartonera/documentacion/Portal Clientes/Funcionalidades/SLA/Analisis-Proceso-Plan-SLA.md).
+      await this.historialWorkflowService.registrarTransicionConSLA(
+        queryRunner,
+        {
+          solicitudId,
+          etapaId,
+          resultadoId,
+          usuarioId,
+        },
       );
 
       const [creada] = await queryRunner.query(
@@ -316,7 +327,7 @@ export class AmpliacionCupoService {
       ) => {
         const [existente] = await queryRunner.query(
           `SELECT fr_id FROM Formulario_respuesta
-           WHERE fr_solicitud_id = @0 AND fr_fp_id = @1`,
+           WHERE fr_sol_id = @0 AND fr_fp_id = @1`,
           [solicitudId, fp_id],
         );
         const params = [
@@ -336,7 +347,7 @@ export class AmpliacionCupoService {
         } else {
           await queryRunner.query(
             `INSERT INTO Formulario_respuesta
-               (fr_solicitud_id, fr_fp_id, fr_valor_texto, fr_valor_numero,
+               (fr_sol_id, fr_fp_id, fr_valor_texto, fr_valor_numero,
                 fr_valor_opcion_id, fr_actualizado_por, fr_completado, fr_created_at)
              VALUES (@4, @5, @0, @1, @2, @3, 1, GETDATE())`,
             [...params, solicitudId, fp_id],
@@ -353,19 +364,28 @@ export class AmpliacionCupoService {
         return opcion?.fpo_id as number | undefined;
       };
 
-      const tipoSolicitud = preguntas.find((p) => p.fp_codigo === 'TIPO_SOLICITUD');
+      const tipoSolicitud = preguntas.find(
+        (p) => p.fp_codigo === 'TIPO_SOLICITUD',
+      );
       if (tipoSolicitud) {
-        const fpoId = await buscarOpcion(tipoSolicitud.fp_id, 'Ampliacion de cupo');
+        const fpoId = await buscarOpcion(
+          tipoSolicitud.fp_id,
+          'Ampliacion de cupo',
+        );
         if (fpoId) await upsert(tipoSolicitud.fp_id, { opcionId: fpoId });
       }
 
-      const solicitaCredito = preguntas.find((p) => p.fp_codigo === 'SOLICITA_CREDITO');
+      const solicitaCredito = preguntas.find(
+        (p) => p.fp_codigo === 'SOLICITA_CREDITO',
+      );
       if (solicitaCredito) {
         const fpoId = await buscarOpcion(solicitaCredito.fp_id, 'Si');
         if (fpoId) await upsert(solicitaCredito.fp_id, { opcionId: fpoId });
       }
 
-      const cupoSolicitado = preguntas.find((p) => p.fp_codigo === 'CUPO_SOLICITADO');
+      const cupoSolicitado = preguntas.find(
+        (p) => p.fp_codigo === 'CUPO_SOLICITADO',
+      );
       if (cupoSolicitado) {
         await upsert(cupoSolicitado.fp_id, { numero: nuevoCupo });
       }
@@ -380,7 +400,9 @@ export class AmpliacionCupoService {
         (p) => p.fp_codigo === 'CONCEPTO_CONSUMO_PROYECTADO',
       );
       if (consumoPregunta) {
-        await upsert(consumoPregunta.fp_id, { numero: consumoMensualProyectado });
+        await upsert(consumoPregunta.fp_id, {
+          numero: consumoMensualProyectado,
+        });
       }
 
       const toneladasPregunta = preguntas.find(
@@ -473,7 +495,7 @@ export class AmpliacionCupoService {
          FROM Formulario_respuesta fr
          JOIN Formulario_pregunta fp ON fp.fp_id = fr.fr_fp_id
          LEFT JOIN Formulario_pregunta_opcion fpo ON fpo.fpo_id = fr.fr_valor_opcion_id
-         WHERE fr.fr_solicitud_id = @0`,
+         WHERE fr.fr_sol_id = @0`,
         [ultimaAprobada.sol_id],
       );
 
@@ -513,7 +535,7 @@ export class AmpliacionCupoService {
           }
           await queryRunner.query(
             `INSERT INTO Formulario_respuesta
-               (fr_solicitud_id, fr_fp_id, fr_valor_texto, fr_valor_numero, fr_valor_fecha,
+               (fr_sol_id, fr_fp_id, fr_valor_texto, fr_valor_numero, fr_valor_fecha,
                 fr_valor_opcion_id, fr_actualizado_por, fr_completado, fr_created_at)
              VALUES (@0, @1, @2, @3, @4, @5, @6, 1, GETDATE())`,
             [
@@ -583,13 +605,15 @@ export class AmpliacionCupoService {
       );
       if (!documentosCliente.length) return;
 
-      const preguntasDocumento: { fp_id: number; fp_tipo_documento_id: number }[] =
-        await queryRunner.query(
-          `SELECT fp_id, fp_tipo_documento_id FROM Formulario_pregunta
+      const preguntasDocumento: {
+        fp_id: number;
+        fp_tipo_documento_id: number;
+      }[] = await queryRunner.query(
+        `SELECT fp_id, fp_tipo_documento_id FROM Formulario_pregunta
            WHERE fp_estado = 1 AND ISNULL(fp_version, 1) = @0
              AND fp_tipo_documento_id IS NOT NULL`,
-          [formularioVersion],
-        );
+        [formularioVersion],
+      );
       const fpIdPorTdoId = new Map(
         preguntasDocumento.map((p) => [p.fp_tipo_documento_id, p.fp_id]),
       );

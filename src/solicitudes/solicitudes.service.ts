@@ -15,7 +15,8 @@ import {
   ENCABEZADO_ALTURA,
   dibujarEncabezadoOficialPdf,
   dibujarTablaRevisionesPdf,
-  leerLogoBytes,
+  obtenerLogoBytes,
+  esPng,
 } from '../common/utils/encabezado-oficial-pdf.util';
 
 @Injectable()
@@ -27,6 +28,20 @@ export class SolicitudesService {
     private readonly formularioRenderizableService: FormularioRenderizableService,
     private readonly mailService: MailService,
   ) {}
+
+  // Un EJECUTIVO solo puede crear/gestionar solicitudes de los clientes que
+  // tiene asignados (Clientes.ejng_id) — mismo criterio que ya filtra el
+  // listado en solicitudes-listados.service.ts.
+  async clienteEsDelEjecutivo(
+    clienteId: number,
+    ejngId: number,
+  ): Promise<boolean> {
+    const result = await this.dataSource.query(
+      `SELECT 1 FROM clientes WHERE cli_id = @0 AND ejng_id = @1`,
+      [clienteId, ejngId],
+    );
+    return result.length > 0;
+  }
 
   private async resolveLookupColumns() {
     const result = await this.dataSource.query(`
@@ -326,6 +341,10 @@ export class SolicitudesService {
         tdo_nombre: string;
       }[] = [];
       if (estadoId === 2) {
+        // tdo_solo_distribuidor=1: documentos adicionales que solo aplican a
+        // clientes distribuidores (ej. "solicitud"/"manifestación" con logo
+        // de distribuidor) — se suman a los normales, no los reemplazan; a
+        // un cliente no-distribuidor no se le exigen.
         documentosDiferidosFaltantes = await queryRunner.query(
           `
           SELECT DISTINCT td.tdo_id, td.tdo_nombre
@@ -336,8 +355,11 @@ export class SolicitudesService {
             AND td.tdo_tiene_plantilla = 1
             AND (fp.fp_oculto_en_formulario = 1 OR fs.fs_oculta_en_formulario = 1)
             AND ISNULL(fp.fp_version, 1) = @0
+            AND (td.tdo_solo_distribuidor = 0 OR EXISTS (
+              SELECT 1 FROM Clientes c WHERE c.cli_id = @1 AND c.cli_es_distribuidor = 1
+            ))
           `,
-          [formularioVersion || 1],
+          [formularioVersion || 1, clienteId],
         );
       }
       const hayDocumentosDiferidos = documentosDiferidosFaltantes.length > 0;
@@ -476,7 +498,7 @@ export class SolicitudesService {
         for (const respuesta of body.respuestas) {
           const insertRespuestaSQL = `
             INSERT INTO Formulario_respuesta
-            (fr_solicitud_id, fr_fp_id, fr_valor_texto, fr_valor_numero, fr_valor_fecha, fr_valor_opcion_id, fr_created_at)
+            (fr_sol_id, fr_fp_id, fr_valor_texto, fr_valor_numero, fr_valor_fecha, fr_valor_opcion_id, fr_created_at)
             VALUES (@0, @1, @2, @3, @4, @5, @6)
           `;
 
@@ -555,7 +577,10 @@ export class SolicitudesService {
     }
   }
 
-  async generarPdfSolicitud(solicitudId: number): Promise<Buffer> {
+  async generarPdfSolicitud(
+    solicitudId: number,
+    tdoId?: number,
+  ): Promise<Buffer> {
     // Usar el servicio centralizado para obtener el formulario renderizable
     const formulario =
       await this.formularioRenderizableService.obtenerFormularioRenderizable(
@@ -602,12 +627,20 @@ export class SolicitudesService {
     // Encabezado "formato oficial" — este PDF ES el documento F-P3-06
     // (tdo_tipo_plantilla='PDF_SOLICITUD'), así que su código/revisión salen
     // de esa fila de Tipos_documentos en vez de estar hardcodeados.
-    const tipoDocumentoFormatoRows = await this.dataSource.query(`
-      SELECT TOP 1 tdo_id, tdo_nombre, tdo_formato_codigo, tdo_formato_codigo_secundario, tdo_revision
+    // `tdoId` distingue entre las variantes PDF_SOLICITUD que puedan existir
+    // (ej. la normal vs. la de distribuidor, con logo distinto) — sin
+    // parámetro, cae a la primera por tdo_id (comportamiento de siempre,
+    // válido mientras solo exista una).
+    const tipoDocumentoFormatoRows = await this.dataSource.query(
+      `
+      SELECT TOP 1 tdo_id, tdo_nombre, tdo_formato_codigo, tdo_formato_codigo_secundario, tdo_revision, tdo_encabezado_imagen_url
       FROM Tipos_documentos
       WHERE tdo_tipo_plantilla = 'PDF_SOLICITUD' AND tdo_estado = 1
+        AND (@0 IS NULL OR tdo_id = @0)
       ORDER BY tdo_id
-    `);
+    `,
+      [tdoId ?? null],
+    );
     const tipoDocumentoFormato = tipoDocumentoFormatoRows[0] ?? null;
 
     // Historial de revisiones ("CONTROL DE CAMBIOS") configurado para ese
@@ -632,8 +665,12 @@ export class SolicitudesService {
     }));
 
     const pdfDoc = await PDFDocument.create();
-    const logoBytes = leerLogoBytes();
-    const logoImage = await pdfDoc.embedJpg(logoBytes);
+    const logoBytes = await obtenerLogoBytes(
+      tipoDocumentoFormato?.tdo_encabezado_imagen_url,
+    );
+    const logoImage = esPng(logoBytes)
+      ? await pdfDoc.embedPng(logoBytes)
+      : await pdfDoc.embedJpg(logoBytes);
     const helvetica = await pdfDoc.embedFont('Helvetica');
     const helveticaBold = await pdfDoc.embedFont('Helvetica-Bold');
 

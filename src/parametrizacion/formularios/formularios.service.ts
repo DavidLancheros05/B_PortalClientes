@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { normalizeMojibake } from 'src/common/utils/text-encoding.util';
 import { contarSolicitudesQueBloqueanVersion } from './version-formulario.util';
+import { ClienteDatosNormalizadosService } from '../../cliente-datos-normalizados/cliente-datos-normalizados.service';
 
 export interface Formulario {
   frm_id: number;
@@ -19,6 +20,7 @@ export class FormulariosService {
   constructor(
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    private readonly clienteDatosNormalizadosService: ClienteDatosNormalizadosService,
   ) {}
 
   async listar(
@@ -195,14 +197,14 @@ export class FormulariosService {
         WHERE fpo_fp_id IN (
           SELECT fp_id
           FROM Formulario_pregunta
-          WHERE formulario_id = @0
+          WHERE frm_id = @0
         )
       `,
         [formularioId],
       );
 
       await queryRunner.query(
-        `DELETE FROM Formulario_pregunta WHERE formulario_id = @0`,
+        `DELETE FROM Formulario_pregunta WHERE frm_id = @0`,
         [formularioId],
       );
 
@@ -251,7 +253,7 @@ export class FormulariosService {
         ISNULL(fv_descripcion, fv_cambios) AS version_descripcion,
         ISNULL(fv_created_at, fv_fecha_cambio) AS created_at,
         ISNULL(fv_created_by, fv_usr_id_cambio) AS created_by,
-        (SELECT COUNT(*) FROM Formulario_pregunta WHERE formulario_id = @0 AND ISNULL(fp_version, 1) = fv_numero) AS total_preguntas,
+        (SELECT COUNT(*) FROM Formulario_pregunta WHERE frm_id = @0 AND ISNULL(fp_version, 1) = fv_numero) AS total_preguntas,
         -- Necesita este conteo por CADA versión a la vez, así que va inline
         -- como subquery correlacionada en vez de llamar a
         -- contarSolicitudesQueBloqueanVersion() (./version-formulario.util)
@@ -285,6 +287,23 @@ export class FormulariosService {
     if (existe.length === 0) {
       throw new Error(
         `La versión ${versionNumero} no existe para este formulario`,
+      );
+    }
+
+    // Falla explícita en vez de dato perdido en silencio (problemas.md,
+    // "Riesgo adicional", recomendación #2): si esta versión le quitó (o
+    // renombró sin dejarle codigo) una columna que SIESA espera, no se
+    // deja activar — mejor bloquear acá que descubrirlo semanas después
+    // con un campo NULL en producción.
+    const problemas =
+      await this.clienteDatosNormalizadosService.validarColumnasMapeadas(
+        versionNumero,
+        this.dataSource,
+      );
+    if (problemas.length > 0) {
+      throw new Error(
+        `No se puede activar la versión ${versionNumero}: ` +
+          problemas.join(' | '),
       );
     }
 
@@ -348,7 +367,7 @@ export class FormulariosService {
         WHERE fpo_fp_id IN (
           SELECT fp_id
           FROM Formulario_pregunta
-          WHERE formulario_id = @0 AND ISNULL(fp_version, 1) = @1
+          WHERE frm_id = @0 AND ISNULL(fp_version, 1) = @1
         )
       `,
         [formularioId, versionNumero],
@@ -357,7 +376,7 @@ export class FormulariosService {
       await queryRunner.query(
         `
         DELETE FROM Formulario_pregunta
-        WHERE formulario_id = @0 AND ISNULL(fp_version, 1) = @1
+        WHERE frm_id = @0 AND ISNULL(fp_version, 1) = @1
       `,
         [formularioId, versionNumero],
       );
@@ -546,7 +565,7 @@ export class FormulariosService {
       `
         SELECT fp_id, ${columnasACopiar.map((c) => `[${c}]`).join(', ')}
         FROM Formulario_pregunta
-        WHERE formulario_id = @0 AND ISNULL(fp_version, 1) = @1
+        WHERE frm_id = @0 AND ISNULL(fp_version, 1) = @1
       `,
       [formularioId, versionOrigen],
     );
@@ -562,7 +581,11 @@ export class FormulariosService {
     // remota.
     const mapaIds = new Map<number, number>();
     await this.enConcurrencia(preguntasOrigen, 8, async (pregunta) => {
-      const columnasInsert = [...columnasACopiar, 'fp_version', 'fp_created_at'];
+      const columnasInsert = [
+        ...columnasACopiar,
+        'fp_version',
+        'fp_created_at',
+      ];
       const valores: any[] = columnasACopiar.map((c) => pregunta[c]);
       const placeholders = valores.map((_, i) => `@${i}`);
       placeholders.push(`@${valores.length}`, 'SYSDATETIME()');
@@ -668,9 +691,10 @@ export class FormulariosService {
       ? parseInt(version)
       : formulario.formulario_version;
 
-    const [secciones, preguntas, tipos, totalSolicitudesQueBloquean] = await Promise.all([
-      this.dataSource.query(
-        `
+    const [secciones, preguntas, tipos, totalSolicitudesQueBloquean] =
+      await Promise.all([
+        this.dataSource.query(
+          `
         SELECT
           fs_id,
           fs_nombre,
@@ -679,12 +703,12 @@ export class FormulariosService {
         FROM Formulario_secciones
         ORDER BY fs_orden ASC
       `,
-      ),
-      this.dataSource.query(
-        `
+        ),
+        this.dataSource.query(
+          `
         SELECT
           fp_id,
-          formulario_id,
+          frm_id,
           fp_descripcion,
           fp_tipo,
           fp_subtipo,
@@ -712,14 +736,14 @@ export class FormulariosService {
           fp_tabla_limite_pregunta_id,
           fp_tabla_limite_reglas
         FROM Formulario_pregunta
-        WHERE formulario_id = @0
+        WHERE frm_id = @0
           AND fp_version = @1
           AND fp_estado = 1
         ORDER BY fp_orden ASC
       `,
-        [formularioId, versionNum],
-      ),
-      this.dataSource.query(`
+          [formularioId, versionNum],
+        ),
+        this.dataSource.query(`
         SELECT
           fti_id,
           fti_codigo,
@@ -728,12 +752,12 @@ export class FormulariosService {
         WHERE fti_estado = 1
         ORDER BY fti_codigo ASC
       `),
-      // Mismo criterio que assertVersionSinSolicitudes: si esta versión ya
-      // tiene solicitudes (sin contar Borradores), el frontend debe avisar
-      // antes de que el usuario intente editar, no recién al fallar el
-      // guardado.
-      contarSolicitudesQueBloqueanVersion(this.dataSource, versionNum),
-    ]);
+        // Mismo criterio que assertVersionSinSolicitudes: si esta versión ya
+        // tiene solicitudes (sin contar Borradores), el frontend debe avisar
+        // antes de que el usuario intente editar, no recién al fallar el
+        // guardado.
+        contarSolicitudesQueBloqueanVersion(this.dataSource, versionNum),
+      ]);
 
     const idsConOpciones = preguntas
       .filter((p: { fp_tipo: string }) =>

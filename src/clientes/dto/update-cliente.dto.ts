@@ -30,7 +30,7 @@ export class UpdateClienteDto {
 
   @IsBoolean()
   @IsOptional()
-  cli_acceso_portal_clientes?: boolean;
+  cli_acceso_pc?: boolean;
 
   @IsNumber()
   @IsOptional()

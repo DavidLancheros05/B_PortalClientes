@@ -31,6 +31,7 @@ export class SolicitudListadoGestionDto {
 
   // Aprobación financiera
   sol_cupo_aprobado?: number;
+  sol_cupo_solicitado?: number | null;
   sol_plazo_pago?: number;
   sol_forma_pago?: string;
 
@@ -55,16 +56,8 @@ export class SolicitudListadoGestionDto {
   // Timeline: Comité Crédito 1
   sol_fecha_estimada_comite_credito_1?: Date;
   sol_fecha_real_comite_credito_1?: Date;
-  sol_fecha_estimada_comite_credito_1_ejecutivo?: Date;
-  sol_fecha_real_comite_credito_1_ejecutivo?: Date;
-  sol_fecha_estimada_comite_credito_1_auxiliar?: Date;
-  sol_fecha_real_comite_credito_1_auxiliar?: Date;
 
   // Timeline: Comité Crédito 2
   sol_fecha_estimada_comite_credito_2?: Date;
   sol_fecha_real_comite_credito_2?: Date;
-  sol_fecha_estimada_comite_credito_2_ejecutivo?: Date;
-  sol_fecha_real_comite_credito_2_ejecutivo?: Date;
-  sol_fecha_estimada_comite_credito_2_auxiliar?: Date;
-  sol_fecha_real_comite_credito_2_auxiliar?: Date;
 }

@@ -24,6 +24,12 @@ type TipoColumnaFormulario =
 
 interface ColumnaTablaDef {
   nombre: string;
+  // Identidad estable de la columna entre renombrados de etiqueta — ver
+  // "Documentos Cartonera/documentacion/Funcionalidades/
+  // codigo-estable-columnas-tabla.md". Ausente en columnas guardadas antes
+  // de este cambio y todavía no vueltas a guardar (fallback a `nombre` vía
+  // `aliases` en CampoMapeado).
+  codigo?: string;
   tipo: TipoColumnaFormulario;
   catalogo_tabla?: string;
   catalogo_columna?: string;
@@ -43,10 +49,20 @@ interface CampoMapeado {
   // Etiquetas ("nombre" en fp_tabla_columnas / claves en fr_valor_texto)
   // que pueden identificar esta columna a través de distintas versiones
   // del formulario — recopiladas contra la BD real (fp_version 9 a 15).
-  // Si una versión futura renombra la columna a algo no listado aquí, el
-  // campo queda NULL (mismo comportamiento documentado en problemas.md,
-  // sección "Riesgo adicional").
+  // Fallback de transición: solo se usa para columnas que todavía no
+  // tengan `codigo` (ver ColumnaTablaDef.codigo). Si una versión futura
+  // renombra la columna a algo no listado aquí Y la columna tampoco tiene
+  // `codigo` todavía, el campo queda NULL (mismo comportamiento
+  // documentado en problemas.md, sección "Riesgo adicional" — ya no
+  // debería pasar después del backfill de
+  // scripts/backfill-codigos-columnas-tabla.mjs).
   aliases: string[];
+  // `columna` (destino) DUPLICA el rol de identidad estable: por
+  // convención, el `codigo` que este mapeo espera encontrar en
+  // ColumnaTablaDef.codigo es exactamente este mismo string — así el
+  // backfill (y la autogeneración en formulario-preguntas.service.ts para
+  // columnas nuevas fuera de este mapeo) no necesitan inventar ni
+  // consultar nada aparte para columnas ya mapeadas acá.
   columna: string;
   kind: TipoCampoDestino;
 }
@@ -81,7 +97,11 @@ const MAPEOS: MapeoTabla[] = [
     fkSolicitud: 'cde_sol_id',
     campos: [
       { aliases: ['Pais'], columna: 'cde_pai_id', kind: 'CATALOGO_ID' },
-      { aliases: ['Departamento'], columna: 'cde_dpto_id', kind: 'CATALOGO_ID' },
+      {
+        aliases: ['Departamento'],
+        columna: 'cde_dpto_id',
+        kind: 'CATALOGO_ID',
+      },
       { aliases: ['Ciudad'], columna: 'cde_ciu_id', kind: 'CATALOGO_ID' },
       { aliases: ['Direccion'], columna: 'cde_direccion', kind: 'TEXTO' },
       { aliases: ['Zona Franca'], columna: 'cde_zona_franca', kind: 'BIT' },
@@ -105,7 +125,16 @@ const MAPEOS: MapeoTabla[] = [
     campos: REP_LEGAL_CAMPOS,
   },
   {
-    fpCodigo: 'AUTO_Q2659', // relación de accionistas
+    // Bug encontrado 2026-09-14 al implementar codigo-estable-columnas-tabla.md:
+    // este mapeo decía 'AUTO_Q2659' pero la pregunta real en producción
+    // tiene fp_codigo='ACCIONISTAS_TABLA' (fp_id=3007, fp_estado=true) —
+    // no hay ninguna fila con fp_codigo='AUTO_Q2659' en la BD. Confirmado
+    // en vivo: cliente_accionistas tenía 0 filas pese a existir al menos
+    // una solicitud APROBADA con cliente_direcciones_envio ya poblada (que
+    // sí matcheaba) — esta sección nunca se guardó desde que existe este
+    // servicio, sin ningún error visible (promoverMapeo solo loguea un
+    // warning cuando no encuentra la pregunta).
+    fpCodigo: 'ACCIONISTAS_TABLA', // relación de accionistas
     tabla: 'cliente_accionistas',
     fkCliente: 'cac_cli_id',
     fkSolicitud: 'cac_sol_id',
@@ -154,7 +183,11 @@ const MAPEOS: MapeoTabla[] = [
     fkSolicitud: 'cbc_sol_id',
     campos: [
       { aliases: ['Nombre'], columna: 'cbc_nombre', kind: 'TEXTO' },
-      { aliases: ['Identificacion'], columna: 'cbc_identificacion', kind: 'TEXTO' },
+      {
+        aliases: ['Identificacion'],
+        columna: 'cbc_identificacion',
+        kind: 'TEXTO',
+      },
       { aliases: ['Direccion'], columna: 'cbc_direccion', kind: 'TEXTO' },
     ],
   },
@@ -186,7 +219,11 @@ const MAPEOS: MapeoTabla[] = [
       },
       { aliases: ['Telefono'], columna: 'crc_telefono', kind: 'TEXTO' },
       { aliases: ['Correo'], columna: 'crc_correo', kind: 'TEXTO' },
-      { aliases: ['Cupo credito'], columna: 'crc_cupo_credito', kind: 'DECIMAL' },
+      {
+        aliases: ['Cupo credito'],
+        columna: 'crc_cupo_credito',
+        kind: 'DECIMAL',
+      },
     ],
   },
   {
@@ -230,7 +267,11 @@ interface CampoPlanoMapeado {
 // esos valores por la versión sin DV/formato en cada aprobación —
 // degradación silenciosa de un dato ya correcto, no una mejora.
 const CAMPOS_PLANOS: CampoPlanoMapeado[] = [
-  { fpCodigo: 'RAZON_SOCIAL', columnaCliente: 'cli_razon_social', kind: 'TEXTO' },
+  {
+    fpCodigo: 'RAZON_SOCIAL',
+    columnaCliente: 'cli_razon_social',
+    kind: 'TEXTO',
+  },
   {
     fpCodigo: 'AUTO_Q1045', // "Tipo de documento" (SELECT)
     columnaCliente: 'cli_tipo_identificacion',
@@ -273,11 +314,27 @@ export class ClienteDatosNormalizadosService {
     );
     const fpVersion = solicitud?.sol_formulario_version || 1;
 
-    for (const mapeo of MAPEOS) {
-      await this.promoverMapeo(queryRunner, clienteId, solicitudId, mapeo, fpVersion);
-    }
+    // Deshabilitado a propósito (2026-09-20, decisión del usuario): las 8
+    // tablas de MAPEOS (cliente_accionistas, cliente_direcciones_envio,
+    // etc.) no existen todavía en producción y su único consumidor
+    // planeado (integraciones/uno, para envío a SIESA) sigue siendo un
+    // stub sin conexión real — ver "Problemas serios/problemas.md". Como
+    // este bucle corre sin try/catch dentro de la misma transacción de la
+    // aprobación en CC2, desplegar el código tal cual sin esas tablas
+    // hubiera roto TODA aprobación de CC2 en producción. El envío a SIESA
+    // va a leer directo del formulario (Formulario_respuesta) en vez de
+    // depender de esta materialización — ver sol_sincro_siesa.
+    //
+    // for (const mapeo of MAPEOS) {
+    //   await this.promoverMapeo(queryRunner, clienteId, solicitudId, mapeo, fpVersion);
+    // }
 
-    await this.sincronizarCamposPlanos(queryRunner, clienteId, solicitudId, fpVersion);
+    await this.sincronizarCamposPlanos(
+      queryRunner,
+      clienteId,
+      solicitudId,
+      fpVersion,
+    );
   }
 
   /**
@@ -307,12 +364,16 @@ export class ClienteDatosNormalizadosService {
 
       const [respuesta] = await queryRunner.query(
         `SELECT fr_valor_texto, fr_valor_numero, fr_valor_opcion_id
-         FROM Formulario_respuesta WHERE fr_solicitud_id = @0 AND fr_fp_id = @1`,
+         FROM Formulario_respuesta WHERE fr_sol_id = @0 AND fr_fp_id = @1`,
         [solicitudId, pregunta.fp_id],
       );
       if (!respuesta) continue; // esta solicitud nunca respondió esta pregunta
 
-      const valor = await this.resolverValorCampoPlano(queryRunner, campo, respuesta);
+      const valor = await this.resolverValorCampoPlano(
+        queryRunner,
+        campo,
+        respuesta,
+      );
       if (valor === null || valor === '') continue;
 
       sets.push(`${campo.columnaCliente} = @${params.length}`);
@@ -344,12 +405,16 @@ export class ClienteDatosNormalizadosService {
     if (campo.kind === 'TEXTO') {
       const texto = respuesta.fr_valor_texto?.trim();
       if (texto) return texto;
-      return respuesta.fr_valor_numero != null ? String(respuesta.fr_valor_numero) : null;
+      return respuesta.fr_valor_numero != null
+        ? String(respuesta.fr_valor_numero)
+        : null;
     }
 
     if (campo.kind === 'ID_DIRECTO') {
-      if (respuesta.fr_valor_numero != null) return Number(respuesta.fr_valor_numero);
-      if (respuesta.fr_valor_opcion_id != null) return Number(respuesta.fr_valor_opcion_id);
+      if (respuesta.fr_valor_numero != null)
+        return Number(respuesta.fr_valor_numero);
+      if (respuesta.fr_valor_opcion_id != null)
+        return Number(respuesta.fr_valor_opcion_id);
       return null;
     }
 
@@ -397,7 +462,7 @@ export class ClienteDatosNormalizadosService {
     }
 
     const [respuesta] = await queryRunner.query(
-      `SELECT fr_valor_texto FROM Formulario_respuesta WHERE fr_solicitud_id = @0 AND fr_fp_id = @1`,
+      `SELECT fr_valor_texto FROM Formulario_respuesta WHERE fr_sol_id = @0 AND fr_fp_id = @1`,
       [solicitudId, pregunta.fp_id],
     );
 
@@ -451,8 +516,18 @@ export class ClienteDatosNormalizadosService {
       }
 
       for (const campo of mapeo.campos) {
-        const def = columnaDefs.find((d) => campo.aliases.includes(d.nombre));
-        const valorCrudo = this.obtenerValorCrudo(fila, campo.aliases);
+        // codigo primero (estable entre renombrados de etiqueta — ver
+        // codigo-estable-columnas-tabla.md), aliases como fallback de
+        // transición para columnas que todavía no se hayan re-guardado
+        // desde el backfill. Si `def` se resolvió, `def.nombre` es la
+        // etiqueta REAL de esta columna en la versión de esta solicitud
+        // (más confiable que la lista estática de aliases para leer el
+        // valor de `fila`, que está keyeada por esa misma etiqueta).
+        const def = this.resolverDefColumna(columnaDefs, campo);
+        const valorCrudo = this.obtenerValorCrudo(
+          fila,
+          def?.nombre ? [def.nombre, ...campo.aliases] : campo.aliases,
+        );
 
         if (campo.kind === 'CATALOGO_ID') {
           const idPadre = def?.catalogo_columna_padre
@@ -487,13 +562,78 @@ export class ClienteDatosNormalizadosService {
     );
   }
 
+  // codigo primero (estable entre renombrados de etiqueta — ver
+  // codigo-estable-columnas-tabla.md), aliases como fallback de transición
+  // para columnas que todavía no se hayan re-guardado desde el backfill.
+  // Compartido entre promoverMapeo (aprobación real) y
+  // validarColumnasMapeadas (chequeo al activar una versión).
+  private resolverDefColumna(
+    columnaDefs: ColumnaTablaDef[],
+    campo: CampoMapeado,
+  ): ColumnaTablaDef | undefined {
+    return (
+      columnaDefs.find((d) => d.codigo === campo.columna) ??
+      columnaDefs.find((d) => campo.aliases.includes(d.nombre))
+    );
+  }
+
+  /**
+   * Falla explícita en vez de dato perdido en silencio (problemas.md,
+   * "Riesgo adicional", recomendación #2): antes de activar una versión de
+   * formulario, confirma que todas las preguntas TABLA usadas por SIESA
+   * (MAPEOS) siguen presentes en esa versión y no perdieron ninguna de sus
+   * columnas mapeadas. Devuelve la lista de problemas encontrados (vacía =
+   * todo bien) — quien llama decide si eso bloquea la activación.
+   */
+  async validarColumnasMapeadas(
+    fpVersion: number,
+    runner: { query: (sql: string, params?: any[]) => Promise<any> },
+  ): Promise<string[]> {
+    const problemas: string[] = [];
+
+    for (const mapeo of MAPEOS) {
+      const [pregunta] = await runner.query(
+        `SELECT fp_id, fp_descripcion, fp_tabla_columnas FROM Formulario_pregunta
+         WHERE fp_codigo = @0 AND fp_version = @1 AND fp_tipo = 'TABLA'`,
+        [mapeo.fpCodigo, fpVersion],
+      );
+
+      if (!pregunta) {
+        problemas.push(
+          `No existe la pregunta "${mapeo.fpCodigo}" (tipo TABLA) en esta versión — ` +
+            `esa sección deja de sincronizarse con ${mapeo.tabla}.`,
+        );
+        continue;
+      }
+
+      const columnaDefs = this.parseColumnaDefs(pregunta.fp_tabla_columnas);
+
+      for (const campo of mapeo.campos) {
+        const def = this.resolverDefColumna(columnaDefs, campo);
+        if (!def) {
+          problemas.push(
+            `"${pregunta.fp_descripcion}" (${mapeo.fpCodigo}): falta la columna ` +
+              `"${campo.aliases[0]}" (destino ${mapeo.tabla}.${campo.columna}) — ` +
+              `ese campo quedará vacío en las próximas aprobaciones.`,
+          );
+        }
+      }
+    }
+
+    return problemas;
+  }
+
   private obtenerValorCrudo(
     fila: Record<string, string>,
     aliases: string[],
   ): string | undefined {
     for (const alias of aliases) {
       const valor = fila[alias];
-      if (valor !== undefined && valor !== null && String(valor).trim() !== '') {
+      if (
+        valor !== undefined &&
+        valor !== null &&
+        String(valor).trim() !== ''
+      ) {
         return String(valor).trim();
       }
     }

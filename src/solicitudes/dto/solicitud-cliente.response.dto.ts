@@ -5,8 +5,11 @@ export class SolicitudClienteDto {
 
   // Estado del flujo
   sol_estado_id: number;
+  estado_codigo?: string;
   sol_etapa_actual_id: number;
+  etapa_codigo?: string;
   sol_resultado_etapa_id: number;
+  resultado_codigo?: string;
 
   // Cliente
   sol_cliente_id: number;
@@ -24,6 +27,7 @@ export class SolicitudClienteDto {
 
   // Aprobación financiera
   sol_cupo_aprobado?: number;
+  sol_cupo_solicitado?: number | null;
   sol_plazo_pago?: number;
   sol_forma_pago?: string;
 

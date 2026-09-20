@@ -109,7 +109,7 @@ export class FormularioRenderizableService {
           fr_valor_archivo_id,
           ROW_NUMBER() OVER (PARTITION BY fr_fp_id ORDER BY fr_updated_at DESC) AS rn
         FROM Formulario_respuesta
-        WHERE fr_solicitud_id = @0
+        WHERE fr_sol_id = @0
       ) fr
       LEFT JOIN Formulario_pregunta fp ON fr.fr_fp_id = fp.fp_id
       WHERE fr.rn = 1`,
@@ -186,7 +186,7 @@ export class FormularioRenderizableService {
             fp.fp_maximo,
             fp.fp_codigo
           FROM Formulario_pregunta fp
-          WHERE fp.formulario_id = @0
+          WHERE fp.frm_id = @0
             AND fp.fp_estado = 1
             AND fp.fp_version = @1
           ORDER BY fp.seccion_id, fp.fp_orden`,
@@ -222,8 +222,8 @@ export class FormularioRenderizableService {
     // 6. Crear mapa de respuestas resueltas
     // Resueltas en paralelo (no una por una): SELECT/SELECT_TABLA/archivo
     // disparan una query adicional por respuesta en resolverValorRespuesta,
-    // y con el round-trip a la BD remota (SQL8020.site4now.net) resolverlas
-    // en serie era la principal causa de la demora al abrir esta página.
+    // y con el round-trip a la BD remota resolverlas en serie era la
+    // principal causa de la demora al abrir esta página.
     const respuestasMap = new Map<number, string>();
     const tablaFilasMap = new Map<number, Record<string, string>[]>();
     const valoresResueltos = await Promise.all(
@@ -356,7 +356,11 @@ export class FormularioRenderizableService {
     solicitudId: number,
     codigos: string[],
   ): Promise<
-    Array<{ fp_codigo: string; valor_resuelto: string; tiene_respuesta: boolean }>
+    Array<{
+      fp_codigo: string;
+      valor_resuelto: string;
+      tiene_respuesta: boolean;
+    }>
   > {
     if (codigos.length === 0) return [];
 
@@ -371,7 +375,7 @@ export class FormularioRenderizableService {
            fr_valor_archivo_id,
            ROW_NUMBER() OVER (PARTITION BY fr_fp_id ORDER BY fr_updated_at DESC) AS rn
          FROM Formulario_respuesta
-         WHERE fr_solicitud_id = @0
+         WHERE fr_sol_id = @0
        ) fr
        JOIN Formulario_pregunta fp ON fp.fp_id = fr.fr_fp_id
        WHERE fr.rn = 1 AND fp.fp_codigo IN (${placeholders})`,
@@ -385,7 +389,11 @@ export class FormularioRenderizableService {
     return codigos.map((codigo) => {
       const index = filas.findIndex((f: any) => f.fp_codigo === codigo);
       if (index === -1) {
-        return { fp_codigo: codigo, valor_resuelto: 'Sin respuesta', tiene_respuesta: false };
+        return {
+          fp_codigo: codigo,
+          valor_resuelto: 'Sin respuesta',
+          tiene_respuesta: false,
+        };
       }
       const valor = valoresResueltos[index];
       return {
@@ -420,7 +428,7 @@ export class FormularioRenderizableService {
     const preguntas = await this.dataSource.query(
       `SELECT fp_id, fp_codigo, fp_tabla_columnas
        FROM Formulario_pregunta
-       WHERE formulario_id = @0 AND fp_version = @1 AND fp_estado = 1
+       WHERE frm_id = @0 AND fp_version = @1 AND fp_estado = 1
          AND fp_tipo = 'TABLA'
          AND fp_codigo IN ('REP_LEGAL_TABLA', 'REP_LEGAL_SUPLENTES', 'ACCIONISTAS_TABLA')`,
       [formularioId, version],
@@ -483,7 +491,7 @@ export class FormularioRenderizableService {
     const [respuesta] = await this.dataSource.query(
       `SELECT TOP 1 fr_valor_texto
        FROM Formulario_respuesta
-       WHERE fr_solicitud_id = @0 AND fr_fp_id = @1
+       WHERE fr_sol_id = @0 AND fr_fp_id = @1
        ORDER BY fr_updated_at DESC`,
       [solicitudId, pregunta.fp_id],
     );

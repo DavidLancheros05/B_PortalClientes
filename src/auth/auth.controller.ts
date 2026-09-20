@@ -76,7 +76,7 @@ export class AuthController {
     @Body() body: LoginDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const { identifier, password, accessType } = body;
+    const { identifier, password, accessType, captchaToken } = body;
     this.logger.log(`Login attempt: ${identifier} (${accessType})`);
 
     try {
@@ -84,6 +84,7 @@ export class AuthController {
         identifier,
         password,
         accessType,
+        captchaToken,
       );
       this.setAuthCookie(res, result.token);
       this.logger.log(`Login successful: ${identifier}`);

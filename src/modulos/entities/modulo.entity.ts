@@ -29,6 +29,9 @@ export class ModuloEntity {
   @Column({ name: 'mod_padre_id', type: 'int', nullable: true })
   mod_padre_id?: number;
 
+  @Column({ name: 'mod_es_categoria', type: 'bit', default: false })
+  mod_es_categoria: boolean;
+
   @ManyToOne(() => ModuloEntity, (modulo) => modulo.subModulos, {
     nullable: true,
   })

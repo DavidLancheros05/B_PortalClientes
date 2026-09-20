@@ -10,7 +10,6 @@ import { CentroOperacionEntity } from '../centros-operacion/entities/centro-oper
 import { AuthModule } from '../auth/auth.module';
 import { MailModule } from '../mail/mail.module';
 import { NotificacionesModule } from '../notificaciones/notificaciones.module';
-import { CorreosPorRolService } from '../parametrizacion/correos-por-rol/correos-por-rol.service';
 
 @Module({
   imports: [
@@ -24,7 +23,7 @@ import { CorreosPorRolService } from '../parametrizacion/correos-por-rol/correos
       RolEntity,
     ]),
   ],
-  providers: [UsuarioService, CorreosPorRolService],
+  providers: [UsuarioService],
   controllers: [UsuarioController],
   exports: [UsuarioService],
 })

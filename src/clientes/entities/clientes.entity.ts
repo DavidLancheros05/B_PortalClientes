@@ -33,12 +33,12 @@ export class ClienteEntity {
   cli_correo: string;
 
   @Column({
-    name: 'cli_acceso_portal_clientes',
+    name: 'cli_acceso_pc',
     type: 'bit',
     nullable: true,
     default: 0,
   })
-  cli_acceso_portal_clientes: boolean;
+  cli_acceso_pc: boolean;
 
   @Column({
     name: 'ejng_id',
@@ -83,4 +83,11 @@ export class ClienteEntity {
     nullable: true,
   })
   cli_password: string | null;
+
+  // Marca si el cliente ya fue creado en SIESA — ver
+  // Documentos Cartonera/documentacion/Portal Clientes/SIESA/
+  // plan-envio-solicitud-aprobada-a-siesa.md. Una sola vez por cliente, no
+  // por solicitud.
+  @Column({ name: 'cli_siesa', type: 'bit', default: false })
+  cli_siesa: boolean;
 }

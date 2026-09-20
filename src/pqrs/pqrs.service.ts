@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -172,7 +173,10 @@ export class PQRSService {
     return resultados;
   }
 
-  async getById(id: number) {
+  async getById(
+    id: number,
+    usuario?: { rol?: string; cliente_id?: number },
+  ) {
     this.logger.log(`🔍 getById(${id}) llamado`);
     const pqrs = await this.pqrsRepository.findOne({
       where: { pqrs_id: id },
@@ -191,8 +195,25 @@ export class PQRSService {
       throw new NotFoundException('PQRS no encontrada');
     }
 
+    this.verificarPropiedadCliente(pqrs, usuario);
+
     this.logger.log(`✅ PQRS encontrada:`, JSON.stringify(pqrs, null, 2));
     return pqrs;
+  }
+
+  // Un CLIENTE solo puede acceder a sus propias PQRS (pqrs_cliu_id debe
+  // coincidir con su cliente_id). Roles internos no tienen esta
+  // restricción — su acceso ya lo filtra @RequierePermiso donde aplica.
+  private verificarPropiedadCliente(
+    pqrs: PQRSEntity,
+    usuario?: { rol?: string; cliente_id?: number },
+  ) {
+    if (
+      usuario?.rol === 'CLIENTE' &&
+      pqrs.pqrs_cliu_id !== usuario.cliente_id
+    ) {
+      throw new ForbiddenException('No tienes acceso a esta PQRS');
+    }
   }
 
   async update(id: number, updatePqrsDto: UpdatePQRSDto) {
@@ -223,7 +244,7 @@ export class PQRSService {
     this.logger.log(`📝 addComentario() - pqrsId: ${pqrsId}`);
     this.logger.log(`👤 Usuario recibido:`, JSON.stringify(usuario, null, 2));
 
-    const pqrs = await this.getById(pqrsId);
+    const pqrs = await this.getById(pqrsId, usuario);
     this.logger.log(`🔍 PQRS cargada - Estado actual:`, {
       pe_id: pqrs.pqrs_pe_id,
       pe_codigo: pqrs.estado?.pe_codigo,
@@ -329,8 +350,11 @@ export class PQRSService {
     return resultado;
   }
 
-  async getComentarios(pqrsId: number) {
-    await this.getById(pqrsId);
+  async getComentarios(
+    pqrsId: number,
+    usuario?: { rol?: string; cliente_id?: number },
+  ) {
+    await this.getById(pqrsId, usuario);
 
     return this.comentarioRepository.find({
       where: { pc_pqrs_id: pqrsId },
@@ -344,7 +368,7 @@ export class PQRSService {
     file: { buffer: Buffer; originalname: string; mimetype: string; size: number },
     usuario: { usr_id?: number; rol?: string; cliente_id?: number },
   ) {
-    const pqrs = await this.getById(pqrsId);
+    const pqrs = await this.getById(pqrsId, usuario);
 
     if (pqrs.estado?.pe_codigo === 'CERRADA') {
       throw new BadRequestException(
@@ -395,8 +419,11 @@ export class PQRSService {
     return resultado;
   }
 
-  async getHistorial(pqrsId: number) {
-    await this.getById(pqrsId);
+  async getHistorial(
+    pqrsId: number,
+    usuario?: { rol?: string; cliente_id?: number },
+  ) {
+    await this.getById(pqrsId, usuario);
 
     const eventos = await this.historialRepository.find({
       where: { ph_pqrs_id: pqrsId },

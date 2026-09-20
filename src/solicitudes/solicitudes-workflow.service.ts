@@ -17,6 +17,11 @@ import {
 } from '../common/storage/carpeta-almacenamiento.service';
 import { SolicitudEstadosService } from '../common/solicitud-estados/solicitud-estados.service';
 import { generarCartaPdf } from '../common/utils/carta-pdf.util';
+import {
+  FormularioRenderizableService,
+  PreguntaRenderizable,
+} from './formulario-renderizable.service';
+import { VariablesPlantillaService } from '../parametrizacion/variables-plantilla/variables-plantilla.service';
 
 @Injectable()
 export class SolicitudesWorkflowService {
@@ -31,7 +36,59 @@ export class SolicitudesWorkflowService {
     @Inject(STORAGE_SERVICE) private readonly storageService: IStorageService,
     private readonly solicitudEstadosService: SolicitudEstadosService,
     private readonly carpetaAlmacenamiento: CarpetaAlmacenamientoService,
+    private readonly formularioRenderizableService: FormularioRenderizableService,
+    private readonly variablesPlantillaService: VariablesPlantillaService,
   ) {}
+
+  // Réplica de construirMapaRespuestasPregunta (FRONTEND/src/lib/carta-pdf.util.ts)
+  // — misma convención de anclas (cod:<fp_codigo> preferida, seccion|descripcion
+  // legada, |col:<columna> para la primera fila de preguntas tipo TABLA) para
+  // que una plantilla con placeholders {{pregunta|...}} resuelva igual acá que
+  // en la vista previa del frontend (GenerarPlantillaModal.tsx).
+  private construirMapaRespuestasPregunta(
+    preguntas: PreguntaRenderizable[],
+  ): Record<string, string> {
+    const mapa: Record<string, string> = {};
+    for (const p of preguntas) {
+      const claves = [`${p.seccion_id}|${p.fp_descripcion}`];
+      if (p.fp_codigo) claves.unshift(`cod:${p.fp_codigo}`);
+      for (const clave of claves) {
+        if (!(clave in mapa)) mapa[clave] = p.valor_resuelto;
+        if (p.fp_tipo === 'TABLA' && p.tabla_columnas && p.tabla_filas?.[0]) {
+          const primeraFila = p.tabla_filas[0];
+          p.tabla_columnas.forEach((columna) => {
+            const claveCol = `${clave}|col:${columna}`;
+            if (!(claveCol in mapa))
+              mapa[claveCol] = primeraFila[columna] || '';
+          });
+        }
+      }
+    }
+    return mapa;
+  }
+
+  // Réplica del regex de generarPlantillaDocumentoPdf (frontend) — mismas dos
+  // anclas soportadas: {{pregunta|cod:CODIGO}} y {{pregunta|seccionId|descripcion}},
+  // ambas con sufijo opcional |col:columna para preguntas tipo TABLA.
+  private reemplazarPlaceholdersPregunta(
+    contenido: string,
+    respuestasPregunta: Record<string, string>,
+  ): string {
+    return contenido.replace(
+      /\{\{pregunta\|(?:cod:([A-Za-z0-9_-]+)|(\d+)\|([^|{}]*))(?:\|col:([^|{}]*))?\}\}/g,
+      (
+        _match,
+        codigo?: string,
+        seccionId?: string,
+        descripcion?: string,
+        columna?: string,
+      ) => {
+        const base = codigo ? `cod:${codigo}` : `${seccionId}|${descripcion}`;
+        const clave = columna ? `${base}|col:${columna}` : base;
+        return respuestasPregunta[clave] ?? '';
+      },
+    );
+  }
 
   private async resolveLookupColumns() {
     const result = await this.dataSource.query(`
@@ -66,7 +123,12 @@ export class SolicitudesWorkflowService {
     // vueltas a la BD remota una detrás de la otra.
     const [[solicitud], subidos] = await Promise.all([
       runner.query(
-        `SELECT sol_formulario_version FROM solicitudes WHERE sol_id = @0`,
+        `
+        SELECT s.sol_formulario_version, ISNULL(c.cli_es_distribuidor, 0) AS cli_es_distribuidor
+        FROM solicitudes s
+        JOIN Clientes c ON c.cli_id = s.sol_cliente_id
+        WHERE s.sol_id = @0
+        `,
         [solicitudId],
       ),
       runner.query(
@@ -82,7 +144,12 @@ export class SolicitudesWorkflowService {
       ),
     ]);
     const version = solicitud?.sol_formulario_version ?? 1;
+    const esDistribuidor = !!solicitud?.cli_es_distribuidor;
 
+    // tdo_solo_distribuidor=1: documentos adicionales (ej. "solicitud"/
+    // "manifestación" con logo de distribuidor) que solo aplican a clientes
+    // distribuidores — se suman a los normales, un cliente no-distribuidor
+    // nunca los ve como pendientes.
     const diferidos = await runner.query(
       `
       SELECT DISTINCT td.tdo_id, td.tdo_nombre, td.tdo_plantilla_contenido, td.tdo_tipo_plantilla,
@@ -97,8 +164,9 @@ export class SolicitudesWorkflowService {
         AND td.tdo_tiene_plantilla = 1
         AND (fp.fp_oculto_en_formulario = 1 OR fs.fs_oculta_en_formulario = 1)
         AND ISNULL(fp.fp_version, 1) = @0
+        AND (td.tdo_solo_distribuidor = 0 OR @1 = 1)
       `,
-      [version],
+      [version, esDistribuidor ? 1 : 0],
     );
 
     if (diferidos.length === 0) {
@@ -283,8 +351,10 @@ export class SolicitudesWorkflowService {
       let etapaId: number | null = null;
       let mensajeTransicion = '';
       let resultadoCodigo = 'PENDIENTE';
-      let documentosDiferidosFaltantes: { tdo_id: number; tdo_nombre: string }[] =
-        [];
+      let documentosDiferidosFaltantes: {
+        tdo_id: number;
+        tdo_nombre: string;
+      }[] = [];
       // Texto que ve el cliente en su listado de solicitudes (columna
       // Observaciones). Antes se calculaba en el frontend a partir de
       // estado/etapa/resultado; ahora queda guardado en la fila para que
@@ -302,10 +372,11 @@ export class SolicitudesWorkflowService {
         observacionCliente =
           'Puedes terminar de modificar tu formulario cuando lo desees.';
       } else if (estadoId === 2) {
-        documentosDiferidosFaltantes = await this.obtenerDocumentosDiferidosFaltantes(
-          solicitudId,
-          queryRunner,
-        );
+        documentosDiferidosFaltantes =
+          await this.obtenerDocumentosDiferidosFaltantes(
+            solicitudId,
+            queryRunner,
+          );
 
         if (documentosDiferidosFaltantes.length > 0) {
           // Aún faltan documentos que se generan/suben después de guardar
@@ -514,12 +585,15 @@ export class SolicitudesWorkflowService {
     solicitudId: number,
     usuarioId: number | null = 1,
   ) {
-    const faltantes = await this.obtenerDocumentosDiferidosFaltantes(
-      solicitudId,
-    );
+    const faltantes =
+      await this.obtenerDocumentosDiferidosFaltantes(solicitudId);
 
     if (faltantes.length > 0) {
-      return { ok: true, avanzo: false, documentosDiferidosFaltantes: faltantes };
+      return {
+        ok: true,
+        avanzo: false,
+        documentosDiferidosFaltantes: faltantes,
+      };
     }
 
     // Texto que ve el cliente en su listado (columna Observaciones) una vez
@@ -633,16 +707,11 @@ export class SolicitudesWorkflowService {
     await queryRunner.startTransaction();
 
     try {
-
       // Obtener IDs de estados desde BD (sin hardcodear)
       const estadoRevision =
-        await this.solicitudEstadosService.obtenerEstadoPorCodigo(
-          'REVISION',
-        );
+        await this.solicitudEstadosService.obtenerEstadoPorCodigo('REVISION');
       const estadoPendiente =
-        await this.solicitudEstadosService.obtenerEstadoPorCodigo(
-          'PENDIENTE',
-        );
+        await this.solicitudEstadosService.obtenerEstadoPorCodigo('PENDIENTE');
 
       // Obtener etapa ASC (Auxiliar Servicio Cliente - la que está procesando)
       const etapaSACResult = await queryRunner.query(
@@ -918,9 +987,7 @@ export class SolicitudesWorkflowService {
       }
 
       const estadoRevision =
-        await this.solicitudEstadosService.obtenerEstadoPorCodigo(
-          'REVISION',
-        );
+        await this.solicitudEstadosService.obtenerEstadoPorCodigo('REVISION');
       const estadoRevisionId = estadoRevision?.id;
 
       const resultado = await this.workflowService.cambiarEtapa(
@@ -952,6 +1019,19 @@ export class SolicitudesWorkflowService {
       updateParams.push(sa_sol_id);
 
       await this.dataSource.query(updateSQL, updateParams);
+
+      // sol_estado_id pasa de PENDIENTE a REVISION acá (ver FLUJO_ETAPAS.md:
+      // la solicitud está en PENDIENTE mientras la ve el Ejecutivo de
+      // Negocios) — mismo bug que guardarConceptoGenerico: esta función
+      // nunca insertaba en Solicitudes_estados_hist pese a cambiar el
+      // estado de verdad.
+      const histCols = await this.resolveHistorialColumns();
+      await this.dataSource.query(
+        `INSERT INTO Solicitudes_estados_hist
+         (${histCols.solicitud_col}, ${histCols.estado_col}, ${histCols.usuario_col}, ${histCols.fecha_col})
+         VALUES (@0, @1, @2, GETDATE())`,
+        [sa_sol_id, estadoRevisionId, usuario_modifica ?? 1],
+      );
 
       try {
         await this.guardarRespuestasConceptoEjecutivo(
@@ -1030,17 +1110,11 @@ export class SolicitudesWorkflowService {
       const clienteIdSolicitud = solicitudActual?.sol_cliente_id;
 
       const estadoRevision =
-        await this.solicitudEstadosService.obtenerEstadoPorCodigo(
-          'REVISION',
-        );
+        await this.solicitudEstadosService.obtenerEstadoPorCodigo('REVISION');
       const estadoAprobada =
-        await this.solicitudEstadosService.obtenerEstadoPorCodigo(
-          'APROBADA',
-        );
+        await this.solicitudEstadosService.obtenerEstadoPorCodigo('APROBADA');
       const estadoRechazada =
-        await this.solicitudEstadosService.obtenerEstadoPorCodigo(
-          'RECHAZADA',
-        );
+        await this.solicitudEstadosService.obtenerEstadoPorCodigo('RECHAZADA');
 
       let etapaDestId: number;
       let estadoId: number;
@@ -1085,9 +1159,17 @@ export class SolicitudesWorkflowService {
         CC2: 'sol_fecha_real_comite_credito_2',
       };
       const columnaFecha =
-        etapaActualCodigo && fechaColumna[etapaActualCodigo]
+        (etapaActualCodigo && fechaColumna[etapaActualCodigo]
           ? `, ${fechaColumna[etapaActualCodigo]} = GETDATE()`
-          : '';
+          : '') +
+        // A diferencia de sol_fecha_real_comite_credito_2 (que se pisa
+        // también en rechazo), esta solo se escribe cuando de verdad se
+        // aprueba — es la fuente real de {{fecha_aprobacion}} en Variables
+        // de Plantilla, en vez del new Date() que se usaba antes al armar
+        // el PDF/correo.
+        (aprobado && etapaActualCodigo === 'CC2'
+          ? `, sol_fecha_aprobacion = GETDATE()`
+          : '');
 
       const params: any[] = [
         estadoId,
@@ -1227,15 +1309,35 @@ export class SolicitudesWorkflowService {
         ? `Aprobado en etapa ${etapaActualCodigo}`
         : `Rechazado en etapa ${etapaActualCodigo}`;
 
+      // etapaDestId (no etapaActualId): el historial registra la etapa a la
+      // que ENTRA la solicitud, igual que sol_etapa_actual_id arriba — usar
+      // etapaActualId aquí duplicaba la etapa que se está dejando en vez de
+      // reflejar la etapa siguiente (bug encontrado 2026-09-13).
       await this.historialWorkflowService.registrarTransicionConSLA(
         queryRunner,
         {
           solicitudId: sa_sol_id,
-          etapaId: etapaActualId,
+          etapaId: etapaDestId,
           resultadoId: resultadoWorkflow.wee_id,
           usuarioId: usuario_modifica,
           comentario: comentario || mensajeHistorial,
         },
+      );
+
+      // guardarConceptoGenerico nunca insertaba acá — a diferencia de
+      // cambiarEstado, dejaba Solicitudes_estados_hist sin la fila
+      // correspondiente cada vez que ASC/OFC/CC1/CC2 resolvía (aprobado o
+      // rechazado), aunque sol_estado_id sí cambiara de verdad (ej.
+      // REVISION -> APROBADA en CC2). Eso rompía en silencio cualquier
+      // consulta que dependiera de Solicitudes_estados_hist para "cuándo
+      // pasó X" en una solicitud resuelta por este camino — el caso
+      // encontrado fue {{fecha_aprobacion}} saliendo en blanco.
+      const histCols = await this.resolveHistorialColumns();
+      await queryRunner.query(
+        `INSERT INTO Solicitudes_estados_hist
+         (${histCols.solicitud_col}, ${histCols.estado_col}, ${histCols.usuario_col}, ${histCols.fecha_col})
+         VALUES (@0, @1, @2, GETDATE())`,
+        [sa_sol_id, estadoId, usuario_modifica],
       );
 
       await queryRunner.commitTransaction();
@@ -1292,7 +1394,10 @@ export class SolicitudesWorkflowService {
       // seguimiento con el cliente por fuera del sistema (ver bandeja
       // "Solicitudes Rechazadas" y solicitudes-listados.service.ts::
       // getSolicitudesRechazadasPorEjecutivoId).
-      if (!aprobado && (etapaActualCodigo === 'OFC' || etapaActualCodigo === 'CC2')) {
+      if (
+        !aprobado &&
+        (etapaActualCodigo === 'OFC' || etapaActualCodigo === 'CC2')
+      ) {
         try {
           await this.notificacionesService.notificarRechazoAlEjecutivo(
             sa_sol_id,
@@ -1380,7 +1485,7 @@ export class SolicitudesWorkflowService {
   ) {
     const [existente] = await db.query(
       `SELECT fr_id FROM Formulario_respuesta
-       WHERE fr_solicitud_id = @0 AND fr_fp_id = @1`,
+       WHERE fr_sol_id = @0 AND fr_fp_id = @1`,
       [sa_sol_id, fp_id],
     );
     const params = [
@@ -1400,7 +1505,7 @@ export class SolicitudesWorkflowService {
     } else {
       await db.query(
         `INSERT INTO Formulario_respuesta
-           (fr_solicitud_id, fr_fp_id, fr_valor_texto, fr_valor_numero,
+           (fr_sol_id, fr_fp_id, fr_valor_texto, fr_valor_numero,
             fr_valor_opcion_id, fr_actualizado_por, fr_completado, fr_created_at)
          VALUES (@4, @5, @0, @1, @2, @3, 1, GETDATE())`,
         [...params, sa_sol_id, fp_id],
@@ -1600,9 +1705,7 @@ export class SolicitudesWorkflowService {
     comentario: string,
     usuario_modifica: number,
   ) {
-    console.log(
-      `💾 [guardarRevisionComiteCredito1] Solicitud ${sa_sol_id}`,
-    );
+    console.log(`💾 [guardarRevisionComiteCredito1] Solicitud ${sa_sol_id}`);
 
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -1619,9 +1722,7 @@ export class SolicitudesWorkflowService {
         `SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'CC2'`,
       );
       const estadoRevision =
-        await this.solicitudEstadosService.obtenerEstadoPorCodigo(
-          'REVISION',
-        );
+        await this.solicitudEstadosService.obtenerEstadoPorCodigo('REVISION');
       const [resultadoPendiente] = await queryRunner.query(
         `SELECT wee_id FROM workflow_estado_etapa WHERE wee_codigo = 'PENDIENTE'`,
       );
@@ -1646,11 +1747,13 @@ export class SolicitudesWorkflowService {
         ],
       );
 
+      // etapaSiguiente.wet_id (CC2), no etapaActualId (CC1) — mismo bug y
+      // mismo fix que en guardarConceptoGenerico (ver comentario ahí).
       await this.historialWorkflowService.registrarTransicionConSLA(
         queryRunner,
         {
           solicitudId: sa_sol_id,
-          etapaId: etapaActualId,
+          etapaId: etapaSiguiente.wet_id,
           resultadoId: resultadoPendiente.wee_id,
           usuarioId: usuario_modifica,
           comentario: comentario || 'Revisión de Comité de Crédito 1',
@@ -1695,9 +1798,7 @@ export class SolicitudesWorkflowService {
   ) {
     try {
       const estadoResult =
-        await this.solicitudEstadosService.obtenerEstadoPorCodigo(
-          estadoCodigo,
-        );
+        await this.solicitudEstadosService.obtenerEstadoPorCodigo(estadoCodigo);
       const [etapaResult] = await this.dataSource.query(
         `SELECT wet_id FROM workflow_etapas WHERE wet_codigo = @0`,
         [etapaCodigo],
@@ -1809,7 +1910,14 @@ export class SolicitudesWorkflowService {
              sol_updated_at = GETDATE(),
              sol_observacion_cliente = @5
          WHERE sol_id = @4`,
-        [3, 3, 1, usuarioId, solicitudId, 'Tu solicitud se encuentra en revisión.'],
+        [
+          3,
+          3,
+          1,
+          usuarioId,
+          solicitudId,
+          'Tu solicitud se encuentra en revisión.',
+        ],
       );
 
       // solicitud_workflow_historial.swh_usuario_id es NOT NULL sin
@@ -1857,7 +1965,8 @@ export class SolicitudesWorkflowService {
           c.cli_correo AS cliente_email,
           s.sol_cupo_aprobado,
           s.sol_plazo_pago,
-          s.sol_forma_pago
+          s.sol_forma_pago,
+          s.sol_fecha_aprobacion
         FROM solicitudes s
         LEFT JOIN clientes c ON c.${lookup.cliId} = s.sol_cliente_id
         WHERE s.sol_id = @0`,
@@ -1905,6 +2014,25 @@ export class SolicitudesWorkflowService {
         return;
       }
 
+      // Variables con tabla/columna de origen configuradas en
+      // Parametrización → Variables de Plantilla se resuelven solas (ver
+      // VariablesPlantillaService.resolverParaSolicitud) — se mezclan sobre
+      // los reemplazos manuales de abajo, que quedan como respaldo si el
+      // catálogo no tiene mapeo para alguna variable (ej. si se
+      // desconfigura por error).
+      let reemplazosDinamicos: Record<string, string> = {};
+      try {
+        reemplazosDinamicos =
+          await this.variablesPlantillaService.resolverParaSolicitud(
+            solicitud.sol_id,
+          );
+      } catch (err) {
+        console.error(
+          '⚠️ [enviarCartaVinculacionPorCorreo] Error resolviendo variables con mapeo automático:',
+          err,
+        );
+      }
+
       let contenidoCarta = plantillaCartaPDF.tdo_plantilla_contenido;
       const reemplazosCartaMap: Record<string, string> = {
         '{{cliente_nombre}}': solicitud.cliente_nombre || '-',
@@ -1913,9 +2041,11 @@ export class SolicitudesWorkflowService {
         '{{plazo}}': solicitud.sol_plazo_pago
           ? `${solicitud.sol_plazo_pago} días`
           : '-',
-        '{{fecha_aprobacion}}': new Date().toLocaleDateString('es-CO'),
+        '{{fecha_aprobacion}}': solicitud.sol_fecha_aprobacion
+          ? new Date(solicitud.sol_fecha_aprobacion).toLocaleDateString('es-CO')
+          : new Date().toLocaleDateString('es-CO'),
         '{{numero_solicitud}}': solicitud.sol_numero_solicitud || '-',
-        '{{tasa_interes}}': '-',
+        ...reemplazosDinamicos,
       };
 
       Object.entries(reemplazosCartaMap).forEach(([placeholder, valor]) => {
@@ -1925,10 +2055,25 @@ export class SolicitudesWorkflowService {
         );
       });
 
+      // Igual que la vista previa del frontend (GenerarPlantillaModal.tsx):
+      // si la plantilla activa usa placeholders {{pregunta|...}}, resolverlos
+      // con las respuestas reales del formulario de esta solicitud.
+      if (/\{\{pregunta\|/.test(contenidoCarta)) {
+        const renderizable =
+          await this.formularioRenderizableService.obtenerFormularioRenderizable(
+            sa_sol_id,
+          );
+        const respuestasPregunta = this.construirMapaRespuestasPregunta(
+          renderizable.preguntas,
+        );
+        contenidoCarta = this.reemplazarPlaceholdersPregunta(
+          contenidoCarta,
+          respuestasPregunta,
+        );
+      }
+
       const pdfBuffer = await this.generarPDFCarta(
         contenidoCarta,
-        solicitud.sol_numero_solicitud,
-        solicitud.cliente_nombre,
         plantillaCartaPDF.tdo_encabezado_tipo,
         plantillaCartaPDF.tdo_encabezado_imagen_url,
         plantillaCartaPDF.tdo_pie_pagina_tipo,
@@ -2041,10 +2186,12 @@ export class SolicitudesWorkflowService {
   // negrita/tamaño/bloques, y el resultado divergía visualmente de la
   // vista previa del frontend aunque el contenido fuera idéntico. Ver
   // "Documentos Cartonera/documentacion/mejoras/unificacion-carta-vinculacion-tipos-documentos.md".
+  // El contenido ya trae resueltos {{cliente_nombre}}/{{numero_solicitud}}/
+  // etc. (ver reemplazosCartaMap más arriba) — el admin escribe la carta
+  // completa (fecha, destinatario, asunto, cuerpo) en "Contenido de la
+  // plantilla", generarCartaPdf ya no agrega nada por su cuenta.
   private async generarPDFCarta(
     contenidoCarta: string,
-    numeroSolicitud: string,
-    clienteNombre: string | undefined,
     encabezadoTipo: 'NINGUNO' | 'IMAGEN' | 'FORMATO_OFICIAL' | null | undefined,
     encabezadoImagenUrl: string | null | undefined,
     piePaginaTipo: 'NINGUNO' | 'TEXTO' | 'IMAGEN' | null | undefined,
@@ -2053,8 +2200,6 @@ export class SolicitudesWorkflowService {
   ): Promise<Buffer> {
     return generarCartaPdf({
       contenido: contenidoCarta,
-      asunto: `Aprobación de solicitud de vinculación comercial No. ${numeroSolicitud}`,
-      destinatarioNombre: clienteNombre || '-',
       encabezadoTipo: encabezadoTipo || 'NINGUNO',
       encabezadoImagenUrl,
       piePaginaTipo: piePaginaTipo || 'NINGUNO',

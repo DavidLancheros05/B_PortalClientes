@@ -59,7 +59,7 @@ type ParteTexto = (
   | { tipo: 'subtitulo'; texto: string }
   | { tipo: 'parrafo'; texto: string }
   | { tipo: 'lista'; lineas: string[] }
-  | { tipo: 'vineta'; label: string; resto: string }
+  | { tipo: 'vineta'; label: string; restoLineas: string[] }
 ) & {
   espacioExtra: number;
   sangrado: boolean;
@@ -156,7 +156,7 @@ function clasificarBloquesTexto(contenidoOriginal: string): ParteTexto[] {
       partes.push({
         tipo: 'vineta',
         label: '',
-        resto: (prefijo + resto.slice(2)).trim(),
+        restoLineas: [(prefijo + resto.slice(2)).trim()],
         espacioExtra,
         sangrado,
       });
@@ -167,7 +167,7 @@ function clasificarBloquesTexto(contenidoOriginal: string): ParteTexto[] {
       partes.push({
         tipo: 'vineta',
         label: primera,
-        resto: resto.join(' '),
+        restoLineas: resto,
         espacioExtra,
         sangrado,
       });
@@ -423,13 +423,15 @@ function dibujarVinetaPdf(
   cursor: CursorPdf,
   estilo: EstiloCuerpoPdf,
   label: string,
-  resto: string,
+  restoLineas: string[],
 ) {
   const indent = INDENT_SANGRIA;
   const maxWidth = estilo.contentWidth - indent;
+
+  const [primeraLinea, ...siguientesLineas] = restoLineas;
   const palabras: PalabraPdf[] = [
     ...palabrasConEstilosPdf(label, true),
-    ...palabrasConEstilosPdf(resto, false),
+    ...palabrasConEstilosPdf(primeraLinea ?? '', false),
   ];
   const lineas = envolverPalabrasPdf(
     palabras,
@@ -438,6 +440,7 @@ function dibujarVinetaPdf(
     estilo.fontRegular,
     estilo.fontBold,
   );
+  const esUltimoRenglon = siguientesLineas.length === 0;
   lineas.forEach((lineaPalabras, idx) => {
     const alto = altoLineaPdf(lineaPalabras, estilo.fontSizeBody, estilo.lineHeightParrafo);
     estilo.checkSpace(cursor, alto);
@@ -460,10 +463,43 @@ function dibujarVinetaPdf(
       estilo.fontRegular,
       estilo.fontBold,
       estilo.color,
-      idx < lineas.length - 1,
+      idx < lineas.length - 1 || !esUltimoRenglon,
     );
     cursor.y -= alto;
   });
+
+  // Cada línea SIGUIENTE que el autor escribió con Enter (sin línea en
+  // blanco) se dibuja como su propio renglón — nunca se fusiona con la
+  // anterior en un párrafo justificado.
+  siguientesLineas.forEach((linea, i) => {
+    const palabrasLinea = palabrasConEstilosPdf(linea, false);
+    const subLineas = envolverPalabrasPdf(
+      palabrasLinea,
+      maxWidth,
+      estilo.fontSizeBody,
+      estilo.fontRegular,
+      estilo.fontBold,
+    );
+    const esUltimaLineaDelBloque = i === siguientesLineas.length - 1;
+    subLineas.forEach((subLinea, idx) => {
+      const alto = altoLineaPdf(subLinea, estilo.fontSizeBody, estilo.lineHeightParrafo);
+      estilo.checkSpace(cursor, alto);
+      dibujarLineaMixtaPdf(
+        cursor.page,
+        subLinea,
+        estilo.marginLeft + indent,
+        cursor.y,
+        maxWidth,
+        estilo.fontSizeBody,
+        estilo.fontRegular,
+        estilo.fontBold,
+        estilo.color,
+        idx < subLineas.length - 1 || !esUltimaLineaDelBloque,
+      );
+      cursor.y -= alto;
+    });
+  });
+
   cursor.y -= 10;
 }
 
@@ -485,7 +521,7 @@ function dibujarBloquesPdf(cursor: CursorPdf, estilo: EstiloCuerpoPdf, partes: P
     if (parte.tipo === 'subtitulo') dibujarSubtituloPdf(cursor, estiloEfectivo, parte.texto);
     else if (parte.tipo === 'parrafo') dibujarParrafoPdf(cursor, estiloEfectivo, parte.texto);
     else if (parte.tipo === 'lista') dibujarListaPdf(cursor, estiloEfectivo, parte.lineas);
-    else dibujarVinetaPdf(cursor, estilo, parte.label, parte.resto);
+    else dibujarVinetaPdf(cursor, estilo, parte.label, parte.restoLineas);
   }
 }
 
@@ -654,18 +690,20 @@ async function resolverPiePaginaDocumento(
   return { altura: 0, dibujar: () => {} };
 }
 
-// ===== Carta formal simple (encabezado + fecha + destinatario + asunto +
-// cuerpo) — puerto de generarCartaPdf (frontend). Devuelve Buffer en vez
-// de File/Blob (no hay DOM en el backend); el resto del layout es
-// idéntico. =====
+// ===== Carta formal simple (encabezado + cuerpo) — puerto de
+// generarCartaPdf (frontend). Devuelve Buffer en vez de File/Blob (no hay
+// DOM en el backend); el resto del layout es idéntico. El cuerpo
+// ("contenido") es genérico y 100% autoría del admin en "Contenido de la
+// plantilla" (Parametrización > Documentos) — este generador ya no agrega
+// fecha/destinatario/asunto por su cuenta; si un documento necesita esas
+// líneas, el admin las escribe él mismo en el contenido, con variables como
+// {{cliente_nombre}}/{{numero_solicitud}} si hacen falta datos dinámicos. =====
 
 export interface GenerarCartaPdfOpciones {
-  /** Texto de la carta con los placeholders ya reemplazados por valores reales. */
+  /** Texto completo del documento, con los placeholders ya reemplazados por
+   * valores reales — es lo único que se dibuja como cuerpo, tal cual lo
+   * escribió el admin en "Contenido de la plantilla". */
   contenido: string;
-  /** Línea de "Asunto:" que aparece antes del cuerpo, y título mostrado en el encabezado. */
-  asunto: string;
-  /** Nombre de la persona/empresa destinataria (bloque "Señor(a) / Nombre / Ciudad"). */
-  destinatarioNombre: string;
   /** Nombre lógico del documento (usado solo como metadata del PDF). */
   nombreArchivo?: string;
   /** Razón social mostrada en el encabezado (por defecto CARTONERA NACIONAL S.A.). */
@@ -686,8 +724,6 @@ export interface GenerarCartaPdfOpciones {
 
 export async function generarCartaPdf({
   contenido,
-  asunto,
-  destinatarioNombre,
   nombreArchivo,
   membreteRazonSocial = 'CARTONERA NACIONAL S.A.',
   formatoCodigo = '-',
@@ -755,79 +791,6 @@ export async function generarCartaPdf({
     }
   };
 
-  const fechaCarta = new Date().toLocaleDateString('es-CO', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  });
-  const fechaTexto = `Bogotá D.C., ${fechaCarta}`;
-  const fechaWidth = fontRegular.widthOfTextAtSize(fechaTexto, 11);
-  cursor.page.drawText(fechaTexto, {
-    x: marginLeft + contentWidth - fechaWidth,
-    y: cursor.y,
-    size: 11,
-    font: fontRegular,
-    color: negro,
-  });
-  cursor.y -= 26;
-
-  cursor.page.drawText('Señor(a)', {
-    x: marginLeft,
-    y: cursor.y,
-    size: fontSizeBody,
-    font: fontRegular,
-    color: negro,
-  });
-  cursor.y -= 15;
-  cursor.page.drawText(destinatarioNombre || '-', {
-    x: marginLeft,
-    y: cursor.y,
-    size: fontSizeBody,
-    font: fontBold,
-    color: negro,
-  });
-  cursor.y -= 15;
-  cursor.page.drawText('Ciudad', {
-    x: marginLeft,
-    y: cursor.y,
-    size: fontSizeBody,
-    font: fontRegular,
-    color: negro,
-  });
-  cursor.y -= 24;
-
-  const palabrasAsunto: PalabraPdf[] = [
-    { texto: 'Asunto:', bold: true },
-    ...asunto
-      .split(/\s+/)
-      .filter(Boolean)
-      .map((t) => ({ texto: t, bold: false })),
-  ];
-  const lineasAsunto = envolverPalabrasPdf(
-    palabrasAsunto,
-    contentWidth,
-    fontSizeBody,
-    fontRegular,
-    fontBold,
-  );
-  lineasAsunto.forEach((linea) => {
-    checkSpace(cursor, 17);
-    dibujarLineaMixtaPdf(
-      cursor.page,
-      linea,
-      marginLeft,
-      cursor.y,
-      contentWidth,
-      fontSizeBody,
-      fontRegular,
-      fontBold,
-      negro,
-      false,
-    );
-    cursor.y -= 17;
-  });
-  cursor.y -= 10;
-
   const estilo: EstiloCuerpoPdf = {
     marginLeft,
     contentWidth,
@@ -850,7 +813,12 @@ export async function generarCartaPdf({
     color: rgb(0.87, 0.87, 0.87),
   });
   cursor.y -= 14;
-  const footerTexto = `Documento generado electrónicamente el ${fechaCarta} · Sistema de Vinculación Comercial`;
+  const fechaGeneracion = new Date().toLocaleDateString('es-CO', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+  const footerTexto = `Documento generado electrónicamente el ${fechaGeneracion} · Sistema de Vinculación Comercial`;
   const footerWidth = fontRegular.widthOfTextAtSize(footerTexto, 8.5);
   cursor.page.drawText(footerTexto, {
     x: marginLeft + (contentWidth - footerWidth) / 2,
@@ -874,7 +842,7 @@ export async function generarCartaPdf({
     fontRegular: helvetica,
     fontBold: helveticaBold,
     razonSocial: membreteRazonSocial,
-    tituloDocumento: asunto,
+    tituloDocumento: nombreArchivo || '',
     formatoCodigo,
     formatoCodigoSecundario,
     revision,

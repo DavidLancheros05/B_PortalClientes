@@ -27,7 +27,7 @@ export class UsersService {
     const result = await this.dataSource.query(`
       SELECT
         CASE WHEN COL_LENGTH('clientes','cli_id') IS NOT NULL THEN 'cli_id' ELSE 'cliente_id' END AS id_col,
-        CASE WHEN COL_LENGTH('clientes','cli_acceso_portal_clientes') IS NOT NULL THEN 'cli_acceso_portal_clientes' ELSE 'cliente_acceso_portal' END AS habilita_col,
+        CASE WHEN COL_LENGTH('clientes','cli_acceso_pc') IS NOT NULL THEN 'cli_acceso_pc' ELSE 'cliente_acceso_portal' END AS habilita_col,
         CASE WHEN COL_LENGTH('clientes','cli_es_zona_franca') IS NOT NULL THEN 'cli_es_zona_franca' ELSE 'cliente_es_zona_franca' END AS zona_col,
         CASE WHEN COL_LENGTH('clientes','cli_usr_id') IS NOT NULL THEN 'cli_usr_id' ELSE 'usr_id' END AS usuario_col,
         CASE WHEN COL_LENGTH('clientes','cli_razon_social') IS NOT NULL THEN 'cli_razon_social' ELSE 'cliente_razon_social' END AS razon_col,

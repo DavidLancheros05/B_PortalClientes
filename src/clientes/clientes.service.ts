@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   NotFoundException,
   UnauthorizedException,
@@ -46,7 +47,8 @@ export class ClientesService {
         c.cli_direccion AS [cli_direccion],
         c.cli_correo AS [cli_correo],
         c.cli_estado AS [cli_estado],
-        c.cli_acceso_portal_clientes AS [cli_acceso_portal_clientes],
+        c.cli_acceso_pc AS [cli_acceso_pc],
+        c.cli_siesa AS [cli_siesa],
         c.ejng_id AS [ejng_id],
         e.ejng_nombre AS [ejng_nombre]
       FROM dbo.Clientes c
@@ -61,7 +63,8 @@ export class ClientesService {
       cli_direccion: item.cli_direccion,
       cli_correo: item.cli_correo,
       cli_estado: item.cli_estado,
-      cli_acceso_portal_clientes: item.cli_acceso_portal_clientes,
+      cli_acceso_pc: item.cli_acceso_pc,
+      cli_siesa: item.cli_siesa,
       ejng_id: item.ejng_id,
       ejecutivo: item.ejng_nombre ? { nombre: item.ejng_nombre } : null,
     }));
@@ -79,7 +82,7 @@ export class ClientesService {
         c.cli_nro_identificacion AS [cli_nro_identificacion],
         c.cli_direccion AS [cli_direccion],
         c.cli_tipo_identificacion AS [cli_tipo_identificacion],
-        c.cli_acceso_portal_clientes AS [cli_acceso_portal_clientes],
+        c.cli_acceso_pc AS [cli_acceso_pc],
         c.cli_correo AS [cli_correo],
         c.cli_estado AS [cli_estado],
         c.pai_id AS [pai_id],
@@ -119,7 +122,7 @@ export class ClientesService {
       cli_tipo_identificacion: cliente.cli_tipo_identificacion,
       cli_direccion: cliente.cli_direccion,
       cli_correo: cliente.cli_correo,
-      cli_acceso_portal_clientes: cliente.cli_acceso_portal_clientes,
+      cli_acceso_pc: cliente.cli_acceso_pc,
       cli_estado: cliente.cli_estado,
       pai_id: cliente.pai_id,
       dpto_id: cliente.dpto_id,
@@ -250,7 +253,7 @@ export class ClientesService {
   // CREAR
   // ========================
   async create(dto: CreateClienteDto): Promise<ClienteDetailResponseDto> {
-    const habilitaAcceso = dto.cli_acceso_portal_clientes ?? false;
+    const habilitaAcceso = dto.cli_acceso_pc ?? false;
     const passwordGenerada = habilitaAcceso
       ? Math.random().toString(36).slice(-8)
       : null;
@@ -267,7 +270,7 @@ export class ClientesService {
       cli_tipo_identificacion: dto.cli_tipo_identificacion,
       cli_direccion: dto.cli_direccion,
       cli_correo: dto.cli_correo,
-      cli_acceso_portal_clientes: habilitaAcceso,
+      cli_acceso_pc: habilitaAcceso,
       cli_password: passwordHasheada,
       ejng_id: dto.ejng_id,
       cli_estado: 'A',
@@ -327,8 +330,8 @@ export class ClientesService {
 
     const actual = await this.clienteRepo.findOne({ where: { cli_id } });
     const habilitandoAccesoAhora =
-      dto.cli_acceso_portal_clientes === true &&
-      !actual?.cli_acceso_portal_clientes;
+      dto.cli_acceso_pc === true &&
+      !actual?.cli_acceso_pc;
     const correoDestino = dto.cli_correo ?? actual?.cli_correo ?? undefined;
 
     let passwordGenerada: string | null = null;
@@ -408,5 +411,36 @@ export class ClientesService {
     const nuevaHasheada = await hashPassword(newPassword);
     await this.clienteRepo.update(cli_id, { cli_password: nuevaHasheada });
     return { message: 'Contraseña actualizada correctamente' };
+  }
+
+  // ========================
+  // RESTABLECER CONTRASEÑA (admin, desde editar cliente)
+  // ========================
+  async resetPasswordCliente(cli_id: number): Promise<{ message: string }> {
+    const cliente = await this.clienteRepo.findOne({ where: { cli_id } });
+    if (!cliente) {
+      throw new NotFoundException('Cliente no existe');
+    }
+    if (!cliente.cli_correo) {
+      throw new BadRequestException(
+        'El cliente no tiene correo registrado, no se puede enviar la nueva contraseña',
+      );
+    }
+
+    const passwordGenerada = Math.random().toString(36).slice(-8);
+    const passwordHasheada = await hashPassword(passwordGenerada);
+    await this.clienteRepo.update(cli_id, { cli_password: passwordHasheada });
+
+    await this.notificacionesService.notificarCredencialesUsuario({
+      nombre: cliente.cli_razon_social,
+      usuario_login: cliente.cli_nro_identificacion,
+      usuario_email: cliente.cli_correo,
+      usuario_password: passwordGenerada,
+      portal_url: process.env.PORTAL_CLIENTES_URL || '',
+    });
+
+    return {
+      message: `Se envió la nueva contraseña al correo ${cliente.cli_correo}`,
+    };
   }
 }

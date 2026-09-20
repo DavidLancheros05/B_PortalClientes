@@ -237,33 +237,30 @@ export class UsuarioService {
   }
 
   async findAll() {
-    // UsuarioEntity no tiene relación "rol": el rol vive en la tabla puente
-    // pc_usuario_rol (no hay FK directa en usuarios), por eso se resuelve
-    // con SQL crudo en vez de relations de TypeORM.
+    // El rol vive en la tabla puente pc_usuario_rol (many-to-many real: un
+    // usuario puede tener varios roles activos, ver /usuario-roles) — este
+    // listado no lo muestra, así que no hace falta traerlo aquí. Antes hacía
+    // un LEFT JOIN asumiendo un solo rol por usuario, lo que duplicaba la
+    // fila del usuario cuando tenía más de un rol activo.
     const rows = await this.usuarioRepository.query(`
       SELECT
         u.usr_id AS usr_id,
         u.usr_nombre AS nombre,
+        u.usr_usuario AS usuario_login,
         u.usr_correo AS usuario_email,
         u.usr_inactivar AS usr_inactivar,
-        u.usr_fecha_usr AS usuario_created_at,
-        r.rol_id AS rol_id,
-        r.rol_nombre AS rol_nombre
+        u.usr_fecha_usr AS usuario_created_at
       FROM usuarios u
-      LEFT JOIN pc_usuario_rol ur ON ur.ur_usuario_id = u.usr_id AND ur.ur_activo = 1
-      LEFT JOIN pc_roles r ON r.rol_id = ur.ur_rol_id
       ORDER BY u.usr_nombre ASC
     `);
 
     return rows.map((row: any) => ({
       usr_id: row.usr_id,
       nombre: row.nombre,
+      usuario_login: row.usuario_login,
       usuario_email: row.usuario_email,
       usuario_activo: !row.usr_inactivar,
       usuario_created_at: row.usuario_created_at,
-      rol: row.rol_id
-        ? { rol_id: row.rol_id, rol_nombre: row.rol_nombre }
-        : undefined,
     }));
   }
 
@@ -298,7 +295,7 @@ export class UsuarioService {
       usr_inactivar: false,
       usr_estado: 'A',
       usr_fecha_usr: new Date(),
-      usr_acceso_portal_clientes: true,
+      usr_acceso_pc: true,
       usr_ejecutivo: !!dto.ejng_id,
       usr_recupera_todo: false,
       usr_exportacion: false,

@@ -144,13 +144,52 @@ export class ModulosService {
       throw new BadRequestException('Un módulo no puede ser su propio padre');
     }
 
-    if (!data.ruta) {
-      throw new BadRequestException(
-        'La ruta es obligatoria y debe ser proporcionada manualmente',
-      );
+    // Sin nombres duplicados entre hermanos (mismo padre) en ningún nivel:
+    // aplica igual a módulos raíz, submódulos y sub-submódulos, porque la
+    // condición es siempre "mismo padreId + mismo nombre", sin importar
+    // la profundidad real del nodo.
+    {
+      const nombreNormalizado = String(data.nombre || '')
+        .trim()
+        .toLowerCase();
+
+      if (nombreNormalizado) {
+        const query = this.moduloRepository
+          .createQueryBuilder('m')
+          .andWhere('m.mod_activo = :activo', { activo: true })
+          .andWhere('LOWER(LTRIM(RTRIM(m.mod_nombre))) = :nombre', {
+            nombre: nombreNormalizado,
+          });
+
+        if (padreId === null) {
+          query.andWhere('m.mod_padre_id IS NULL');
+        } else {
+          query.andWhere('m.mod_padre_id = :padreId', { padreId });
+        }
+
+        if (moduloActualId) {
+          query.andWhere('m.mod_id != :id', { id: moduloActualId });
+        }
+
+        const existente = await query.getOne();
+        if (existente) {
+          throw new BadRequestException(
+            padreId === null
+              ? `Ya existe un módulo principal llamado "${data.nombre}"`
+              : `Ya existe un módulo llamado "${data.nombre}" bajo el mismo módulo padre`,
+          );
+        }
+      }
     }
 
-    const rutaNormalizada = this.normalizeRoute(data.ruta);
+    // Un módulo "categoría" (solo agrupa submódulos, sin página propia) no
+    // trae ruta manual: se genera una ruta sintética a partir del nombre y
+    // del padre. No corresponde a ninguna página real del frontend — el
+    // menú (Header.tsx) no la usa como link cuando el módulo tiene hijos,
+    // solo la usa como identificador/URL estable en pc_modulos.
+    const rutaNormalizada = data.ruta
+      ? this.normalizeRoute(data.ruta)
+      : await this.buildAutoRoute(data.nombre, padreId, moduloActualId);
 
     if (!rutaNormalizada) {
       throw new BadRequestException(
@@ -187,13 +226,23 @@ export class ModulosService {
         );
       }
 
-      const hasOriginalPrefix = rutaNormalizada.startsWith(`${parentRoute}/`);
-      const hasBasePrefix = rutaNormalizada.startsWith(`${baseParentRoute}/`);
-
-      if (!hasOriginalPrefix && !hasBasePrefix) {
-        throw new BadRequestException(
-          `La ruta del submódulo debe iniciar con '${baseParentRoute}/' para mantener coherencia jerárquica`,
+      // Si el padre es una categoría (ruta sintética, sin página propia),
+      // sus hijos pueden ser páginas reales ubicadas en cualquier parte del
+      // árbol de rutas del frontend — no tiene sentido exigirles que además
+      // vivan bajo la ruta sintética del padre.
+      if (!parent.mod_es_categoria) {
+        const hasOriginalPrefix = rutaNormalizada.startsWith(
+          `${parentRoute}/`,
         );
+        const hasBasePrefix = rutaNormalizada.startsWith(
+          `${baseParentRoute}/`,
+        );
+
+        if (!hasOriginalPrefix && !hasBasePrefix) {
+          throw new BadRequestException(
+            `La ruta del submódulo debe iniciar con '${baseParentRoute}/' para mantener coherencia jerárquica`,
+          );
+        }
       }
 
       if (moduloActualId) {
@@ -376,6 +425,7 @@ export class ModulosService {
       mod_icono: createModuloDto.icono || null,
       mod_posicion: 999999,
       mod_padre_id: padreId,
+      mod_es_categoria: !!createModuloDto.es_categoria,
       mod_activo: true,
     });
 
@@ -409,11 +459,18 @@ export class ModulosService {
       updateModuloDto.padre_id !== undefined
         ? updateModuloDto.padre_id
         : moduloActual.mod_padre_id;
+    const esCategoria =
+      updateModuloDto.es_categoria !== undefined
+        ? updateModuloDto.es_categoria
+        : moduloActual.mod_es_categoria;
 
+    const rutaProvidedExplicitly =
+      updateModuloDto.ruta !== undefined && updateModuloDto.ruta !== null;
     const hasRutaInPayload =
-      updateModuloDto.ruta !== undefined &&
-      updateModuloDto.ruta !== null &&
-      String(updateModuloDto.ruta).trim() !== '';
+      rutaProvidedExplicitly && String(updateModuloDto.ruta).trim() !== '';
+    // Si el frontend manda ruta: "" a propósito (checkbox "es categoría"),
+    // se interpreta como "regenerar ruta sintética", no como "sin cambios".
+    const wantsAutoRoute = rutaProvidedExplicitly && !hasRutaInPayload;
 
     const currentParentId = moduloActual.mod_padre_id ?? null;
     const nextParentId = padreInput ?? null;
@@ -423,7 +480,7 @@ export class ModulosService {
       String(moduloActual.mod_nombre || '').trim();
 
     const shouldValidateRoute =
-      hasRutaInPayload || parentChanged || nameChanged;
+      hasRutaInPayload || wantsAutoRoute || parentChanged || nameChanged;
     const validated = shouldValidateRoute
       ? await this.validateJerarquiaYRuta(
           {
@@ -448,6 +505,7 @@ export class ModulosService {
         mod_icono: icono || null,
         mod_posicion: orden,
         mod_padre_id: padreId,
+        mod_es_categoria: !!esCategoria,
         mod_updated_at: new Date(),
       },
     );

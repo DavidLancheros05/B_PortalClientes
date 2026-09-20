@@ -1,6 +1,6 @@
 export class SolicitudRespuestaDto {
   fr_id: number;
-  fr_solicitud_id: number;
+  fr_sol_id: number;
   fr_fp_id: number;
   fr_valor_texto?: string | null;
   fr_valor_numero?: number | null;

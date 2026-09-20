@@ -61,7 +61,7 @@ export class FormularioPregunta {
   fp_precarga_campo_cliente: string | null;
 
   @Column({ type: 'int', nullable: true })
-  formulario_id: number | null;
+  frm_id: number | null;
 
   @Column({ type: 'int', nullable: true })
   seccion_id: number | null;

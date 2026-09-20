@@ -8,6 +8,32 @@ import { SolicitudPendienteDto } from './dto/solicitud-pendiente.response.dto';
 export class SolicitudesListadosService {
   constructor(private readonly dataSource: DataSource) {}
 
+  // "Es Ampliación de Cupo" se lee de la respuesta a la pregunta
+  // TIPO_SOLICITUD (Formulario_respuesta) — misma fuente para los dos
+  // caminos que existen (ver documentacion/Portal Clientes/Solicitudes/
+  // flujo-ampliacion-de-cupo.md): Camino 1 (cliente) la responde llenando
+  // el formulario normal; Camino 2 (Ejecutivo, página dedicada que no pasa
+  // por el formulario) hace que el backend la simule automáticamente al
+  // guardar (AmpliacionCupoService.guardarRespuestasFormularioAmpliacion),
+  // para que la solicitud no quede "vacía por dentro". sol_cupo_solicitado
+  // se deja como respaldo (esa columna sí es exclusiva de Camino 2) para
+  // el caso borde en que esa simulación falle — el propio flujo la trata
+  // como la fuente de verdad de último recurso si el insert de la
+  // respuesta no se completa. Búsqueda por fp_codigo, no fp_id fijo, para
+  // sobrevivir a un cambio de versión del formulario.
+  private static readonly ES_AMPLIACION_CUPO_SQL = `(
+    EXISTS (
+      SELECT 1
+      FROM Formulario_respuesta fr
+      INNER JOIN Formulario_pregunta fp2 ON fp2.fp_id = fr.fr_fp_id
+      INNER JOIN Formulario_pregunta_opcion fpo ON fpo.fpo_id = fr.fr_valor_opcion_id
+      WHERE fr.fr_sol_id = s.sol_id
+        AND fp2.fp_codigo = 'TIPO_SOLICITUD'
+        AND fpo.fpo_valor LIKE N'%mpliaci%'
+    )
+    OR s.sol_cupo_solicitado IS NOT NULL
+  )`;
+
   private async resolveLookupColumns() {
     const result = await this.dataSource.query(`
       SELECT
@@ -40,6 +66,7 @@ export class SolicitudesListadosService {
     estado_id?: string;
     etapa_id?: string;
     resultado_etapa_id?: string;
+    tipo_solicitud?: string;
   }): Promise<SolicitudListadoGestionDto[]> {
     const columns = await this.resolveLookupColumns();
 
@@ -96,6 +123,15 @@ export class SolicitudesListadosService {
       params.push(resultadoId);
     }
 
+    const tipoSolicitud = (query.tipo_solicitud || '').trim().toUpperCase();
+    if (tipoSolicitud === 'AMPLIACION') {
+      whereClauses.push(SolicitudesListadosService.ES_AMPLIACION_CUPO_SQL);
+    } else if (tipoSolicitud === 'NUEVO') {
+      whereClauses.push(
+        `NOT ${SolicitudesListadosService.ES_AMPLIACION_CUPO_SQL}`,
+      );
+    }
+
     const whereSql =
       whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
 
@@ -113,11 +149,7 @@ export class SolicitudesListadosService {
         NULL AS [auxiliar_area],
         s.sol_fecha_creacion AS [sol_fecha_creacion],
         s.sol_fecha_envio AS [sol_fecha_envio],
-        (
-          SELECT MAX(seh.seh_fecha_hora)
-          FROM Solicitudes_estados_hist seh
-          WHERE seh.seh_sol_id = s.sol_id AND seh.seh_estado_id = 5
-        ) AS [sol_fecha_aprobacion],
+        s.sol_fecha_aprobacion AS [sol_fecha_aprobacion],
         s.sol_estado_id AS [sol_estado_id],
         s.sol_etapa_actual_id AS [sol_etapa_actual_id],
         we.wet_nombre AS [etapa_nombre],
@@ -135,15 +167,9 @@ export class SolicitudesListadosService {
         s.sol_fecha_real_comite_credito_1 AS [sol_fecha_real_comite_credito_1],
         s.sol_fecha_estimada_comite_credito_2 AS [sol_fecha_estimada_comite_credito_2],
         s.sol_fecha_real_comite_credito_2 AS [sol_fecha_real_comite_credito_2],
-        s.sol_fecha_estimada_comite_credito_1_ejecutivo AS [sol_fecha_estimada_comite_credito_1_ejecutivo],
-        s.sol_fecha_real_comite_credito_1_ejecutivo AS [sol_fecha_real_comite_credito_1_ejecutivo],
-        s.sol_fecha_estimada_comite_credito_2_ejecutivo AS [sol_fecha_estimada_comite_credito_2_ejecutivo],
-        s.sol_fecha_real_comite_credito_2_ejecutivo AS [sol_fecha_real_comite_credito_2_ejecutivo],
-        s.sol_fecha_estimada_comite_credito_1_auxiliar AS [sol_fecha_estimada_comite_credito_1_auxiliar],
-        s.sol_fecha_real_comite_credito_1_auxiliar AS [sol_fecha_real_comite_credito_1_auxiliar],
-        s.sol_fecha_estimada_comite_credito_2_auxiliar AS [sol_fecha_estimada_comite_credito_2_auxiliar],
-        s.sol_fecha_real_comite_credito_2_auxiliar AS [sol_fecha_real_comite_credito_2_auxiliar],
         s.sol_cupo_aprobado AS [sol_cupo_aprobado],
+        s.sol_cupo_solicitado AS [sol_cupo_solicitado],
+        CAST(CASE WHEN ${SolicitudesListadosService.ES_AMPLIACION_CUPO_SQL} THEN 1 ELSE 0 END AS BIT) AS [es_ampliacion_cupo],
         s.sol_plazo_pago AS [sol_plazo_pago],
         s.sol_forma_pago AS [sol_forma_pago]
       FROM solicitudes s
@@ -178,8 +204,11 @@ export class SolicitudesListadosService {
       s.sol_id AS [sol_id],
       s.sol_numero_solicitud AS [sol_numero_solicitud],
       s.sol_estado_id AS [sol_estado_id],
+      se.ses_codigo AS [estado_codigo],
       s.sol_etapa_actual_id AS [sol_etapa_actual_id],
+      we.wet_codigo AS [etapa_codigo],
       s.sol_resultado_etapa_id AS [sol_resultado_etapa_id],
+      wr.wee_codigo AS [resultado_codigo],
       s.sol_cliente_id AS [sol_cliente_id],
       s.sol_fecha_creacion AS [sol_fecha_creacion],
       s.sol_created_at AS [sol_created_at],
@@ -189,6 +218,8 @@ export class SolicitudesListadosService {
       s.sol_version AS [sol_version],
       s.sol_formulario_version AS [sol_formulario_version],
       s.sol_cupo_aprobado AS [sol_cupo_aprobado],
+      s.sol_cupo_solicitado AS [sol_cupo_solicitado],
+      CAST(CASE WHEN ${SolicitudesListadosService.ES_AMPLIACION_CUPO_SQL} THEN 1 ELSE 0 END AS BIT) AS [es_ampliacion_cupo],
       s.sol_plazo_pago AS [sol_plazo_pago],
       s.sol_forma_pago AS [sol_forma_pago],
       s.sol_usuario_aprueba_condiciones AS [sol_usuario_aprueba_condiciones],
@@ -197,6 +228,9 @@ export class SolicitudesListadosService {
       c.cli_nro_identificacion AS [cliente_nit]
     FROM solicitudes s
     LEFT JOIN clientes c ON s.sol_cliente_id = c.cli_id
+    LEFT JOIN solicitud_estados se ON se.ses_id = s.sol_estado_id
+    LEFT JOIN workflow_etapas we ON we.wet_id = s.sol_etapa_actual_id
+    LEFT JOIN workflow_estado_etapa wr ON wr.wee_id = s.sol_resultado_etapa_id
     WHERE s.sol_cliente_id = @0
     `;
 
@@ -256,21 +290,33 @@ export class SolicitudesListadosService {
     return await this.dataSource.query(sql);
   }
 
-  async getSolicitudesPendientesPorEjecutivoId(usuarioId: number) {
+  async getSolicitudesPendientesPorEjecutivoId(
+    usuarioId: number,
+    ejecutivoIdOverride?: number,
+  ) {
     if (!usuarioId) {
       throw new Error('No se proporcionó usuario ID');
     }
 
-    const usuarioResult = await this.dataSource.query(
-      `SELECT usr_id, ejng_id FROM usuarios WHERE usr_id = @0`,
-      [usuarioId],
-    );
+    // `ejecutivoIdOverride` (un ejng_id real) reemplaza la resolución normal
+    // vía `usuarios.ejng_id` — lo usa un usuario que no es él mismo un
+    // Ejecutivo de Negocios pero tiene permiso de editar esta bandeja para
+    // consultar la de cualquier ejecutivo (ver controller).
+    let ejecutivoId: number | null;
+    if (ejecutivoIdOverride) {
+      ejecutivoId = ejecutivoIdOverride;
+    } else {
+      const usuarioResult = await this.dataSource.query(
+        `SELECT usr_id, ejng_id FROM usuarios WHERE usr_id = @0`,
+        [usuarioId],
+      );
 
-    if (!usuarioResult || usuarioResult.length === 0) {
-      throw new Error(`Usuario ${usuarioId} no encontrado`);
+      if (!usuarioResult || usuarioResult.length === 0) {
+        throw new Error(`Usuario ${usuarioId} no encontrado`);
+      }
+
+      ejecutivoId = usuarioResult[0].ejng_id;
     }
-
-    const ejecutivoId = usuarioResult[0].ejng_id;
 
     if (!ejecutivoId) {
       return [];
@@ -293,6 +339,8 @@ export class SolicitudesListadosService {
       s.sol_es_zona_franca AS [sol_es_zona_franca],
       s.sol_version AS [sol_version],
       s.sol_formulario_version AS [sol_formulario_version],
+      s.sol_cupo_solicitado AS [sol_cupo_solicitado],
+      CAST(CASE WHEN ${SolicitudesListadosService.ES_AMPLIACION_CUPO_SQL} THEN 1 ELSE 0 END AS BIT) AS [es_ampliacion_cupo],
       c.${columns.cliRazonSocial} AS [cliente_nombre],
       c.cli_nro_identificacion AS [cliente_nit],
       cop_cli.cop_id AS [sol_co_id],
@@ -654,13 +702,24 @@ export class SolicitudesListadosService {
         s.sol_etapa_actual_id AS [sol_etapa_actual_id],
         s.sol_resultado_etapa_id AS [sol_resultado_etapa_id],
         s.sol_fecha_creacion AS [sol_fecha_creacion],
+        s.sol_fecha_envio AS [sol_fecha_envio],
         s.sol_fecha_estimada_respuesta_comercial AS [sol_fecha_estimada_respuesta_comercial],
         CASE WHEN we.wet_codigo = 'ASC' THEN COALESCE(fe_vigente.swh_fecha_estimada, s.sol_fecha_estimada_auxiliar_servicio_cliente) ELSE s.sol_fecha_estimada_auxiliar_servicio_cliente END AS [sol_fecha_estimada_auxiliar_servicio_cliente],
         CASE WHEN we.wet_codigo = 'OFC' THEN COALESCE(fe_vigente.swh_fecha_estimada, s.sol_fecha_estimada_oficial_cumplimiento) ELSE s.sol_fecha_estimada_oficial_cumplimiento END AS [sol_fecha_estimada_oficial_cumplimiento],
         CASE WHEN we.wet_codigo = 'CC1' THEN COALESCE(fe_vigente.swh_fecha_estimada, s.sol_fecha_estimada_comite_credito_1) ELSE s.sol_fecha_estimada_comite_credito_1 END AS [sol_fecha_estimada_comite_credito_1],
         CASE WHEN we.wet_codigo = 'CC2' THEN COALESCE(fe_vigente.swh_fecha_estimada, s.sol_fecha_estimada_comite_credito_2) ELSE s.sol_fecha_estimada_comite_credito_2 END AS [sol_fecha_estimada_comite_credito_2],
+        -- Fecha en que la etapa INMEDIATAMENTE ANTERIOR del flujo
+        -- (CLI->EJN->ASC->OFC->CC1->CC2) completó su gestión — cada página
+        -- de bandeja (ASC/OFC/CC1/CC2) usa solo la columna de su
+        -- antecesor real, ver gestion-*/page.tsx.
+        s.sol_fecha_real_ejecutivo AS [sol_fecha_real_ejecutivo],
+        s.sol_fecha_real_auxiliar_servicio_cliente AS [sol_fecha_real_auxiliar_servicio_cliente],
+        s.sol_fecha_real_oficial_cumplimiento AS [sol_fecha_real_oficial_cumplimiento],
+        s.sol_fecha_real_comite_credito_1 AS [sol_fecha_real_comite_credito_1],
         s.sol_consumo_mensual_proyectado AS [consumo_mensual_proyectado],
         s.sol_observacion_ejn AS [observacionesComercial],
+        s.sol_cupo_solicitado AS [sol_cupo_solicitado],
+        CAST(CASE WHEN ${SolicitudesListadosService.ES_AMPLIACION_CUPO_SQL} THEN 1 ELSE 0 END AS BIT) AS [es_ampliacion_cupo],
         we.wet_nombre AS [etapa_nombre],
         wr.wee_nombre AS [resultado_nombre],
         s.sol_ejecutivo_id AS [sol_ejecutivo_id],

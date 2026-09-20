@@ -29,7 +29,7 @@ export class CreateClienteDto {
 
   @IsBoolean()
   @IsOptional()
-  cli_acceso_portal_clientes?: boolean;
+  cli_acceso_pc?: boolean;
 
   @IsNumber()
   ejng_id: number;

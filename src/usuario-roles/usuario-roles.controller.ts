@@ -22,6 +22,12 @@ export class UsuarioRolesController {
     return await this.usuarioRolesService.getAllUsuarios();
   }
 
+  @Get('asignaciones')
+  @RequierePermiso('/seguridad/usuario-roles', 'ver')
+  async getAllAsignaciones() {
+    return await this.usuarioRolesService.getAllAsignaciones();
+  }
+
   @Get(':usuarioId')
   @RequierePermiso('/seguridad/usuario-roles', 'ver')
   async getByUsuario(@Param('usuarioId', ParseIntPipe) usuarioId: number) {

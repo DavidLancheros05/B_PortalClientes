@@ -44,6 +44,27 @@ export class IndicadoresController {
     }
   }
 
+  @Get('solicitudes')
+  async getListadoSla(
+    @Query()
+    query: {
+      numero?: string;
+      fecha_desde?: string;
+      fecha_hasta?: string;
+      estado?: string;
+      sla?: 'vencida' | 'en_riesgo' | 'a_tiempo';
+    },
+  ) {
+    try {
+      return await this.indicadoresService.getListadoSla(query);
+    } catch (error: any) {
+      return {
+        message: error.message || 'Error interno consultando el listado de SLA',
+        error: String(error),
+      };
+    }
+  }
+
   @Get('detalle')
   async getDetalleArea(
     @Query()

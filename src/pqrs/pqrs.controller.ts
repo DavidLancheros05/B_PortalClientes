@@ -63,8 +63,8 @@ export class PQRSController {
 
   @UseGuards(JwtAuthGuard)
   @Get(':id')
-  async getById(@Param('id') id: number) {
-    return this.pqrsService.getById(id);
+  async getById(@Param('id') id: number, @Request() req) {
+    return this.pqrsService.getById(id, req.user);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -86,14 +86,14 @@ export class PQRSController {
 
   @UseGuards(JwtAuthGuard)
   @Get(':id/comentarios')
-  async getComentarios(@Param('id') id: number) {
-    return this.pqrsService.getComentarios(id);
+  async getComentarios(@Param('id') id: number, @Request() req) {
+    return this.pqrsService.getComentarios(id, req.user);
   }
 
   @UseGuards(JwtAuthGuard)
   @Get(':id/historial')
-  async getHistorial(@Param('id') id: number) {
-    return this.pqrsService.getHistorial(id);
+  async getHistorial(@Param('id') id: number, @Request() req) {
+    return this.pqrsService.getHistorial(id, req.user);
   }
 
   @UseGuards(JwtAuthGuard)

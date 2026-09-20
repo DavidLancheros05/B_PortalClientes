@@ -21,6 +21,43 @@ export function leerLogoBytes(): Buffer {
   return fs.readFileSync(path.join(process.cwd(), 'public', 'logo.jpg'));
 }
 
+// Logo real usado en el encabezado de un PDF_SOLICITUD: por defecto el de
+// `tdo_encabezado_imagen_url` (subible desde Parametrización > Documentos >
+// editar, mismo mecanismo — POST .../encabezado-imagen — que ya usan los
+// documentos TEXTO; antes esa pantalla no ofrecía subir nada para
+// PDF_SOLICITUD, dejando el logo fijo en public/logo.jpg sin forma de
+// cambiarlo). Si el tipo de documento no tiene imagen propia configurada,
+// cae al logo fijo de siempre.
+export async function obtenerLogoBytes(
+  encabezadoImagenUrl?: string | null,
+): Promise<Buffer> {
+  if (encabezadoImagenUrl) {
+    try {
+      const res = await fetch(encabezadoImagenUrl);
+      if (res.ok) {
+        return Buffer.from(await res.arrayBuffer());
+      }
+    } catch {
+      // Si la URL falla (red, imagen borrada, etc.) cae al logo fijo en vez
+      // de romper la generación del PDF.
+    }
+  }
+  return leerLogoBytes();
+}
+
+// PNG empieza con la firma 0x89 'P' 'N' 'G'; cualquier otra cosa (jpg,
+// típicamente) se intenta como JPEG. pdf-lib exige usar el método correcto
+// (embedPng/embedJpg) según el formato real de los bytes.
+export function esPng(bytes: Buffer): boolean {
+  return (
+    bytes.length > 4 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47
+  );
+}
+
 export interface EncabezadoOficialConfig {
   marginLeft: number;
   contentWidth: number;

@@ -26,6 +26,7 @@ export class UsuarioRolesService {
       usr_id: u.usr_id,
       usr_nombre: u.usr_nombre,
       usr_correo: u.usr_correo,
+      usr_usuario: u.usr_usuario,
     }));
   }
 
@@ -40,6 +41,26 @@ export class UsuarioRolesService {
       rolId: ur.ur_rol_id,
       rolNombre: ur.rol.rol_nombre,
       rolCodigo: ur.rol.rol_codigo,
+    }));
+  }
+
+  /** Todas las asignaciones activas en una sola consulta — usado para
+   * agrupar por rol (¿qué usuarios tiene cada rol?) sin pedir una llamada
+   * por usuario. */
+  async getAllAsignaciones() {
+    const usuarioRoles = await this.usuarioRolRepository.find({
+      where: { ur_activo: true },
+      relations: ['rol', 'usuario'],
+    });
+
+    return usuarioRoles.map((ur) => ({
+      usuarioId: ur.ur_usuario_id,
+      usuarioNombre: ur.usuario?.usr_nombre,
+      usuarioCorreo: ur.usuario?.usr_correo,
+      usuarioLogin: ur.usuario?.usr_usuario,
+      rolId: ur.ur_rol_id,
+      rolNombre: ur.rol?.rol_nombre,
+      rolCodigo: ur.rol?.rol_codigo,
     }));
   }
 

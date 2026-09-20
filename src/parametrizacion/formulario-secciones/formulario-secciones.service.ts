@@ -119,10 +119,13 @@ export class FormularioSeccionesService {
   }
 
   async eliminar(id: number): Promise<boolean> {
+    // `result.rowsAffected` no viene como número plano con este driver — se
+    // confirma el borrado con OUTPUT en vez de confiar en rowsAffected,
+    // mismo patrón que crear()/actualizar() ya usan para leer el resultado.
     const result = await this.dataSource.query(
-      `DELETE FROM Formulario_secciones WHERE fs_id = @0`,
+      `DELETE FROM Formulario_secciones OUTPUT DELETED.fs_id WHERE fs_id = @0`,
       [id],
     );
-    return result.rowsAffected > 0;
+    return result.length > 0;
   }
 }

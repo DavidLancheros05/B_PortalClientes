@@ -16,14 +16,19 @@ export class FormularioRespuestaEntity {
   fr_id: number;
 
   @ManyToOne(() => SolicitudEntity, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'fr_solicitud_id' })
-  fr_solicitud_id: SolicitudEntity;
+  @JoinColumn({ name: 'fr_sol_id' })
+  fr_sol_id: SolicitudEntity;
 
   @ManyToOne(() => FormularioPregunta)
   @JoinColumn({ name: 'fr_fp_id' })
   fr_fp_id: FormularioPregunta;
 
-  @Column({ type: 'nvarchar', length: 'MAX', nullable: true, name: 'fr_valor_texto' })
+  @Column({
+    type: 'nvarchar',
+    length: 'MAX',
+    nullable: true,
+    name: 'fr_valor_texto',
+  })
   fr_valor_texto: string;
 
   @Column({ type: 'decimal', nullable: true, name: 'fr_valor_numero' })

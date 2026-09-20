@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
+import axios from 'axios';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { UsersService } from '../users/users.service';
 import { PermissionsService } from '../permissions/permissions.service';
@@ -20,11 +21,28 @@ export class AuthService {
     private readonly notificacionesService: NotificacionesService,
   ) {}
 
+  // Enmascara el correo para mostrarlo en la confirmación sin revelarlo
+  // completo: "da***05@gmail.com" (2 primeros y 2 últimos del usuario,
+  // dominio completo). Si el usuario tiene 4 caracteres o menos, se
+  // enmascara todo menos el primero para no terminar mostrándolo completo.
+  private enmascararCorreo(email: string): string {
+    const [usuario, dominio] = email.split('@');
+    if (!usuario || !dominio) return email;
+    if (usuario.length <= 4) {
+      return `${usuario[0]}***@${dominio}`;
+    }
+    const inicio = usuario.slice(0, 2);
+    const fin = usuario.slice(-2);
+    return `${inicio}***${fin}@${dominio}`;
+  }
+
   // "Olvidé mi contraseña" — respuesta siempre genérica exista o no la
   // cuenta, para no dejar enumerar identificaciones/usuarios válidos vía
-  // este endpoint. El token real solo viaja una vez, por correo; en BD se
-  // guarda su hash SHA-256 (mismo criterio que las contraseñas: nunca un
-  // secreto en texto plano en la tabla).
+  // este endpoint (salvo el correo enmascarado, que solo se agrega cuando
+  // la cuenta sí existe — a pedido explícito del usuario para que pueda
+  // reconocer a qué correo se envió). El token real solo viaja una vez,
+  // por correo; en BD se guarda su hash SHA-256 (mismo criterio que las
+  // contraseñas: nunca un secreto en texto plano en la tabla).
   async forgotPassword(
     identifier: string,
     accessType: 'cliente' | 'usuario',
@@ -40,7 +58,7 @@ export class AuthService {
     if (accessType === 'cliente') {
       const rows = await this.sistemaComercialDb.query(
         `SELECT cli_id, cli_correo, cli_razon_social FROM clientes
-         WHERE cli_nro_identificacion = @0 AND cli_acceso_portal_clientes = 1`,
+         WHERE cli_nro_identificacion = @0 AND cli_acceso_pc = 1`,
         [identifier],
       );
       const row = rows?.[0];
@@ -50,7 +68,7 @@ export class AuthService {
     } else {
       const rows = await this.sistemaComercialDb.query(
         `SELECT usr_id, usr_correo, usr_nombre FROM usuarios
-         WHERE usr_usuario = @0 AND usr_acceso_portal_clientes = 1`,
+         WHERE usr_usuario = @0 AND usr_acceso_pc = 1`,
         [identifier],
       );
       const row = rows?.[0];
@@ -83,7 +101,10 @@ export class AuthService {
       reset_url: resetUrl,
     });
 
-    return RESPUESTA_GENERICA;
+    return {
+      ...RESPUESTA_GENERICA,
+      correoEnmascarado: this.enmascararCorreo(cuenta.email),
+    };
   }
 
   async resetPassword(token: string, newPassword: string) {
@@ -144,7 +165,7 @@ export class AuthService {
   private async loginCliente(identificacion: string, password: string) {
     const cliente = await this.sistemaComercialDb.query(
       `
-      SELECT cli_id, cli_razon_social, cli_nro_identificacion, cli_password, cli_acceso_portal_clientes, cli_token_version
+      SELECT cli_id, cli_razon_social, cli_nro_identificacion, cli_password, cli_acceso_pc, cli_token_version
       FROM clientes
       WHERE cli_nro_identificacion = @0
       `,
@@ -157,7 +178,7 @@ export class AuthService {
 
     const cli = cliente[0];
 
-    if (!cli.cli_acceso_portal_clientes) {
+    if (!cli.cli_acceso_pc) {
       throw new UnauthorizedException(
         'Cliente no tiene acceso al portal habilitado',
       );
@@ -200,7 +221,7 @@ export class AuthService {
         usr_id: cli.cli_id,
         nombre: cli.cli_razon_social,
         usuario_email: '',
-        usuario_activo: cli.cli_acceso_portal_clientes,
+        usuario_activo: cli.cli_acceso_pc,
         tipo: 'cliente',
         cliente_id: cli.cli_id,
         rol: {
@@ -220,7 +241,7 @@ export class AuthService {
 
     const usuarioData = await this.sistemaComercialDb.query(
       `
-      SELECT u.usr_id, u.usr_usuario, u.usr_password, u.usr_acceso_portal_clientes,
+      SELECT u.usr_id, u.usr_usuario, u.usr_password, u.usr_acceso_pc,
              u.usr_nombre, u.usr_correo, u.ejng_id, u.usr_token_version,
              ur.ur_activo, ur.ur_rol_id,
              r.rol_id, r.rol_nombre, r.rol_codigo
@@ -238,7 +259,7 @@ export class AuthService {
 
     const usr = usuarioData[0];
 
-    if (!usr.usr_acceso_portal_clientes) {
+    if (!usr.usr_acceso_pc) {
       throw new UnauthorizedException(
         'Usuario no tiene acceso al portal habilitado',
       );
@@ -287,14 +308,42 @@ export class AuthService {
     };
   }
 
+  // Verifica el token del widget "No soy un robot" contra la API de Google.
+  // Se desactiva sola (no bloquea el login) mientras RECAPTCHA_SECRET_KEY no
+  // esté configurada en .env — así el código queda listo desde ya, pero solo
+  // empieza a exigir el captcha cuando se cree el sitio en
+  // https://www.google.com/recaptcha/admin y se agregue la key.
+  private async verificarCaptcha(token: string | undefined) {
+    const secret = String(process.env.RECAPTCHA_SECRET_KEY || '').trim();
+    if (!secret) return;
+
+    if (!token) {
+      throw new UnauthorizedException('Completa el captcha para continuar');
+    }
+
+    const { data } = await axios.post(
+      'https://www.google.com/recaptcha/api/siteverify',
+      null,
+      { params: { secret, response: token } },
+    );
+
+    if (!data?.success) {
+      throw new UnauthorizedException(
+        'No se pudo verificar el captcha, intenta de nuevo',
+      );
+    }
+  }
+
   async loginWithAccessType(
     identifier: string,
     password: string,
     accessType: 'cliente' | 'usuario',
+    captchaToken?: string,
   ) {
     console.log(
       `[AuthService] loginWithAccessType called with identifier: ${identifier}, accessType: ${accessType}`,
     );
+    await this.verificarCaptcha(captchaToken);
     if (accessType === 'cliente') {
       return this.loginCliente(identifier, password);
     } else if (accessType === 'usuario') {

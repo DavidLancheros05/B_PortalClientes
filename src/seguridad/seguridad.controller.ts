@@ -69,12 +69,4 @@ export class SeguridadController {
     }
   }
 
-  @Get('modulos')
-  async getModulos() {
-    try {
-      return await this.seguridadService.getModulos();
-    } catch (error: any) {
-      throw new HttpException(error.message || 'Error cargando módulos', 500);
-    }
-  }
 }

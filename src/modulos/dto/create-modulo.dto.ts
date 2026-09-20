@@ -1,4 +1,10 @@
-import { IsString, IsOptional, IsNumber, MinLength } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsNumber,
+  IsBoolean,
+  MinLength,
+} from 'class-validator';
 
 export class CreateModuloDto {
   @IsString()
@@ -20,4 +26,8 @@ export class CreateModuloDto {
   @IsOptional()
   @IsNumber()
   padre_id?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  es_categoria?: boolean;
 }

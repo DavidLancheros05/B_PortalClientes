@@ -5,7 +5,7 @@ export class ClienteDetailResponseDto {
   cli_tipo_identificacion: number;
   cli_direccion: string;
   cli_correo?: string;
-  cli_acceso_portal_clientes: boolean;
+  cli_acceso_pc: boolean;
   cli_estado: string;
   pai_id?: number;
   dpto_id?: number;

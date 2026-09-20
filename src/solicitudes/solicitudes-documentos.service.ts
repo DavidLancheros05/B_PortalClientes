@@ -33,23 +33,20 @@ export class SolicitudesDocumentosService {
           u_crea.usr_nombre as usuario_registro,
           u_crea.usr_id as usuario_registro_id,
           COALESCE(ejn.ejng_nombre, u_ej.usr_nombre) as ejecutivo_nombre,
+          s.sol_observacion_ejn as observacionesComercial,
           u_rev.usr_nombre as usuario_revision,
           seh.seh_fecha_hora as fecha_revision,
+          se.ses_codigo as estado_codigo,
           we.wet_nombre as etapa_nombre,
+          we.wet_codigo as etapa_codigo,
           wr.wee_nombre as resultado_nombre,
-          CASE WHEN s.sol_estado_id = 5 THEN COALESCE(
-            (
-              SELECT MAX(seh_ap.seh_fecha_hora)
-              FROM Solicitudes_estados_hist seh_ap
-              WHERE seh_ap.seh_sol_id = s.sol_id AND seh_ap.seh_estado_id = 5
-            ),
-            s.sol_fecha_real_comite_credito_2
-          ) END as fecha_aprobacion,
+          wr.wee_codigo as resultado_codigo,
+          s.sol_fecha_aprobacion as fecha_aprobacion,
           (
             SELECT TOP 1 fr.fr_valor_numero
             FROM Formulario_respuesta fr
             JOIN Formulario_pregunta fp ON fp.fp_id = fr.fr_fp_id
-            WHERE fr.fr_solicitud_id = s.sol_id
+            WHERE fr.fr_sol_id = s.sol_id
               AND fp.fp_codigo = 'CONCEPTO_CONSUMO_PROYECTADO'
               AND ISNULL(fp.fp_version, 1) = s.sol_formulario_version
           ) as cliente_consumo_mensual_proyectado,
@@ -57,7 +54,7 @@ export class SolicitudesDocumentosService {
             SELECT TOP 1 fr.fr_valor_numero
             FROM Formulario_respuesta fr
             JOIN Formulario_pregunta fp ON fp.fp_id = fr.fr_fp_id
-            WHERE fr.fr_solicitud_id = s.sol_id
+            WHERE fr.fr_sol_id = s.sol_id
               AND fp.fp_codigo = 'CONCEPTO_TONELADAS_PROYECTADO'
               AND ISNULL(fp.fp_version, 1) = s.sol_formulario_version
           ) as cliente_toneladas_proyectadas
@@ -70,6 +67,7 @@ export class SolicitudesDocumentosService {
         LEFT JOIN usuarios u_rev ON seh.seh_usr_id = u_rev.usr_id
         LEFT JOIN workflow_etapas we ON we.wet_id = s.sol_etapa_actual_id
         LEFT JOIN workflow_estado_etapa wr ON wr.wee_id = s.sol_resultado_etapa_id
+        LEFT JOIN solicitud_estados se ON se.ses_id = s.sol_estado_id
         WHERE s.sol_id = @0
       `;
 
@@ -404,25 +402,44 @@ export class SolicitudesDocumentosService {
         s.sol_numero_solicitud,
         s.sol_estado_id,
         ses.ses_nombre AS estado_solicitud,
+        s.sol_fecha_envio AS sol_fecha_envio,
         td.tdo_nombre AS documento_nombre,
         sa.sa_nombre_original,
         sa.sa_tipo_mime,
         sa.sa_tamaño_bytes,
         sa.sa_ruta_almacenamiento,
         sa.sa_created_at AS fecha_carga,
+        sa.sa_fecha_emision AS sa_fecha_emision,
         sa.sa_fecha_vencimiento AS sa_fecha_vencimiento,
         CASE
           WHEN sa.sa_fecha_vencimiento IS NULL THEN 'SIN_VIGENCIA'
           WHEN CAST(sa.sa_fecha_vencimiento AS DATE) < CAST(GETDATE() AS DATE) THEN 'VENCIDO'
           ELSE 'VIGENTE'
         END AS estado_vencimiento,
-        c.cli_razon_social AS cliente_nombre
+        c.cli_id AS cliente_id,
+        c.cli_razon_social AS cliente_nombre,
+        s.sol_ejecutivo_id AS ejecutivo_id,
+        COALESCE(e.ejng_nombre, u.usr_nombre) AS ejecutivo_nombre,
+        CAST(CASE WHEN (
+          EXISTS (
+            SELECT 1
+            FROM Formulario_respuesta fr
+            INNER JOIN Formulario_pregunta fp2 ON fp2.fp_id = fr.fr_fp_id
+            INNER JOIN Formulario_pregunta_opcion fpo ON fpo.fpo_id = fr.fr_valor_opcion_id
+            WHERE fr.fr_sol_id = s.sol_id
+              AND fp2.fp_codigo = 'TIPO_SOLICITUD'
+              AND fpo.fpo_valor LIKE N'%mpliaci%'
+          )
+          OR s.sol_cupo_solicitado IS NOT NULL
+        ) THEN 1 ELSE 0 END AS BIT) AS es_ampliacion_cupo
       FROM Solicitud_archivo sa
       INNER JOIN solicitudes s ON sa.sa_sol_id = s.sol_id
       INNER JOIN solicitud_estados ses ON s.sol_estado_id = ses.ses_id
       LEFT JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
       LEFT JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tipo_documento_id
       INNER JOIN Clientes c ON s.sol_cliente_id = c.cli_id
+      LEFT JOIN Ejecutivo_negocio e ON e.ejng_id = s.sol_ejecutivo_id
+      LEFT JOIN usuarios u ON u.usr_id = s.sol_ejecutivo_id
       WHERE sa.sa_estado = 'activo'
       ORDER BY sa.sa_created_at DESC
     `;

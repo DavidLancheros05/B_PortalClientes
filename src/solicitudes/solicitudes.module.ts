@@ -20,6 +20,8 @@ import { PermissionsModule } from '../permissions/permissions.module';
 import { ClienteArchivoModule } from '../cliente-archivo/cliente-archivo.module';
 import { ClienteDatosNormalizadosModule } from '../cliente-datos-normalizados/cliente-datos-normalizados.module';
 import { SolicitudEstadosModule } from '../common/solicitud-estados/solicitud-estados.module';
+import { VariablesPlantillaModule } from '../parametrizacion/variables-plantilla/variables-plantilla.module';
+import { RevisionesDocumentosModule } from '../parametrizacion/revisiones-documentos/revisiones-documentos.module';
 
 @Module({
   imports: [
@@ -33,6 +35,8 @@ import { SolicitudEstadosModule } from '../common/solicitud-estados/solicitud-es
     ClienteArchivoModule,
     ClienteDatosNormalizadosModule,
     SolicitudEstadosModule,
+    VariablesPlantillaModule,
+    RevisionesDocumentosModule,
   ],
   controllers: [SolicitudesController], // <-- esto es clave
   providers: [

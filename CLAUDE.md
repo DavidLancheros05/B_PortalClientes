@@ -19,9 +19,10 @@ parado (`git -C BACKEND status`, `git -C FRONTEND status`), nunca asumir.
 
 ## Stack y cómo correr en local
 
-- **BACKEND**: NestJS + SQL Server (paquete `mssql`), hospedado en
-  `SQL8020.site4now.net`. Config en `BACKEND/.env` (nunca commitear este
-  archivo — ya está en `.gitignore`). `npm run start:dev` (nest watch mode),
+- **BACKEND**: NestJS + SQL Server (paquete `mssql`). El host/credenciales
+  reales viven **solo** en `BACKEND/.env` (nunca commitear este archivo —
+  ya está en `.gitignore`; no hardcodear el host en ningún script ni
+  documento, siempre leerlo de ahí). `npm run start:dev` (nest watch mode),
   puerto en `.env` (`PORT`), prefijo global de rutas `/api` (ver
   `src/main.ts::setGlobalPrefix('api')`).
 - **FRONTEND**: Next.js App Router. `npm run dev`, puerto 3000. Cliente axios
@@ -228,8 +229,8 @@ hardcodeado — moverlo requeriría cambiar esa ruta en el script.
   conversión "correcta" a UTC (ej. `new Date(valor).toLocaleString()` en el
   navegador, o restar el offset a mano) la corra 5 horas para atrás. Posible
   causa: `new Date()` en el proceso Node vs `GETDATE()` en SQL Server (host
-  compartido `SQL8020.site4now.net`) podrían no estar usando el mismo
-  criterio de zona horaria al escribir, y el driver `mssql`/tedious etiqueta
+  compartido, ver `DB_HOST` en `BACKEND/.env`) podrían no estar usando el
+  mismo criterio de zona horaria al escribir, y el driver `mssql`/tedious etiqueta
   todo como UTC al leer sin importar cómo se escribió. Impacto potencial:
   cualquier fecha/hora mostrada en el frontend que haga esa conversión
   "correcta" (no solo mostrar el string crudo) saldría 5 horas adelantada o
@@ -314,6 +315,59 @@ hardcodeado — moverlo requeriría cambiar esa ruta en el script.
   routes:generate`, y recién ahí crear/editar el módulo de menú — si el
   campo de ruta se genera vacío o falta la página que buscas, casi
   siempre es porque `app-routes.json` está desactualizado.
+- **`leftJoinAndSelect` de TypeORM + columnas `nvarchar(MAX)` = timeout de
+  15s (500 "Internal server error"), aunque la tabla tenga pocas filas.**
+  Reproducido contra la instancia de SQL Server que apuntaba `BACKEND/.env`
+  en el momento (`DB_HOST=localhost`, un `sqlservr.exe` corriendo en esta
+  misma máquina — **no** confirmado todavía si también pasa contra el host
+  remoto compartido al que apunta la config comentada del mismo `.env` y
+  la que describe la sección "Stack y cómo correr en local" de este
+  archivo). `FormularioPreguntasService.findAll`
+  (`GET /parametrizacion/formulario-preguntas`, usado por "Nueva solicitud"
+  para cargar el formulario) hacía `createQueryBuilder('fp')
+  .leftJoinAndSelect('fp.opciones', ...).leftJoinAndSelect('fp.seccion',
+  ...)`. `Formulario_pregunta` tiene 4 columnas `nvarchar(MAX)`
+  (`fp_descripcion`, `fp_tabla_columnas`, `fp_tabla_limite_reglas`,
+  `fp_catalogo_filtro_reglas`); el `JOIN` con `opciones` multiplica filas.
+  Confirmado con SQL crudo (`db-query.mjs`) que **una sola** columna MAX
+  con el JOIN es rápida, pero **dos o más** MAX juntas con el JOIN
+  (~140 preguntas × opciones) tardan >15s incluso en esa instancia local —
+  no es un bug de TypeORM ni de este código en particular, es el motor de
+  SQL Server manejando mal LOB data multiplicada por un JOIN.
+  **Primer intento de fix, revertido**: `repository.find({ relations:
+  {opciones: true, seccion: true}, relationLoadStrategy: 'query' })` sí
+  soluciona el timeout (~200ms), pero tiene su propio bug — con esta
+  combinación de relaciones (`OneToMany` con `@JoinColumn` explícito del
+  lado `ManyToOne`), TypeORM 0.3.28 arma **dos** queries distintas para la
+  misma relación `opciones` y la mapea mal: `opciones` vuelve **siempre
+  vacío** para las 30 preguntas tipo SELECT/SELECT_TABLA/MULTISELECT del
+  formulario real, sin ningún error — se detectó porque "Tipo de
+  solicitud" dejó de mostrar sus opciones en el formulario de nueva
+  solicitud. No usar `relationLoadStrategy: 'query'` en este proyecto
+  hasta confirmar en una versión más nueva de TypeORM que ya no pasa.
+  **Fix real, el que quedó**: nada de relaciones de TypeORM acá — 3
+  queries manuales independientes (`find()` de `FormularioPregunta` sin
+  relations, `find()` de `FormularioPreguntaOpcion` filtrado con
+  `In(fpIds)`, `find()` de `Seccion` filtrado con `In(seccionIds)`) y
+  mergeadas a mano en JS con `Map`. Sin JOIN no hay multiplicación de
+  filas por las columnas MAX, y sin relación de TypeORM de por medio no
+  hay riesgo de este bug de mapeo. ~90-250ms verificado en vivo, opciones
+  confirmadas pobladas para las 30 preguntas SELECT-like reales (las 6 que
+  quedan con `opciones: []` son correctas — son preguntas con
+  `fp_catalogo_tabla` seteado, que sacan sus valores de un catálogo
+  externo en el frontend, no de `Formulario_pregunta_opcion`). Si algún
+  otro `leftJoinAndSelect`/`createQueryBuilder` empieza a dar 500 sin
+  causa obvia en el código, sospechar primero de esta combinación
+  (columnas `nvarchar(MAX)` + JOIN que multiplica filas) antes de asumir
+  un bug de lógica — reproducir con un script standalone de TypeORM
+  (`ts-node --transpile-only -r tsconfig-paths/register`, igual que
+  `scripts/mint-jwt.mjs`/`db-query.mjs` pero con `DataSource` de TypeORM
+  en vez de `mssql` crudo) para ver el stack trace real, porque el filtro
+  `LogExceptionsFilter` solo lo imprime en la consola del proceso
+  `start:dev`, no en la respuesta HTTP. Y **verificar siempre el contenido
+  real de las relaciones**, no solo el status code/tiempo de respuesta —
+  acá un fix que parecía perfecto (200 OK, rápido, cantidad de filas
+  correcta) rompió en silencio todos los `opciones` de la respuesta.
 
 ## Patrones de verificación que ya funcionan en este proyecto
 

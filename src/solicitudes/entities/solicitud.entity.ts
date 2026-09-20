@@ -96,61 +96,16 @@ export class SolicitudEntity {
   })
   sol_fecha_estimada_respuesta_comercial: Date | null;
 
+  // Fecha real de la aprobación final en Comité de Crédito 2 — a diferencia
+  // de sol_fecha_real_comite_credito_2 (que se pisa también en rechazo), esta
+  // solo se escribe cuando aprobado=true. Fuente de {{fecha_aprobacion}} en
+  // Variables de Plantilla (ver solicitudes-workflow.service.ts).
   @Column({
-    name: 'sol_fecha_estimada_comite_credito_1_ejecutivo',
+    name: 'sol_fecha_aprobacion',
     type: 'date',
     nullable: true,
   })
-  sol_fecha_estimada_comite_credito_1_ejecutivo: Date | null;
-
-  @Column({
-    name: 'sol_fecha_real_comite_credito_1_ejecutivo',
-    type: 'date',
-    nullable: true,
-  })
-  sol_fecha_real_comite_credito_1_ejecutivo: Date | null;
-
-  @Column({
-    name: 'sol_fecha_estimada_comite_credito_2_ejecutivo',
-    type: 'date',
-    nullable: true,
-  })
-  sol_fecha_estimada_comite_credito_2_ejecutivo: Date | null;
-
-  @Column({
-    name: 'sol_fecha_real_comite_credito_2_ejecutivo',
-    type: 'date',
-    nullable: true,
-  })
-  sol_fecha_real_comite_credito_2_ejecutivo: Date | null;
-
-  @Column({
-    name: 'sol_fecha_estimada_comite_credito_1_auxiliar',
-    type: 'date',
-    nullable: true,
-  })
-  sol_fecha_estimada_comite_credito_1_auxiliar: Date | null;
-
-  @Column({
-    name: 'sol_fecha_real_comite_credito_1_auxiliar',
-    type: 'date',
-    nullable: true,
-  })
-  sol_fecha_real_comite_credito_1_auxiliar: Date | null;
-
-  @Column({
-    name: 'sol_fecha_estimada_comite_credito_2_auxiliar',
-    type: 'date',
-    nullable: true,
-  })
-  sol_fecha_estimada_comite_credito_2_auxiliar: Date | null;
-
-  @Column({
-    name: 'sol_fecha_real_comite_credito_2_auxiliar',
-    type: 'date',
-    nullable: true,
-  })
-  sol_fecha_real_comite_credito_2_auxiliar: Date | null;
+  sol_fecha_aprobacion: Date | null;
 
   // Condiciones Financieras (cuando se aprueba en Comité Crédito 2)
   @Column({
@@ -186,7 +141,7 @@ export class SolicitudEntity {
 
   @OneToMany(
     () => FormularioRespuestaEntity,
-    (respuesta) => respuesta.fr_solicitud_id,
+    (respuesta) => respuesta.fr_sol_id,
     {
       cascade: true,
     },

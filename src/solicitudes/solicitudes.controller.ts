@@ -76,7 +76,12 @@ export class SolicitudesController {
     @Body() dto: any,
     @Req()
     req: Request & {
-      user: { rol?: string; cliente_id?: number; cli_id?: number };
+      user: {
+        rol?: string;
+        cliente_id?: number;
+        cli_id?: number;
+        ejng_id?: number;
+      };
     },
   ) {
     // Un CLIENTE solo puede crear solicitudes para sí mismo — sin esto,
@@ -95,6 +100,22 @@ export class SolicitudesController {
       throw new ForbiddenException(
         'No tienes permiso para crear una solicitud para otro cliente',
       );
+    }
+
+    // Mismo criterio que el bloque de arriba, pero para EJECUTIVO: el
+    // frontend ya filtra el selector de cliente a los suyos (ver
+    // nueva/page.tsx), pero eso es solo UX — sin este chequeo, un EJECUTIVO
+    // podía mandar el cliente_id de otro ejecutivo directo al API.
+    if (req.user?.rol === 'EJECUTIVO') {
+      const esSuCliente = await this.solicitudesService.clienteEsDelEjecutivo(
+        Number(dto?.cliente_id),
+        Number(req.user?.ejng_id),
+      );
+      if (!esSuCliente) {
+        throw new ForbiddenException(
+          'No tienes permiso para crear una solicitud para este cliente',
+        );
+      }
     }
 
     try {
@@ -353,13 +374,19 @@ export class SolicitudesController {
   @Get('ejecutivo/:ejecutivoId/pendientes')
   async getPendientesForEjecutivo(
     @Param('ejecutivoId', ParseIntPipe) ejecutivoId: number,
+    @Query('verComoEjecutivo') verComoEjecutivo?: string,
   ) {
     console.log('📥 Endpoint ejecutado');
     console.log('👉 ejecutivoId recibido:', ejecutivoId);
 
+    // `verComoEjecutivo` es el ejng_id (no el usr_id) de OTRO ejecutivo a
+    // consultar — lo usa un usuario con permiso de editar sobre esta página
+    // que no es él mismo un Ejecutivo de Negocios (ver
+    // gestion-ejecutivo-negocios/page.tsx del frontend).
     const data =
       await this.listadosService.getSolicitudesPendientesPorEjecutivoId(
         ejecutivoId,
+        verComoEjecutivo ? Number(verComoEjecutivo) : undefined,
       );
 
     console.log('📤 Resultado:', data);
@@ -824,10 +851,14 @@ export class SolicitudesController {
   @Get(':id/pdf')
   async generarPdf(
     @Param('id', ParseIntPipe) id: number,
+    @Query('tdoId') tdoId: string | undefined,
     @Res() res: Response,
   ) {
     try {
-      const pdfBuffer = await this.solicitudesService.generarPdfSolicitud(id);
+      const pdfBuffer = await this.solicitudesService.generarPdfSolicitud(
+        id,
+        tdoId ? Number(tdoId) : undefined,
+      );
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader(
         'Content-Disposition',

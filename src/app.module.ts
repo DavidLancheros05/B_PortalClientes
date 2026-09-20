@@ -19,10 +19,8 @@ import { FormulariosModule } from './parametrizacion/formularios/formularios.mod
 import { FormularioSeccionesModule } from './parametrizacion/formulario-secciones/formulario-secciones.module';
 import { FormularioTiposPreguntaModule } from './parametrizacion/formulario-tipos-pregunta/formulario-tipos-pregunta.module';
 import { TiposDocumentosModule } from './parametrizacion/tipos-documentos/tipos-documentos.module';
+import { VariablesPlantillaModule } from './parametrizacion/variables-plantilla/variables-plantilla.module';
 import { TiposVigenciaModule } from './parametrizacion/tipos-vigencia/tipos-vigencia.module';
-import { EstadosModule } from './parametrizacion/estados/estados.module';
-import { NotificacionesParamModule } from './parametrizacion/notificaciones/notificaciones.module';
-import { CorreosPorRolModule } from './parametrizacion/correos-por-rol/correos-por-rol.module';
 import { TiposIdentificacionModule } from './tipos-identificacion/tipos-identificacion.module';
 import { IndicadoresModule } from './indicadores/indicadores.module';
 import { NotificacionesModule } from './notificaciones/notificaciones.module';
@@ -76,15 +74,13 @@ import { UnoModule } from './integraciones/uno/uno.module';
     ClientesModule,
     MotivosRechazoModule,
     DiasRespuestaModule,
+    VariablesPlantillaModule,
     FormularioPreguntasModule,
     FormulariosModule,
     FormularioSeccionesModule,
     FormularioTiposPreguntaModule,
     TiposDocumentosModule,
     TiposVigenciaModule,
-    EstadosModule,
-    NotificacionesParamModule,
-    CorreosPorRolModule,
     TiposIdentificacionModule,
     IndicadoresModule,
     NotificacionesModule,

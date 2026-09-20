@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { ClientesService } from './clientes.service';
+import { ClientesSiesaService } from './clientes-siesa.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
@@ -28,7 +29,10 @@ type AuthRequest = Request & { user: { id: number; cliente_id: number | null; ro
 @UseGuards(JwtAuthGuard)
 @Controller('clientes')
 export class ClientesController {
-  constructor(private readonly clientesService: ClientesService) {}
+  constructor(
+    private readonly clientesService: ClientesService,
+    private readonly clientesSiesaService: ClientesSiesaService,
+  ) {}
 
   @Get()
   async getAll(): Promise<ClienteListResponseDto[]> {
@@ -95,6 +99,14 @@ export class ClientesController {
     return this.clientesService.findByCentro(+copId);
   }
 
+  // Debe ir antes de @Get(':id') para no ser interpretada como un id.
+  // Solo vista previa — no envía nada a SIESA (todavía no hay conexión
+  // real, ver Portal Clientes/SIESA/plan-envio-solicitud-aprobada-a-siesa.md).
+  @Get(':id/siesa-preview')
+  async getSiesaPreview(@Param('id') id: string) {
+    return this.clientesSiesaService.generarPreviewSiesa(+id);
+  }
+
   @Get(':id/centros-operacion')
   async getClienteCentros(
     @Param('id') id: string,
@@ -121,5 +133,11 @@ export class ClientesController {
   async delete(@Param('id') id: string): Promise<{ success: boolean }> {
     await this.clientesService.delete(+id);
     return { success: true };
+  }
+
+  @Post(':id/reset-password')
+  @RequierePermiso('/parametrizacion/clientes', 'editar')
+  async resetPassword(@Param('id') id: string): Promise<{ message: string }> {
+    return this.clientesService.resetPasswordCliente(+id);
   }
 }

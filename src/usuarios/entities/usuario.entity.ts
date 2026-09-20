@@ -40,8 +40,8 @@ export class UsuarioEntity {
   @Column({ name: 'usr_elimina_cliente', type: 'bit', default: false })
   usr_elimina_cliente: boolean;
 
-  @Column({ name: 'usr_acceso_portal_clientes', type: 'bit', nullable: true })
-  usr_acceso_portal_clientes: boolean;
+  @Column({ name: 'usr_acceso_pc', type: 'bit', nullable: true })
+  usr_acceso_pc: boolean;
 
   @Column({ name: 'usr_fecha_usr', type: 'datetime' })
   usr_fecha_usr: Date;

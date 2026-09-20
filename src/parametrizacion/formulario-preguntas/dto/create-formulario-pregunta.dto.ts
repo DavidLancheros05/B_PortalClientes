@@ -47,7 +47,7 @@ export class CreateFormularioPreguntaDto {
 
   @IsOptional()
   @IsInt()
-  formulario_id?: number | null;
+  frm_id?: number | null;
 
   @IsOptional()
   @IsInt()

@@ -61,7 +61,7 @@ export class SolicitudesRespuestasService {
     const sql = `
       SELECT
         fr_id AS [fr_id],
-        fr_solicitud_id AS [fr_solicitud_id],
+        fr_sol_id AS [fr_sol_id],
         fr_fp_id AS [fr_fp_id],
         fr_valor_texto AS [fr_valor_texto],
         fr_valor_numero AS [fr_valor_numero],
@@ -77,7 +77,7 @@ export class SolicitudesRespuestasService {
         fr_valor_catalogo_tipo AS [fr_valor_catalogo_tipo],
         fr_valor_catalogo_id AS [fr_valor_catalogo_id]
       FROM Formulario_respuesta
-      WHERE fr_solicitud_id = @0
+      WHERE fr_sol_id = @0
       ORDER BY fr_fp_id
     `;
 
@@ -94,9 +94,7 @@ export class SolicitudesRespuestasService {
   // (obtenerUltimaSolicitudAprobada), que necesita reconocer una pregunta
   // (y su opción respondida) aunque hayan cambiado de id entre la versión
   // de la solicitud aprobada y la versión activa actual.
-  async obtenerRespuestasConCodigoPregunta(
-    solicitudId: number,
-  ): Promise<
+  async obtenerRespuestasConCodigoPregunta(solicitudId: number): Promise<
     Array<
       SolicitudRespuestaDto & {
         fp_codigo: string | null;
@@ -107,7 +105,7 @@ export class SolicitudesRespuestasService {
     const sql = `
       SELECT
         fr.fr_id AS [fr_id],
-        fr.fr_solicitud_id AS [fr_solicitud_id],
+        fr.fr_sol_id AS [fr_sol_id],
         fr.fr_fp_id AS [fr_fp_id],
         fr.fr_valor_texto AS [fr_valor_texto],
         fr.fr_valor_numero AS [fr_valor_numero],
@@ -127,7 +125,7 @@ export class SolicitudesRespuestasService {
       FROM Formulario_respuesta fr
       LEFT JOIN Formulario_pregunta fp ON fp.fp_id = fr.fr_fp_id
       LEFT JOIN Formulario_pregunta_opcion fpo ON fpo.fpo_id = fr.fr_valor_opcion_id
-      WHERE fr.fr_solicitud_id = @0
+      WHERE fr.fr_sol_id = @0
       ORDER BY fr.fr_fp_id
     `;
 
@@ -231,7 +229,7 @@ export class SolicitudesRespuestasService {
 
     try {
       await queryRunner.query(
-        `DELETE FROM Formulario_respuesta WHERE fr_solicitud_id = @0 AND fr_fp_id = @1`,
+        `DELETE FROM Formulario_respuesta WHERE fr_sol_id = @0 AND fr_fp_id = @1`,
         [sa_sol_id, fp_id],
       );
 
@@ -243,7 +241,7 @@ export class SolicitudesRespuestasService {
         // SELECT_TABLA usa IDs de tablas catálogo (país, departamento, ciudad)
         const sql = `
           INSERT INTO Formulario_respuesta
-          (fr_solicitud_id, fr_fp_id, fr_valor_numero, fr_es_multiselect, fr_created_at)
+          (fr_sol_id, fr_fp_id, fr_valor_numero, fr_es_multiselect, fr_created_at)
           VALUES (@0, @1, @2, @3, GETDATE())
         `;
 
@@ -261,7 +259,7 @@ export class SolicitudesRespuestasService {
         // Si hay opciones (SELECT regular, no SELECT_TABLA), insertar un registro por cada opción
         const sql = `
           INSERT INTO Formulario_respuesta
-          (fr_solicitud_id, fr_fp_id, fr_valor_opcion_id, fr_es_multiselect, fr_created_at)
+          (fr_sol_id, fr_fp_id, fr_valor_opcion_id, fr_es_multiselect, fr_created_at)
           VALUES (@0, @1, @2, @3, GETDATE())
         `;
 
@@ -283,7 +281,7 @@ export class SolicitudesRespuestasService {
         // Insertar registro único para valor_texto, numero, o fecha
         const sql = `
           INSERT INTO Formulario_respuesta
-          (fr_solicitud_id, fr_fp_id, fr_valor_texto, fr_valor_numero, fr_valor_fecha, fr_created_at)
+          (fr_sol_id, fr_fp_id, fr_valor_texto, fr_valor_numero, fr_valor_fecha, fr_created_at)
           VALUES (@0, @1, @2, @3, @4, GETDATE())
         `;
 

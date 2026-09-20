@@ -45,6 +45,16 @@ export class FormularioPreguntasController {
     return this.service.findPreguntasFormularioActivo();
   }
 
+  // Vista de solo lectura de "preguntas reservadas" (ver
+  // preguntas-protegidas.constant.ts) — pantalla propia en Parametrización
+  // para que alguien sin acceso a TypeScript/BD pueda ver qué preguntas
+  // están ancladas al flujo del portal o al envío a SIESA, y por qué.
+  @RequierePermiso('/parametrizacion/formulario-preguntas-reservadas', 'ver')
+  @Get('reservadas')
+  async getReservadas() {
+    return this.service.findReservadas();
+  }
+
   @UseGuards(JwtAuthGuard)
   @Get()
   findAll(

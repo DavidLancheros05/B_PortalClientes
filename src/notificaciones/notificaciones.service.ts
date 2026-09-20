@@ -175,6 +175,14 @@ export class NotificacionesService {
           '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6fb;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;"><tr><td align="center"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;"><tr><td style="background-color:#003d99;padding:28px 32px;text-align:center;"><p style="margin:0;color:#ffffff;font-size:19px;font-weight:bold;letter-spacing:0.5px;">CARTONERA NACIONAL S.A.</p><p style="margin:6px 0 0;color:#a9c2f0;font-size:13px;">Portal de Clientes</p></td></tr><tr><td style="padding:32px;"><p style="margin:0 0 16px;color:#1f2937;font-size:15px;">Hola <b>{{nombre}}</b>,</p><p style="margin:0 0 20px;color:#374151;font-size:14px;line-height:1.6;">Recibimos una solicitud para restablecer tu contraseña. Si fuiste tú, hace clic en el boton de abajo (el link vence en 1 hora):</p><table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 20px;"><tr><td style="border-radius:8px;background-color:#0052cc;"><a href="{{reset_url}}" style="display:inline-block;padding:12px 36px;color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;">Restablecer contraseña</a></td></tr></table><p style="margin:0;color:#8a94a6;font-size:12px;line-height:1.5;">Si no fuiste tú quien solicitó esto, ignora este correo — tu contraseña actual sigue funcionando.</p></td></tr><tr><td style="background-color:#f9fafc;padding:16px 32px;text-align:center;border-top:1px solid #eef1f6;"><p style="margin:0;color:#9aa4b5;font-size:11px;">Este es un mensaje automatico, por favor no respondas a este correo.</p></td></tr></table></td></tr></table>',
         activa: true,
       },
+      {
+        codigo: 'USUARIO_CREADO_CREDENCIALES',
+        nombre: 'Usuario creado - Credenciales de acceso',
+        asunto: 'Acceso al portal de clientes',
+        cuerpo_html:
+          '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6fb;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;"><tr><td align="center"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;"><tr><td style="background-color:#003d99;padding:28px 32px;text-align:center;"><p style="margin:0;color:#ffffff;font-size:19px;font-weight:bold;letter-spacing:0.5px;">CARTONERA NACIONAL S.A.</p><p style="margin:6px 0 0;color:#a9c2f0;font-size:13px;">Portal de Clientes</p></td></tr><tr><td style="padding:32px;"><p style="margin:0 0 16px;color:#1f2937;font-size:15px;">Hola <b>{{usuario_nombre}}</b>,</p><p style="margin:0 0 20px;color:#374151;font-size:14px;line-height:1.6;">Tu cuenta fue creada correctamente.</p><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef4ff;border-radius:8px;border:1px solid #d6e4ff;margin-bottom:24px;"><tr><td style="padding:18px 20px;"><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Usuario</p><p style="margin:0 0 14px;color:#003d99;font-size:15px;font-weight:bold;">{{usuario_email}}</p><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Contraseña</p><p style="margin:0;color:#003d99;font-size:15px;font-weight:bold;">{{usuario_password}}</p></td></tr></table><table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 4px;"><tr><td style="border-radius:8px;background-color:#0052cc;"><a href="{{portal_url}}" style="display:inline-block;padding:12px 36px;color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;">Ir al portal</a></td></tr></table><p style="margin:16px 0 0;color:#8a94a6;font-size:12px;line-height:1.5;">Te recomendamos cambiar tu contraseña al iniciar sesión.</p></td></tr><tr><td style="background-color:#f9fafc;padding:16px 32px;text-align:center;border-top:1px solid #eef1f6;"><p style="margin:0;color:#9aa4b5;font-size:11px;">Este es un mensaje automatico, por favor no respondas a este correo.</p></td></tr></table></td></tr></table>',
+        activa: true,
+      },
     ];
 
     for (const item of defaults) {
@@ -216,6 +224,15 @@ export class NotificacionesService {
       }).format(value);
     }
     return String(value);
+  }
+
+  private formatearMoneda(value: number | string | null | undefined): string {
+    if (value === null || value === undefined || value === '') return 'No definido';
+    return new Intl.NumberFormat('es-CO', {
+      style: 'currency',
+      currency: 'COP',
+      maximumFractionDigits: 0,
+    }).format(Number(value));
   }
 
   private renderTemplate(content: string, variables: Record<string, any>) {
@@ -341,6 +358,9 @@ export class NotificacionesService {
         s.sol_numero_solicitud AS numero_solicitud,
         s.sol_estado_id,
         s.sol_fecha_creacion AS fecha_creacion,
+        s.sol_cupo_aprobado AS cupo_aprobado,
+        s.sol_plazo_pago AS plazo_pago,
+        s.sol_forma_pago AS forma_pago,
         c.cli_razon_social AS cliente_nombre,
         c.cli_correo AS cliente_email
       FROM solicitudes s
@@ -737,6 +757,10 @@ export class NotificacionesService {
     const variables = {
       numero_solicitud: solicitud.numero_solicitud,
       cliente_nombre: solicitud.cliente_nombre || 'Cliente',
+      cupo_aprobado: this.formatearMoneda(solicitud.cupo_aprobado),
+      plazo_pago:
+        solicitud.plazo_pago != null ? `${solicitud.plazo_pago} días` : 'No definido',
+      forma_pago: solicitud.forma_pago || 'No definida',
       portal_url: this.construirPortalUrl(`/solicitudes/${solicitudId}`),
     };
 

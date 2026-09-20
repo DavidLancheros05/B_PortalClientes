@@ -33,6 +33,24 @@ export interface MesTendencia {
   rechazadas: number;
 }
 
+export interface SolicitudSlaListado {
+  sol_id: number;
+  numero_solicitud: string;
+  razon_social: string;
+  fecha_envio: string;
+  estado: string;
+  sla_general: {
+    fecha_estimada: string | null;
+    fecha_real: string | null;
+    dias_meta: number | null;
+    dias_reales: number | null;
+    procesada: boolean;
+    vencida: boolean;
+  };
+  pct_cumplimiento: number;
+  en_riesgo: boolean;
+}
+
 @Injectable()
 export class IndicadoresService {
   constructor(
@@ -219,8 +237,24 @@ export class IndicadoresService {
         CONVERT(varchar(10), COALESCE(fe_cc2.swh_fecha_estimada, s.sol_fecha_estimada_comite_credito_2), 23) AS est_comite2,
         CONVERT(varchar(10), s.sol_fecha_real_comite_credito_2, 23) AS real_comite2,
 
-        -- SLAs configurados
-        (SELECT TOP 1 pdr_dias FROM param_dias_respuesta_solicitudes WHERE UPPER(LTRIM(RTRIM(pdr_area))) = 'COMERCIAL' AND pdr_estado = 1 ORDER BY pdr_id DESC) AS sla_comercial
+        -- SLA GENERAL (nivel empresa, el que se le comunica al cliente): la
+        -- meta es la fecha estimada de la última etapa (CC2), encadenada
+        -- desde el envío al crear la solicitud (ver solicitudes.service.ts).
+        -- La fecha real es la de la etapa más avanzada que ya respondió,
+        -- sea que la solicitud haya llegado hasta CC2 o se haya resuelto
+        -- (aprobada/rechazada) antes.
+        CONVERT(varchar(10), s.sol_fecha_estimada_comite_credito_2, 23) AS meta_general,
+        CONVERT(
+          varchar(10),
+          COALESCE(
+            s.sol_fecha_real_comite_credito_2,
+            s.sol_fecha_real_comite_credito_1,
+            s.sol_fecha_real_oficial_cumplimiento,
+            s.sol_fecha_real_auxiliar_servicio_cliente,
+            s.sol_fecha_real_ejecutivo
+          ),
+          23
+        ) AS real_general
 
       FROM solicitudes s
       LEFT JOIN clientes c ON c.cli_id = s.sol_cliente_id
@@ -283,13 +317,6 @@ export class IndicadoresService {
         sla: null,
       },
       {
-        area: 'COMERCIAL',
-        label: 'Área Comercial',
-        est: r.est_comercial,
-        real: r.real_comercial,
-        sla: r.sla_comercial ? Number(r.sla_comercial) : 3,
-      },
-      {
         area: 'COMITE_1',
         label: 'Comité de Crédito 1',
         est: r.est_comite1,
@@ -330,6 +357,25 @@ export class IndicadoresService {
       };
     });
 
+    // SLA general: días meta = calendario entre envío y la meta encadenada
+    // (ya trae los fines de semana/festivos absorbidos, igual que se hace
+    // arriba para las áreas sin SLA fijo configurado).
+    const metaGeneral = r.meta_general as string | null;
+    const realGeneral = r.real_general as string | null;
+    const diasMetaGeneral =
+      fechaEnvio && metaGeneral ? this.diffDias(fechaEnvio, metaGeneral) : null;
+    const diasRealesGeneral =
+      fechaEnvio && realGeneral ? this.diffDias(fechaEnvio, realGeneral) : null;
+
+    const slaGeneral = {
+      fecha_estimada: metaGeneral || null,
+      fecha_real: realGeneral || null,
+      dias_meta: diasMetaGeneral,
+      dias_reales: diasRealesGeneral,
+      procesada: !!realGeneral,
+      vencida: realGeneral && metaGeneral ? realGeneral > metaGeneral : false,
+    };
+
     return {
       sol_id: Number(r.sol_id),
       numero_solicitud: r.sol_numero_solicitud || '',
@@ -337,6 +383,7 @@ export class IndicadoresService {
       nit: r.nit || '',
       fecha_envio: fechaEnvio || '',
       estado: r.estado || '',
+      sla_general: slaGeneral,
       areas,
     };
   }
@@ -345,6 +392,132 @@ export class IndicadoresService {
     return Math.round(
       (new Date(b).getTime() - new Date(a).getTime()) / 86400000,
     );
+  }
+
+  // % de cumplimiento del SLA general por solicitud: 100 si está a tiempo
+  // (resuelta dentro del plazo, o en curso sin superar el plazo aún);
+  // si se pasó del plazo, penalización lineal proporcional a los días de
+  // atraso sobre los días de meta, con piso en 0. "En riesgo" marca las
+  // solicitudes en curso (sin resolver) que ya consumieron el 80% del
+  // plazo sin haberlo superado todavía.
+  private calcularSlaListado(
+    diasMeta: number | null,
+    diasBase: number | null,
+    procesada: boolean,
+  ): { pctCumplimiento: number; vencida: boolean; enRiesgo: boolean } {
+    if (diasMeta === null || diasMeta <= 0 || diasBase === null) {
+      return { pctCumplimiento: 100, vencida: false, enRiesgo: false };
+    }
+
+    const diasAtraso = diasBase - diasMeta;
+    const vencida = diasAtraso > 0;
+    const pctCumplimiento = vencida
+      ? Math.max(0, Math.round(100 - (diasAtraso / diasMeta) * 100))
+      : 100;
+    const enRiesgo = !vencida && !procesada && diasBase >= diasMeta * 0.8;
+
+    return { pctCumplimiento, vencida, enRiesgo };
+  }
+
+  async getListadoSla(query: {
+    numero?: string;
+    fecha_desde?: string;
+    fecha_hasta?: string;
+    estado?: string;
+    sla?: 'vencida' | 'en_riesgo' | 'a_tiempo';
+  }): Promise<SolicitudSlaListado[]> {
+    const numero = query.numero?.trim() || null;
+    const fechaDesde = query.fecha_desde || null;
+    const fechaHasta = query.fecha_hasta || null;
+    const estado = query.estado?.trim() || null;
+
+    const sql = `
+      SELECT
+        s.sol_id,
+        s.sol_numero_solicitud,
+        ISNULL(c.cli_razon_social, '') AS razon_social,
+        CONVERT(varchar(10), s.sol_fecha_envio, 23) AS fecha_envio,
+        ISNULL(se.ses_codigo, '') AS estado,
+        CONVERT(varchar(10), s.sol_fecha_estimada_comite_credito_2, 23) AS meta_general,
+        CONVERT(
+          varchar(10),
+          COALESCE(
+            s.sol_fecha_real_comite_credito_2,
+            s.sol_fecha_real_comite_credito_1,
+            s.sol_fecha_real_oficial_cumplimiento,
+            s.sol_fecha_real_auxiliar_servicio_cliente,
+            s.sol_fecha_real_ejecutivo
+          ),
+          23
+        ) AS real_general
+      FROM solicitudes s
+      LEFT JOIN clientes c ON c.cli_id = s.sol_cliente_id
+      LEFT JOIN solicitud_estados se ON s.sol_estado_id = se.ses_id
+      WHERE s.sol_fecha_envio IS NOT NULL
+        AND (@0 IS NULL OR s.sol_numero_solicitud LIKE '%' + @0 + '%')
+        AND (@1 IS NULL OR s.sol_fecha_envio >= @1)
+        AND (@2 IS NULL OR s.sol_fecha_envio <= @2)
+        AND (@3 IS NULL OR se.ses_codigo = @3)
+      ORDER BY s.sol_fecha_envio DESC
+    `;
+    const rows = await this.dataSource.query(sql, [
+      numero,
+      fechaDesde,
+      fechaHasta,
+      estado,
+    ]);
+
+    const hoy = new Date().toISOString().slice(0, 10);
+
+    const resultado: SolicitudSlaListado[] = rows.map((r: any) => {
+      const fechaEnvio = r.fecha_envio as string | null;
+      const metaGeneral = r.meta_general as string | null;
+      const realGeneral = r.real_general as string | null;
+
+      const diasMeta =
+        fechaEnvio && metaGeneral ? this.diffDias(fechaEnvio, metaGeneral) : null;
+      const diasReales =
+        fechaEnvio && realGeneral ? this.diffDias(fechaEnvio, realGeneral) : null;
+      const procesada = !!realGeneral;
+      const diasBase = procesada
+        ? diasReales
+        : fechaEnvio
+          ? this.diffDias(fechaEnvio, hoy)
+          : null;
+
+      const { pctCumplimiento, vencida, enRiesgo } = this.calcularSlaListado(
+        diasMeta,
+        diasBase,
+        procesada,
+      );
+
+      return {
+        sol_id: Number(r.sol_id),
+        numero_solicitud: r.sol_numero_solicitud || '',
+        razon_social: r.razon_social || '',
+        fecha_envio: fechaEnvio || '',
+        estado: r.estado || '',
+        sla_general: {
+          fecha_estimada: metaGeneral || null,
+          fecha_real: realGeneral || null,
+          dias_meta: diasMeta,
+          dias_reales: diasReales,
+          procesada,
+          vencida,
+        },
+        pct_cumplimiento: pctCumplimiento,
+        en_riesgo: enRiesgo,
+      };
+    });
+
+    if (!query.sla) return resultado;
+    if (query.sla === 'vencida')
+      return resultado.filter((r) => r.sla_general.vencida);
+    if (query.sla === 'en_riesgo')
+      return resultado.filter((r) => r.en_riesgo);
+    if (query.sla === 'a_tiempo')
+      return resultado.filter((r) => !r.sla_general.vencida && !r.en_riesgo);
+    return resultado;
   }
 
   async getDetalleArea(query: {
