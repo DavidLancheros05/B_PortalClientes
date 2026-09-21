@@ -57,7 +57,7 @@ export class SolicitudesController {
   // El payload del JWT reutiliza el campo `usr_id` para el id de quien
   // sea que esté logueado (ver AuthService.loginCliente en auth.service.ts):
   // para un usuario interno es un usuarios.usr_id real, pero para un
-  // cliente es en realidad su cli_id. Columnas como sol_usuario_modifica
+  // cliente es en realidad su cli_id. Columnas como sol_usr_id_modifica
   // tienen FK a Usuarios — pasarles el usr_id de un cliente tal cual
   // revienta con "conflicted with the FOREIGN KEY constraint" (encontrado
   // en vivo: PATCH :id/estado fallaba así para cualquier cliente enviando
@@ -275,13 +275,13 @@ export class SolicitudesController {
     // frontend solo muestra un mensaje de bloqueo — traerlas ahí era una
     // consulta extra a la BD remota sin ningún uso.
     const respuestas =
-      Number(ultima.sol_estado_id) === 1
+      Number(ultima.sol_ses_id) === 1
         ? await this.respuestasService.obtenerRespuestas(ultima.sol_id)
         : [];
     return {
       sol_id: ultima.sol_id,
       sol_numero_solicitud: ultima.sol_numero_solicitud,
-      sol_estado_id: Number(ultima.sol_estado_id),
+      sol_ses_id: Number(ultima.sol_ses_id),
       sol_fecha_creacion: ultima.sol_fecha_creacion,
       sol_fecha_envio: ultima.sol_fecha_envio,
       respuestas,
@@ -305,7 +305,7 @@ export class SolicitudesController {
     return {
       sol_id: ultima.sol_id,
       sol_numero_solicitud: ultima.sol_numero_solicitud,
-      sol_estado_id: Number(ultima.sol_estado_id),
+      sol_ses_id: Number(ultima.sol_ses_id),
       sol_fecha_creacion: ultima.sol_fecha_creacion,
       sol_fecha_envio: ultima.sol_fecha_envio,
       sol_cupo_aprobado: ultima.sol_cupo_aprobado,
@@ -321,11 +321,11 @@ export class SolicitudesController {
       await this.listadosService.obtenerSolicitudesPorCliente(clienteId);
     return {
       total: solicitudes.length,
-      borradores: solicitudes.filter((s) => s.sol_estado_id === 1).length,
-      pendientes: solicitudes.filter((s) => s.sol_estado_id === 2).length,
-      en_revision: solicitudes.filter((s) => s.sol_estado_id === 3).length,
-      aprobadas: solicitudes.filter((s) => s.sol_estado_id === 5).length,
-      rechazadas: solicitudes.filter((s) => s.sol_estado_id === 6).length,
+      borradores: solicitudes.filter((s) => s.sol_ses_id === 1).length,
+      pendientes: solicitudes.filter((s) => s.sol_ses_id === 2).length,
+      en_revision: solicitudes.filter((s) => s.sol_ses_id === 3).length,
+      aprobadas: solicitudes.filter((s) => s.sol_ses_id === 5).length,
+      rechazadas: solicitudes.filter((s) => s.sol_ses_id === 6).length,
       consumo_promedio:
         solicitudes.length > 0
           ? solicitudes.reduce(
@@ -410,8 +410,6 @@ export class SolicitudesController {
 
   @Get('listado')
   async getListado(@Query() query: any): Promise<SolicitudListadoGestionDto[]> {
-
-
     try {
       const result = await this.listadosService.getListado(query);
 
@@ -428,19 +426,13 @@ export class SolicitudesController {
     @Query('usr_id') usr_id?: string,
   ) {
     try {
-      console.log('🟢🟢🟢 [CONTROLLER] getDocumentos ENDPOINT HIT', {
-        mode,
-        usr_id,
-      });
+
       const usuarioId = usr_id ? Number(usr_id) : undefined;
       const result = await this.documentosService.getDocumentos(
         mode,
         usuarioId,
       );
-      console.log(
-        '🟢🟢🟢 [CONTROLLER] getDocumentos RESULTADO:',
-        result?.length,
-      );
+
       return result;
     } catch (error) {
       console.error('[getDocumentos] Error:', error);
@@ -505,9 +497,7 @@ export class SolicitudesController {
       // lenta de las tres, no la suma de las tres.
       const [documentos, todosLosDiferidos, enEsperaDiferidos] =
         await Promise.all([
-          this.documentosService.obtenerDocumentosConVigencia(
-            solicitud.sol_id,
-          ),
+          this.documentosService.obtenerDocumentosConVigencia(solicitud.sol_id),
           // Documentos "diferidos" (plantillas que se generan después de
           // guardar la solicitud): mientras la solicitud siga en
           // CLI+PEND_DOCS sin pasar a Ejecutivo de Negocios (ver
@@ -517,9 +507,7 @@ export class SolicitudesController {
           // avance (los archivos se suben de inmediato al seleccionarlos,
           // pero eso no avanza el estado por sí solo).
           this.workflowService.obtenerDocumentosDiferidos(solicitud.sol_id),
-          this.workflowService.solicitudEnEsperaDocumentosDiferidos(
-            solicitud,
-          ),
+          this.workflowService.solicitudEnEsperaDocumentosDiferidos(solicitud),
         ]);
       // Rechazado en Auxiliar Servicio Cliente: Etapa ASC(3) + Resultado
       // RECHAZADO(3), sin importar el estado (2=PENDIENTE si el modo de
@@ -527,12 +515,12 @@ export class SolicitudesController {
       // Actualiza" — ver modo-solucion-rechazo-asc.md). Misma condición de
       // etapa+resultado que usa aprobarRechazarSolicitud para llegar acá.
       const enRechazoASC =
-        Number(solicitud.sol_etapa_actual_id) === 3 &&
-        Number(solicitud.sol_resultado_etapa_id) === 3;
+        Number(solicitud.sol_wet_id) === 3 &&
+        Number(solicitud.sol_wee_id) === 3;
 
       const puedeCorregir = esStaff
         ? enRechazoASC
-        : [1, 2].includes(Number(solicitud.sol_estado_id));
+        : [1, 2].includes(Number(solicitud.sol_ses_id));
 
       // Restringe la edición a solo los documentos marcados/vencidos (en
       // vez de dejar todo editable) — aplica tanto si es el cliente
@@ -541,7 +529,7 @@ export class SolicitudesController {
       // 'auxiliar_actualiza', estado=3, solo alcanzable acá vía solicitudId).
       const rechazadoPorAuxiliar = esStaff
         ? enRechazoASC
-        : Number(solicitud.sol_estado_id) === 2 && enRechazoASC;
+        : Number(solicitud.sol_ses_id) === 2 && enRechazoASC;
 
       const documentosDiferidos = enEsperaDiferidos ? todosLosDiferidos : [];
 
@@ -915,9 +903,7 @@ export class SolicitudesController {
   ) {
     try {
       const documentos =
-        await this.documentosService.obtenerDocumentosConVigencia(
-          solicitudId,
-        );
+        await this.documentosService.obtenerDocumentosConVigencia(solicitudId);
       return { ok: true, data: documentos };
     } catch (error) {
       console.error('Error al obtener documentos de la solicitud:', error);
@@ -992,10 +978,7 @@ export class SolicitudesController {
     @Param('ssaId', ParseIntPipe) ssaId: number,
   ) {
     try {
-      await this.documentosService.eliminarSoporteAnalisis(
-        solicitudId,
-        ssaId,
-      );
+      await this.documentosService.eliminarSoporteAnalisis(solicitudId, ssaId);
       return { ok: true };
     } catch (error) {
       console.error('Error al eliminar soporte de análisis:', error);
@@ -1091,10 +1074,7 @@ export class SolicitudesController {
     @Param('sepId', ParseIntPipe) sepId: number,
   ) {
     try {
-      await this.documentosService.eliminarEvidenciaPersona(
-        solicitudId,
-        sepId,
-      );
+      await this.documentosService.eliminarEvidenciaPersona(solicitudId, sepId);
       return { ok: true };
     } catch (error) {
       console.error('Error al eliminar evidencia de persona:', error);
@@ -1321,7 +1301,8 @@ export class SolicitudesController {
   async cambiarEstado(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { estadoId: number },
-    @Req() req: Request & { user: { usr_id?: number; id?: number; tipo?: string } },
+    @Req()
+    req: Request & { user: { usr_id?: number; id?: number; tipo?: string } },
   ) {
     const usuarioId = this.resolverUsuarioIdParaAuditoria(req.user);
     return this.workflowService.cambiarEstado(id, body.estadoId, usuarioId);
@@ -1337,7 +1318,8 @@ export class SolicitudesController {
   @SoloAutenticado()
   async actualizarResultadoPendiente(
     @Param('id', ParseIntPipe) id: number,
-    @Req() req: Request & { user: { usr_id?: number; id?: number; tipo?: string } },
+    @Req()
+    req: Request & { user: { usr_id?: number; id?: number; tipo?: string } },
   ) {
     try {
       console.log(
@@ -1361,7 +1343,8 @@ export class SolicitudesController {
   @UseGuards(JwtAuthGuard)
   async verificarDocumentosDiferidos(
     @Param('id', ParseIntPipe) id: number,
-    @Req() req: Request & { user: { usr_id?: number; id?: number; tipo?: string } },
+    @Req()
+    req: Request & { user: { usr_id?: number; id?: number; tipo?: string } },
   ) {
     try {
       const usuarioId = this.resolverUsuarioIdParaAuditoria(req.user);
@@ -1384,7 +1367,10 @@ export class SolicitudesController {
   // rechazo de ASC, mismo módulo que concepto-servicio-cliente.
   @Put(':id/aprobacion')
   @UseGuards(JwtAuthGuard)
-  @RequierePermiso('/solicitudes/gestion-auxiliar-servicio-al-cliente', 'aprobar')
+  @RequierePermiso(
+    '/solicitudes/gestion-auxiliar-servicio-al-cliente',
+    'aprobar',
+  )
   async aprobarRechazarSolicitud(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: any,
@@ -1514,7 +1500,10 @@ export class SolicitudesController {
 
   @Put(':id/concepto-servicio-cliente')
   @UseGuards(JwtAuthGuard)
-  @RequierePermiso('/solicitudes/gestion-auxiliar-servicio-al-cliente', 'aprobar')
+  @RequierePermiso(
+    '/solicitudes/gestion-auxiliar-servicio-al-cliente',
+    'aprobar',
+  )
   async guardarGestionAuxiliarServicioCliente(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: any,

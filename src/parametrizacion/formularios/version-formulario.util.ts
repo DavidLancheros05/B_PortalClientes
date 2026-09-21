@@ -4,7 +4,7 @@
 // formulario-preguntas.service.ts) como para el aviso en pantalla
 // (FormulariosService.getFormularioCompleto, tiene_solicitudes).
 //
-// Un Borrador (sol_estado_id = 1) no cuenta: todavía no generó ningún PDF
+// Un Borrador (sol_ses_id = 1) no cuenta: todavía no generó ningún PDF
 // ni fue visto por nadie más que el propio cliente, así que no hay nada que
 // se rompa si se edita la versión. Recién a partir de Pendiente/Revisión/
 // Completada/Aprobada/Rechazada hay algo real en juego.
@@ -19,7 +19,7 @@ export async function contarSolicitudesQueBloqueanVersion(
   versionNumero: number,
 ): Promise<number> {
   const result = await queryable.query(
-    `SELECT COUNT(*) AS total FROM solicitudes WHERE sol_formulario_version = @0 AND sol_estado_id <> 1`,
+    `SELECT COUNT(*) AS total FROM solicitudes WHERE sol_formulario_version = @0 AND sol_ses_id <> 1`,
     [versionNumero],
   );
   return Number(result[0]?.total ?? 0);

@@ -20,23 +20,23 @@ export class SolicitudEntity {
   sol_id: number;
 
   @ManyToOne(() => ClienteEntity)
-  @JoinColumn({ name: 'sol_cliente_id' })
-  sol_cliente_id: ClienteEntity;
+  @JoinColumn({ name: 'sol_cli_id' })
+  sol_cli_id: ClienteEntity;
 
-  @Column({ name: 'sol_estado_id', type: 'int' })
-  sol_estado_id: number;
+  @Column({ name: 'sol_ses_id', type: 'int' })
+  sol_ses_id: number;
 
   @ManyToOne(() => UsuarioEntity, { nullable: true })
-  @JoinColumn({ name: 'sol_ejecutivo_id' })
-  sol_ejecutivo_id: UsuarioEntity;
+  @JoinColumn({ name: 'sol_ejng_id' })
+  sol_ejng_id: UsuarioEntity;
 
   @ManyToOne(() => WorkflowEtapaEntity, { nullable: true })
-  @JoinColumn({ name: 'sol_etapa_actual_id' })
-  sol_etapa_actual_id: WorkflowEtapaEntity;
+  @JoinColumn({ name: 'sol_wet_id' })
+  sol_wet_id: WorkflowEtapaEntity;
 
   @ManyToOne(() => WorkflowResultadoEntity, { nullable: true })
-  @JoinColumn({ name: 'sol_resultado_etapa_id' })
-  sol_resultado_etapa_id: WorkflowResultadoEntity;
+  @JoinColumn({ name: 'sol_wee_id' })
+  sol_wee_id: WorkflowResultadoEntity;
 
   @Column({ name: 'sol_numero_solicitud', type: 'varchar', length: 30 })
   sol_numero_solicitud: string;
@@ -47,8 +47,8 @@ export class SolicitudEntity {
   @Column({ name: 'sol_formulario_version', type: 'int' })
   sol_formulario_version: number;
 
-  @Column({ name: 'sol_usuario_crea', type: 'int', nullable: true })
-  sol_usuario_crea: number | null;
+  @Column({ name: 'sol_usr_id_crea', type: 'int', nullable: true })
+  sol_usr_id_crea: number | null;
 
   @CreateDateColumn({ name: 'sol_created_at' })
   sol_created_at: Date;
@@ -80,11 +80,11 @@ export class SolicitudEntity {
   })
   sol_toneladas_proyectadas: number | null;
 
-  @Column({ name: 'sol_motivo_rechazo_id', type: 'int', nullable: true })
-  sol_motivo_rechazo_id: number | null;
+  @Column({ name: 'sol_mrs_id', type: 'int', nullable: true })
+  sol_mrs_id: number | null;
 
-  @Column({ name: 'sol_usuario_modifica', type: 'int', nullable: true })
-  sol_usuario_modifica: number | null;
+  @Column({ name: 'sol_usr_id_modifica', type: 'int', nullable: true })
+  sol_usr_id_modifica: number | null;
 
   @Column({ name: 'sol_fecha_envio', type: 'datetime2', nullable: true })
   sol_fecha_envio: Date | null;
@@ -133,11 +133,11 @@ export class SolicitudEntity {
   sol_forma_pago: string | null;
 
   @Column({
-    name: 'sol_usuario_aprueba_condiciones',
+    name: 'sol_usr_id_apr_cond',
     type: 'int',
     nullable: true,
   })
-  sol_usuario_aprueba_condiciones: number | null;
+  sol_usr_id_apr_cond: number | null;
 
   @OneToMany(
     () => FormularioRespuestaEntity,

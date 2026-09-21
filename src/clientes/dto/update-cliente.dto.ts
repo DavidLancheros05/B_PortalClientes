@@ -32,6 +32,18 @@ export class UpdateClienteDto {
   @IsOptional()
   cli_acceso_pc?: boolean;
 
+  @IsBoolean()
+  @IsOptional()
+  cli_es_distribuidor?: boolean;
+
+  @IsString()
+  @IsOptional()
+  cli_nit_dig_vf?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  cli_es_extranjero?: boolean;
+
   @IsNumber()
   @IsOptional()
   ejng_id?: number | null;

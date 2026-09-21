@@ -7,6 +7,9 @@ export class ClienteDetailResponseDto {
   cli_correo?: string;
   cli_acceso_pc: boolean;
   cli_estado: string;
+  cli_es_distribuidor?: boolean;
+  cli_nit_dig_vf?: string;
+  cli_es_extranjero?: boolean;
   pai_id?: number;
   dpto_id?: number;
   ciu_id?: number;

@@ -19,9 +19,9 @@ import {
 import { HistorialWorkflowService } from '../workflow/historial/historial-workflow.service';
 
 const CAMPOS_SOLICITUD_AMPLIACION = `
-  sol_id, sol_cliente_id, sol_cupo_solicitado, sol_cupo_actual_referencia,
+  sol_id, sol_cli_id, sol_cupo_solicitado, sol_cupo_actual_referencia,
   sol_justificacion_ampliacion, sol_consumo_mensual_proyectado, sol_toneladas_proyectadas,
-  sol_estado_id, sol_etapa_actual_id, sol_resultado_etapa_id,
+  sol_ses_id, sol_wet_id, sol_wee_id,
   sol_numero_solicitud, sol_created_at
 `;
 
@@ -62,7 +62,7 @@ export class AmpliacionCupoService {
 
     // Nota: dto.solicitudAnteriorId se acepta pero no se persiste — no hay
     // columna dedicada para eso; la solicitud anterior de un cliente ya es
-    // recuperable consultando `solicitudes` por sol_cliente_id.
+    // recuperable consultando `solicitudes` por sol_cli_id.
 
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -77,7 +77,7 @@ export class AmpliacionCupoService {
       const enTramite = await queryRunner.query(
         `SELECT TOP 1 sol_id, sol_numero_solicitud
          FROM solicitudes
-         WHERE sol_cliente_id = @0 AND sol_estado_id IN (${ESTADOS_EN_TRAMITE.join(',')})
+         WHERE sol_cli_id = @0 AND sol_ses_id IN (${ESTADOS_EN_TRAMITE.join(',')})
          ORDER BY sol_id DESC`,
         [dto.clienteId],
       );
@@ -170,10 +170,10 @@ export class AmpliacionCupoService {
       const now = new Date();
       const insertSolicitudSQL = `
         INSERT INTO solicitudes (
-          sol_cliente_id, sol_estado_id,
+          sol_cli_id, sol_ses_id,
           sol_fecha_creacion, sol_created_at, sol_updated_at,
           sol_version, sol_formulario_version, sol_numero_solicitud, sol_es_zona_franca,
-          sol_ejecutivo_id, sol_etapa_actual_id, sol_resultado_etapa_id,
+          sol_ejng_id, sol_wet_id, sol_wee_id,
           sol_cupo_solicitado, sol_justificacion_ampliacion, sol_cupo_actual_referencia,
           sol_consumo_mensual_proyectado, sol_toneladas_proyectadas
         ) VALUES (
@@ -445,7 +445,7 @@ export class AmpliacionCupoService {
     try {
       const [ultimaAprobada] = await queryRunner.query(
         `SELECT TOP 1 sol_id FROM solicitudes
-         WHERE sol_cliente_id = @0 AND sol_estado_id = 5
+         WHERE sol_cli_id = @0 AND sol_ses_id = 5
          ORDER BY sol_fecha_creacion DESC`,
         [clienteId],
       );
@@ -753,7 +753,7 @@ export class AmpliacionCupoService {
     return this.dataSource.query(
       `SELECT ${CAMPOS_SOLICITUD_AMPLIACION}
        FROM solicitudes
-       WHERE sol_cliente_id = @0 AND sol_cupo_solicitado IS NOT NULL
+       WHERE sol_cli_id = @0 AND sol_cupo_solicitado IS NOT NULL
        ORDER BY sol_id DESC`,
       [clienteId],
     );

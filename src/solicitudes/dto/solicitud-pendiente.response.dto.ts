@@ -4,17 +4,17 @@ export class SolicitudPendienteDto {
   sol_numero_solicitud: string;
 
   // Contexto - de quién
-  sol_cliente_id: number;
+  sol_cli_id: number;
   cliente_nombre: string;
 
   // Estado - para badges/colores/iconos
-  sol_estado_id: number;
+  sol_ses_id: number;
   estado_descripcion?: string;
 
   // Timeline - para saber antigüedad
   sol_fecha_creacion: Date;
 
   // Workflow actual (opcional, para filtros avanzados)
-  sol_etapa_actual_id?: number;
-  sol_resultado_etapa_id?: number;
+  sol_wet_id?: number;
+  sol_wee_id?: number;
 }

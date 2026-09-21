@@ -32,7 +32,7 @@ export class ClientesSiesaService {
     const [solicitud] = await this.dataSource.query(
       `SELECT TOP 1 sol_id, sol_cupo_aprobado
        FROM dbo.solicitudes
-       WHERE sol_cliente_id = @0 AND sol_estado_id = 5
+       WHERE sol_cli_id = @0 AND sol_ses_id = 5
        ORDER BY sol_fecha_aprobacion DESC, sol_id DESC`,
       [cliId],
     );
@@ -42,30 +42,38 @@ export class ClientesSiesaService {
       );
     }
 
-    const formulario = await this.formularioRenderizableService.obtenerFormularioRenderizable(
-      solicitud.sol_id,
-    );
+    const formulario =
+      await this.formularioRenderizableService.obtenerFormularioRenderizable(
+        solicitud.sol_id,
+      );
 
     const porCodigo = (codigo: string) =>
       formulario.preguntas.find((p) => p.fp_codigo === codigo);
 
     const razonSocial =
       porCodigo('RAZON_SOCIAL')?.valor_resuelto || cliente.cli_razon_social;
-    const nit = porCodigo('NIT')?.valor_resuelto || cliente.cli_nro_identificacion;
+    const nit =
+      porCodigo('NIT')?.valor_resuelto || cliente.cli_nro_identificacion;
     const condicionPago = porCodigo('FORMA_PAGO_SOLICITADA')?.valor_resuelto;
 
     const repLegal = porCodigo('REP_LEGAL_TABLA');
     const primeraFilaRepLegal = repLegal?.tabla_filas?.[0];
     const contacto =
-      primeraFilaRepLegal?.['Apellidos y Nombre'] || primeraFilaRepLegal?.['Nombre'];
+      primeraFilaRepLegal?.['Apellidos y Nombre'] ||
+      primeraFilaRepLegal?.['Nombre'];
 
     const camposFaltantes: string[] = [];
-    const marcar = (nombre: string, valor: string | number | null | undefined) => {
+    const marcar = (
+      nombre: string,
+      valor: string | number | null | undefined,
+    ) => {
       if (valor === null || valor === undefined || valor === '') {
         camposFaltantes.push(nombre);
         return `NULL /* FALTA: sin pregunta con ancla estable en el formulario */`;
       }
-      return typeof valor === 'number' ? String(valor) : `N'${String(valor).replace(/'/g, "''")}'`;
+      return typeof valor === 'number'
+        ? String(valor)
+        : `N'${String(valor).replace(/'/g, "''")}'`;
     };
 
     const sql = `USE [SistemaComercial]

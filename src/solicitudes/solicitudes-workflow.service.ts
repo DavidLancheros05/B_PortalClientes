@@ -126,7 +126,7 @@ export class SolicitudesWorkflowService {
         `
         SELECT s.sol_formulario_version, ISNULL(c.cli_es_distribuidor, 0) AS cli_es_distribuidor
         FROM solicitudes s
-        JOIN Clientes c ON c.cli_id = s.sol_cliente_id
+        JOIN Clientes c ON c.cli_id = s.sol_cli_id
         WHERE s.sol_id = @0
         `,
         [solicitudId],
@@ -267,15 +267,15 @@ export class SolicitudesWorkflowService {
   // seleccionarlos: puede que todos estén subidos pero el cliente todavía no
   // haya pulsado "Enviar e informar a Cartonera" para avanzar el estado.
   async solicitudEnEsperaDocumentosDiferidos(solicitud: {
-    sol_estado_id: number;
-    sol_resultado_etapa_id: number;
+    sol_ses_id: number;
+    sol_wee_id: number;
   }): Promise<boolean> {
     const [resultadoPendDocs] = await this.dataSource.query(
       `SELECT wee_id FROM workflow_estado_etapa WHERE wee_codigo = 'PEND_DOCS'`,
     );
     return (
-      Number(solicitud.sol_estado_id) === 2 &&
-      Number(solicitud.sol_resultado_etapa_id) === resultadoPendDocs?.wee_id
+      Number(solicitud.sol_ses_id) === 2 &&
+      Number(solicitud.sol_wee_id) === resultadoPendDocs?.wee_id
     );
   }
 
@@ -309,15 +309,15 @@ export class SolicitudesWorkflowService {
       // llama a este método de forma redundante con el mismo estado) y para
       // no duplicar filas de historial cuando no hubo cambio de etapa/resultado.
       const solicitudPrevioResult = await queryRunner.query(
-        `SELECT sol_estado_id, sol_etapa_actual_id, sol_resultado_etapa_id
+        `SELECT sol_ses_id, sol_wet_id, sol_wee_id
          FROM solicitudes
          WHERE sol_id = @0`,
         [solicitudId],
       );
       const solicitudPrevio = solicitudPrevioResult?.[0] ?? null;
-      const estadoPrevio = solicitudPrevio?.sol_estado_id ?? null;
-      const etapaPrevia = solicitudPrevio?.sol_etapa_actual_id ?? null;
-      const resultadoPrevio = solicitudPrevio?.sol_resultado_etapa_id ?? null;
+      const estadoPrevio = solicitudPrevio?.sol_ses_id ?? null;
+      const etapaPrevia = solicitudPrevio?.sol_wet_id ?? null;
+      const resultadoPrevio = solicitudPrevio?.sol_wee_id ?? null;
 
       // Verificar si la solicitud está en estado PENDIENTE + etapa ASC + resultado RECHAZADO
       // Si se está cambiando a REVISIÓN, cambiar también el resultado a PENDIENTE
@@ -422,9 +422,9 @@ export class SolicitudesWorkflowService {
       // Actualizar estado (y etapa si corresponde)
       let updateSQL = `
         UPDATE solicitudes
-        SET sol_estado_id = @0,
+        SET sol_ses_id = @0,
             sol_updated_at = GETDATE(),
-            sol_usuario_modifica = @1
+            sol_usr_id_modifica = @1
       `;
       const params: any[] = [estadoId, usuarioId];
 
@@ -435,15 +435,15 @@ export class SolicitudesWorkflowService {
       }
 
       if (etapaId !== null) {
-        updateSQL += `, sol_etapa_actual_id = @${params.length}`;
+        updateSQL += `, sol_wet_id = @${params.length}`;
         params.push(etapaId);
       }
 
       if (resultadoIdActualizar !== null) {
-        updateSQL += `, sol_resultado_etapa_id = @${params.length}`;
+        updateSQL += `, sol_wee_id = @${params.length}`;
         params.push(resultadoIdActualizar);
       } else if (etapaId !== null && resultadoId !== null) {
-        updateSQL += `, sol_resultado_etapa_id = @${params.length}`;
+        updateSQL += `, sol_wee_id = @${params.length}`;
         params.push(resultadoId);
       }
 
@@ -457,7 +457,7 @@ export class SolicitudesWorkflowService {
 
       await queryRunner.query(updateSQL, params);
 
-      // A diferencia de sol_usuario_modifica (nullable), tanto
+      // A diferencia de sol_usr_id_modifica (nullable), tanto
       // Solicitudes_estados_hist.seh_usr_id como
       // solicitud_workflow_historial.swh_usuario_id son NOT NULL sin
       // default — cuando quien actúa es un cliente (usuarioId=null, ver
@@ -503,17 +503,17 @@ export class SolicitudesWorkflowService {
       } else if (resultadoIdActualizar !== null) {
         // Registrar en historial si solo se cambió el resultado (sin cambiar etapa)
         const solicitudActual = await queryRunner.query(
-          `SELECT sol_etapa_actual_id FROM solicitudes WHERE sol_id = @0`,
+          `SELECT sol_wet_id FROM solicitudes WHERE sol_id = @0`,
           [solicitudId],
         );
 
         if (solicitudActual.length > 0) {
-          const { sol_etapa_actual_id } = solicitudActual[0];
+          const { sol_wet_id } = solicitudActual[0];
           await this.historialWorkflowService.registrarTransicionConSLA(
             queryRunner,
             {
               solicitudId,
-              etapaId: sol_etapa_actual_id,
+              etapaId: sol_wet_id,
               resultadoId: resultadoIdActualizar,
               usuarioId: usuarioIdParaHistorial,
               comentario:
@@ -603,7 +603,7 @@ export class SolicitudesWorkflowService {
       'Formulario y documentos cargados correctamente. Puedes editar hasta que Cartonera revise tu solicitud.';
 
     const [solicitud] = await this.dataSource.query(
-      `SELECT sol_estado_id, sol_etapa_actual_id, sol_resultado_etapa_id FROM solicitudes WHERE sol_id = @0`,
+      `SELECT sol_ses_id, sol_wet_id, sol_wee_id FROM solicitudes WHERE sol_id = @0`,
       [solicitudId],
     );
 
@@ -640,9 +640,9 @@ export class SolicitudesWorkflowService {
 
       await queryRunner.query(
         `UPDATE solicitudes
-         SET sol_etapa_actual_id = @0, sol_resultado_etapa_id = @1,
+         SET sol_wet_id = @0, sol_wee_id = @1,
              sol_observacion_cliente = @2,
-             sol_usuario_modifica = @3, sol_updated_at = GETDATE()
+             sol_usr_id_modifica = @3, sol_updated_at = GETDATE()
          WHERE sol_id = @4`,
         [
           etapaEJN.wet_id,
@@ -654,7 +654,7 @@ export class SolicitudesWorkflowService {
       );
 
       // solicitud_workflow_historial.swh_usuario_id es NOT NULL sin
-      // default, a diferencia de sol_usuario_modifica (nullable) — mismo
+      // default, a diferencia de sol_usr_id_modifica (nullable) — mismo
       // fallback que cambiarEstado.
       await this.historialWorkflowService.registrarTransicionConSLA(
         queryRunner,
@@ -789,7 +789,7 @@ export class SolicitudesWorkflowService {
         const [solicitudData] = await queryRunner.query(
           `SELECT c.cli_correo
            FROM solicitudes s
-           LEFT JOIN clientes c ON s.sol_cliente_id = c.cli_id
+           LEFT JOIN clientes c ON s.sol_cli_id = c.cli_id
            WHERE s.sol_id = @0`,
           [solicitudId],
         );
@@ -806,13 +806,13 @@ export class SolicitudesWorkflowService {
       await queryRunner.query(
         `
         UPDATE solicitudes SET
-          sol_estado_id = ${estadoId},
-          sol_etapa_actual_id = ${etapaDestId},
-          sol_resultado_etapa_id = ${resultadoWorkflow.wee_id},
-          sol_motivo_rechazo_id = ${motivoValue},
+          sol_ses_id = ${estadoId},
+          sol_wet_id = ${etapaDestId},
+          sol_wee_id = ${resultadoWorkflow.wee_id},
+          sol_mrs_id = ${motivoValue},
           sol_fecha_estimada_respuesta_comercial = ${fechaEstimadaValue},
           sol_fecha_gest_asc = GETDATE(),
-          sol_usuario_modifica = ${usuarioModificaValue},
+          sol_usr_id_modifica = ${usuarioModificaValue},
           sol_observacion_cliente = @0,
           sol_updated_at = GETDATE()
         WHERE sol_id = ${solicitudId}
@@ -965,7 +965,7 @@ export class SolicitudesWorkflowService {
       const [solicitudActual] = await this.dataSource.query(
         `SELECT we.wet_codigo
          FROM solicitudes s
-         LEFT JOIN workflow_etapas we ON we.wet_id = s.sol_etapa_actual_id
+         LEFT JOIN workflow_etapas we ON we.wet_id = s.sol_wet_id
          WHERE s.sol_id = @0`,
         [sa_sol_id],
       );
@@ -1006,7 +1006,7 @@ export class SolicitudesWorkflowService {
         usuario_modifica,
         'Tu solicitud se encuentra en revisión.',
       ];
-      let updateSQL = `UPDATE solicitudes SET sol_consumo_mensual_proyectado = @0, sol_toneladas_proyectadas = @1, sol_observacion_ejn = @2, sol_estado_id = @3, sol_usuario_modifica = @4, sol_updated_at = GETDATE(), sol_observacion_cliente = @5`;
+      let updateSQL = `UPDATE solicitudes SET sol_consumo_mensual_proyectado = @0, sol_toneladas_proyectadas = @1, sol_observacion_ejn = @2, sol_ses_id = @3, sol_usr_id_modifica = @4, sol_updated_at = GETDATE(), sol_observacion_cliente = @5`;
 
       if (fecha_real_ejecutivo) {
         updateSQL += `, sol_fecha_gest_ejn = @${updateParams.length}`;
@@ -1020,7 +1020,7 @@ export class SolicitudesWorkflowService {
 
       await this.dataSource.query(updateSQL, updateParams);
 
-      // sol_estado_id pasa de PENDIENTE a REVISION acá (ver FLUJO_ETAPAS.md:
+      // sol_ses_id pasa de PENDIENTE a REVISION acá (ver FLUJO_ETAPAS.md:
       // la solicitud está en PENDIENTE mientras la ve el Ejecutivo de
       // Negocios) — mismo bug que guardarConceptoGenerico: esta función
       // nunca insertaba en Solicitudes_estados_hist pese a cambiar el
@@ -1099,15 +1099,15 @@ export class SolicitudesWorkflowService {
 
     try {
       const [solicitudActual] = await queryRunner.query(
-        `SELECT s.sol_etapa_actual_id, s.sol_cliente_id, we.wet_codigo
+        `SELECT s.sol_wet_id, s.sol_cli_id, we.wet_codigo
          FROM solicitudes s
-         LEFT JOIN workflow_etapas we ON we.wet_id = s.sol_etapa_actual_id
+         LEFT JOIN workflow_etapas we ON we.wet_id = s.sol_wet_id
          WHERE s.sol_id = @0`,
         [sa_sol_id],
       );
-      const etapaActualId = solicitudActual?.sol_etapa_actual_id;
+      const etapaActualId = solicitudActual?.sol_wet_id;
       const etapaActualCodigo = solicitudActual?.wet_codigo;
-      const clienteIdSolicitud = solicitudActual?.sol_cliente_id;
+      const clienteIdSolicitud = solicitudActual?.sol_cli_id;
 
       const estadoRevision =
         await this.solicitudEstadosService.obtenerEstadoPorCodigo('REVISION');
@@ -1180,16 +1180,16 @@ export class SolicitudesWorkflowService {
         sa_sol_id,
       ];
       let updateSQL = `UPDATE solicitudes SET
-        sol_estado_id = @0,
-        sol_etapa_actual_id = @1,
-        sol_resultado_etapa_id = @2,
-        sol_usuario_modifica = @3,
+        sol_ses_id = @0,
+        sol_wet_id = @1,
+        sol_wee_id = @2,
+        sol_usr_id_modifica = @3,
         sol_updated_at = GETDATE(),
         sol_observacion_cliente = @4
         ${columnaFecha}`;
 
       if (!aprobado && motivo_rechazo_id) {
-        updateSQL += `, sol_motivo_rechazo_id = @${params.length}`;
+        updateSQL += `, sol_mrs_id = @${params.length}`;
         params.push(motivo_rechazo_id);
       }
 
@@ -1211,7 +1211,7 @@ export class SolicitudesWorkflowService {
           paramIndex++;
         }
         if (usuario_modifica) {
-          updateSQL += `, sol_usuario_aprueba_condiciones = @${paramIndex}`;
+          updateSQL += `, sol_usr_id_apr_cond = @${paramIndex}`;
           params.push(usuario_modifica);
         }
       }
@@ -1226,10 +1226,10 @@ export class SolicitudesWorkflowService {
             '[guardarConceptoGenerico] Columnas de condiciones no existen aún. Guardando solo decisión.',
           );
           const basicUpdateSQL = `UPDATE solicitudes SET
-            sol_estado_id = @0,
-            sol_etapa_actual_id = @1,
-            sol_resultado_etapa_id = @2,
-            sol_usuario_modifica = @3,
+            sol_ses_id = @0,
+            sol_wet_id = @1,
+            sol_wee_id = @2,
+            sol_usr_id_modifica = @3,
             sol_updated_at = GETDATE(),
             sol_observacion_cliente = @4
             ${columnaFecha}`;
@@ -1245,7 +1245,7 @@ export class SolicitudesWorkflowService {
               motivo_rechazo_id,
             ];
             await queryRunner.query(
-              basicUpdateSQL + `, sol_motivo_rechazo_id = @6 WHERE sol_id = @5`,
+              basicUpdateSQL + `, sol_mrs_id = @6 WHERE sol_id = @5`,
               basicParams,
             );
           } else {
@@ -1331,7 +1331,7 @@ export class SolicitudesWorkflowService {
       // guardarConceptoGenerico nunca insertaba acá — a diferencia de
       // cambiarEstado, dejaba Solicitudes_estados_hist sin la fila
       // correspondiente cada vez que ASC/OFC/CC1/CC2 resolvía (aprobado o
-      // rechazado), aunque sol_estado_id sí cambiara de verdad (ej.
+      // rechazado), aunque sol_ses_id sí cambiara de verdad (ej.
       // REVISION -> APROBADA en CC2). Eso rompía en silencio cualquier
       // consulta que dependiera de Solicitudes_estados_hist para "cuándo
       // pasó X" en una solicitud resuelta por este camino — el caso
@@ -1439,7 +1439,7 @@ export class SolicitudesWorkflowService {
 
   // Marca que el ejecutivo de negocios ya gestionó manualmente (fuera del
   // sistema) el seguimiento con el cliente tras un rechazo de OFC/CC2. No
-  // toca sol_estado_id/sol_etapa_actual_id/sol_resultado_etapa_id — esos
+  // toca sol_ses_id/sol_wet_id/sol_wee_id — esos
   // siguen terminando en RECHAZADA como documenta
   // documentacion/Portal Clientes/Solicitudes/FLUJO_ETAPAS.md; esto es
   // un tracker aparte, no una transición de workflow, así que no pasa por
@@ -1447,7 +1447,7 @@ export class SolicitudesWorkflowService {
   // efectos dependientes).
   async finalizarGestionRechazo(solicitudId: number, usuarioId: number) {
     const [solicitud] = await this.dataSource.query(
-      `SELECT sol_estado_id FROM solicitudes WHERE sol_id = @0`,
+      `SELECT sol_ses_id FROM solicitudes WHERE sol_id = @0`,
       [solicitudId],
     );
     if (!solicitud) {
@@ -1456,7 +1456,7 @@ export class SolicitudesWorkflowService {
 
     const estadoRechazada =
       await this.solicitudEstadosService.obtenerEstadoPorCodigo('RECHAZADA');
-    if (solicitud.sol_estado_id !== estadoRechazada?.id) {
+    if (solicitud.sol_ses_id !== estadoRechazada?.id) {
       throw new Error(
         'Solo se puede finalizar la gestión sobre una solicitud rechazada',
       );
@@ -1466,7 +1466,7 @@ export class SolicitudesWorkflowService {
       `UPDATE solicitudes
        SET sol_gestion_rechazo_finalizada = 1,
            sol_fecha_gestion_rechazo = GETDATE(),
-           sol_usuario_gestion_rechazo = @0
+           sol_usr_id_gest_rechazo = @0
        WHERE sol_id = @1`,
       [usuarioId, solicitudId],
     );
@@ -1717,10 +1717,10 @@ export class SolicitudesWorkflowService {
 
     try {
       const [solicitudActual] = await queryRunner.query(
-        `SELECT sol_etapa_actual_id FROM solicitudes WHERE sol_id = @0`,
+        `SELECT sol_wet_id FROM solicitudes WHERE sol_id = @0`,
         [sa_sol_id],
       );
-      const etapaActualId = solicitudActual?.sol_etapa_actual_id;
+      const etapaActualId = solicitudActual?.sol_wet_id;
 
       const [etapaSiguiente] = await queryRunner.query(
         `SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'CC2'`,
@@ -1733,10 +1733,10 @@ export class SolicitudesWorkflowService {
 
       await queryRunner.query(
         `UPDATE solicitudes SET
-          sol_estado_id = @0,
-          sol_etapa_actual_id = @1,
-          sol_resultado_etapa_id = @2,
-          sol_usuario_modifica = @3,
+          sol_ses_id = @0,
+          sol_wet_id = @1,
+          sol_wee_id = @2,
+          sol_usr_id_modifica = @3,
           sol_updated_at = GETDATE(),
           sol_fecha_gest_cc1 = GETDATE(),
           sol_observacion_cliente = @5
@@ -1843,10 +1843,10 @@ export class SolicitudesWorkflowService {
     try {
       await this.dataSource.query(
         `UPDATE solicitudes SET
-          sol_estado_id = @0,
-          sol_etapa_actual_id = @1,
-          sol_resultado_etapa_id = @2,
-          sol_usuario_modifica = @3,
+          sol_ses_id = @0,
+          sol_wet_id = @1,
+          sol_wee_id = @2,
+          sol_usr_id_modifica = @3,
           sol_updated_at = GETDATE()
          WHERE sol_id = @4`,
         [
@@ -1909,10 +1909,10 @@ export class SolicitudesWorkflowService {
     try {
       await queryRunner.query(
         `UPDATE solicitudes
-         SET sol_estado_id = @0,
-             sol_etapa_actual_id = @1,
-             sol_resultado_etapa_id = @2,
-             sol_usuario_modifica = @3,
+         SET sol_ses_id = @0,
+             sol_wet_id = @1,
+             sol_wee_id = @2,
+             sol_usr_id_modifica = @3,
              sol_updated_at = GETDATE(),
              sol_observacion_cliente = @5
          WHERE sol_id = @4`,
@@ -1927,7 +1927,7 @@ export class SolicitudesWorkflowService {
       );
 
       // solicitud_workflow_historial.swh_usuario_id es NOT NULL sin
-      // default, a diferencia de sol_usuario_modifica (nullable) — mismo
+      // default, a diferencia de sol_usr_id_modifica (nullable) — mismo
       // fallback que cambiarEstado.
       await this.historialWorkflowService.registrarTransicionConSLA(
         queryRunner,
@@ -1974,7 +1974,7 @@ export class SolicitudesWorkflowService {
           s.sol_forma_pago,
           s.sol_fecha_aprobacion
         FROM solicitudes s
-        LEFT JOIN clientes c ON c.${lookup.cliId} = s.sol_cliente_id
+        LEFT JOIN clientes c ON c.${lookup.cliId} = s.sol_cli_id
         WHERE s.sol_id = @0`,
         [sa_sol_id],
       );

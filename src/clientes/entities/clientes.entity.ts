@@ -84,6 +84,30 @@ export class ClienteEntity {
   })
   cli_password: string | null;
 
+  @Column({
+    name: 'cli_es_distribuidor',
+    type: 'bit',
+    nullable: false,
+    default: 0,
+  })
+  cli_es_distribuidor: boolean;
+
+  @Column({
+    name: 'cli_nit_dig_vf',
+    type: 'varchar',
+    length: 1,
+    nullable: true,
+  })
+  cli_nit_dig_vf: string | null;
+
+  @Column({
+    name: 'cli_es_extranjero',
+    type: 'bit',
+    nullable: false,
+    default: 0,
+  })
+  cli_es_extranjero: boolean;
+
   // Marca si el cliente ya fue creado en SIESA — ver
   // Documentos Cartonera/documentacion/Portal Clientes/SIESA/
   // plan-envio-solicitud-aprobada-a-siesa.md. Una sola vez por cliente, no

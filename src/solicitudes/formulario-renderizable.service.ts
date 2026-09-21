@@ -81,7 +81,7 @@ export class FormularioRenderizableService {
         sol_id, sol_numero_solicitud, cli_razon_social, sol_fecha_envio,
         sol_formulario_version
       FROM solicitudes s
-      LEFT JOIN Clientes c ON c.cli_id = s.sol_cliente_id
+      LEFT JOIN Clientes c ON c.cli_id = s.sol_cli_id
       WHERE s.sol_id = @0`,
         [solicitudId],
       ),

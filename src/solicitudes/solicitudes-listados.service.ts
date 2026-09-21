@@ -73,11 +73,11 @@ export class SolicitudesListadosService {
     if ((query.mode || '').trim().toLowerCase() === 'ejecutivos') {
       return await this.dataSource.query(`
         SELECT DISTINCT
-          s.sol_ejecutivo_id,
+          s.sol_ejng_id,
           u.${columns.usrNombre} AS ejecutivo_nombre
         FROM solicitudes s
-        INNER JOIN usuarios u ON u.${columns.usrId} = s.sol_ejecutivo_id
-        WHERE s.sol_ejecutivo_id IS NOT NULL
+        INNER JOIN usuarios u ON u.${columns.usrId} = s.sol_ejng_id
+        WHERE s.sol_ejng_id IS NOT NULL
         ORDER BY u.${columns.usrNombre}
       `);
     }
@@ -103,23 +103,23 @@ export class SolicitudesListadosService {
       params.push(fechaHasta);
     }
     if (Number.isInteger(ejecutivoId) && ejecutivoId > 0) {
-      whereClauses.push(`s.sol_ejecutivo_id = @${idx++}`);
+      whereClauses.push(`s.sol_ejng_id = @${idx++}`);
       params.push(ejecutivoId);
     }
     if (Number.isInteger(clienteId) && clienteId > 0) {
-      whereClauses.push(`s.sol_cliente_id = @${idx++}`);
+      whereClauses.push(`s.sol_cli_id = @${idx++}`);
       params.push(clienteId);
     }
     if (Number.isInteger(estadoId) && estadoId > 0) {
-      whereClauses.push(`s.sol_estado_id = @${idx++}`);
+      whereClauses.push(`s.sol_ses_id = @${idx++}`);
       params.push(estadoId);
     }
     if (Number.isInteger(etapaId) && etapaId > 0) {
-      whereClauses.push(`s.sol_etapa_actual_id = @${idx++}`);
+      whereClauses.push(`s.sol_wet_id = @${idx++}`);
       params.push(etapaId);
     }
     if (Number.isInteger(resultadoId) && resultadoId > 0) {
-      whereClauses.push(`s.sol_resultado_etapa_id = @${idx++}`);
+      whereClauses.push(`s.sol_wee_id = @${idx++}`);
       params.push(resultadoId);
     }
 
@@ -139,9 +139,9 @@ export class SolicitudesListadosService {
       SELECT
         s.sol_id AS [sol_id],
         s.sol_numero_solicitud AS [sol_numero_solicitud],
-        s.sol_cliente_id AS [sol_cliente_id],
+        s.sol_cli_id AS [sol_cli_id],
         c.${columns.cliRazonSocial} AS [cliente_nombre],
-        s.sol_ejecutivo_id AS [sol_ejecutivo_id],
+        s.sol_ejng_id AS [sol_ejng_id],
         COALESCE(e.ejng_nombre, u.${columns.usrNombre}) AS [ejecutivo_nombre],
         co_exec.cop_nombre AS [ejecutivo_area],
         NULL AS [auxiliar_id],
@@ -150,10 +150,10 @@ export class SolicitudesListadosService {
         s.sol_fecha_creacion AS [sol_fecha_creacion],
         s.sol_fecha_envio AS [sol_fecha_envio],
         s.sol_fecha_aprobacion AS [sol_fecha_aprobacion],
-        s.sol_estado_id AS [sol_estado_id],
-        s.sol_etapa_actual_id AS [sol_etapa_actual_id],
+        s.sol_ses_id AS [sol_ses_id],
+        s.sol_wet_id AS [sol_wet_id],
         we.wet_nombre AS [etapa_nombre],
-        s.sol_resultado_etapa_id AS [sol_resultado_etapa_id],
+        s.sol_wee_id AS [sol_wee_id],
         wr.wee_nombre AS [resultado_nombre],
         s.sol_formulario_version AS [sol_formulario_version],
         s.sol_fecha_estimada_respuesta_comercial AS [sol_fecha_estimada_respuesta_comercial],
@@ -173,12 +173,12 @@ export class SolicitudesListadosService {
         s.sol_plazo_pago AS [sol_plazo_pago],
         s.sol_forma_pago AS [sol_forma_pago]
       FROM solicitudes s
-      LEFT JOIN clientes c ON c.${columns.cliId} = s.sol_cliente_id
-      LEFT JOIN Ejecutivo_negocio e ON e.ejng_id = s.sol_ejecutivo_id
+      LEFT JOIN clientes c ON c.${columns.cliId} = s.sol_cli_id
+      LEFT JOIN Ejecutivo_negocio e ON e.ejng_id = s.sol_ejng_id
       LEFT JOIN Centro_operacion co_exec ON co_exec.cop_id = e.cop_id
-      LEFT JOIN usuarios u ON u.${columns.usrId} = s.sol_ejecutivo_id
-      LEFT JOIN workflow_etapas we ON we.wet_id = s.sol_etapa_actual_id
-      LEFT JOIN workflow_estado_etapa wr ON wr.wee_id = s.sol_resultado_etapa_id
+      LEFT JOIN usuarios u ON u.${columns.usrId} = s.sol_ejng_id
+      LEFT JOIN workflow_etapas we ON we.wet_id = s.sol_wet_id
+      LEFT JOIN workflow_estado_etapa wr ON wr.wee_id = s.sol_wee_id
       ${whereSql}
       ORDER BY s.sol_fecha_creacion DESC
     `.replace(/\?/g, (_) => {
@@ -203,13 +203,13 @@ export class SolicitudesListadosService {
     SELECT
       s.sol_id AS [sol_id],
       s.sol_numero_solicitud AS [sol_numero_solicitud],
-      s.sol_estado_id AS [sol_estado_id],
+      s.sol_ses_id AS [sol_ses_id],
       se.ses_codigo AS [estado_codigo],
-      s.sol_etapa_actual_id AS [sol_etapa_actual_id],
+      s.sol_wet_id AS [sol_wet_id],
       we.wet_codigo AS [etapa_codigo],
-      s.sol_resultado_etapa_id AS [sol_resultado_etapa_id],
+      s.sol_wee_id AS [sol_wee_id],
       wr.wee_codigo AS [resultado_codigo],
-      s.sol_cliente_id AS [sol_cliente_id],
+      s.sol_cli_id AS [sol_cli_id],
       s.sol_fecha_creacion AS [sol_fecha_creacion],
       s.sol_created_at AS [sol_created_at],
       s.sol_updated_at AS [sol_updated_at],
@@ -222,16 +222,16 @@ export class SolicitudesListadosService {
       CAST(CASE WHEN ${SolicitudesListadosService.ES_AMPLIACION_CUPO_SQL} THEN 1 ELSE 0 END AS BIT) AS [es_ampliacion_cupo],
       s.sol_plazo_pago AS [sol_plazo_pago],
       s.sol_forma_pago AS [sol_forma_pago],
-      s.sol_usuario_aprueba_condiciones AS [sol_usuario_aprueba_condiciones],
+      s.sol_usr_id_apr_cond AS [sol_usr_id_apr_cond],
       s.sol_observacion_cliente AS [sol_observacion_cliente],
       c.cli_razon_social AS [cliente_nombre],
       c.cli_nro_identificacion AS [cliente_nit]
     FROM solicitudes s
-    LEFT JOIN clientes c ON s.sol_cliente_id = c.cli_id
-    LEFT JOIN solicitud_estados se ON se.ses_id = s.sol_estado_id
-    LEFT JOIN workflow_etapas we ON we.wet_id = s.sol_etapa_actual_id
-    LEFT JOIN workflow_estado_etapa wr ON wr.wee_id = s.sol_resultado_etapa_id
-    WHERE s.sol_cliente_id = @0
+    LEFT JOIN clientes c ON s.sol_cli_id = c.cli_id
+    LEFT JOIN solicitud_estados se ON se.ses_id = s.sol_ses_id
+    LEFT JOIN workflow_etapas we ON we.wet_id = s.sol_wet_id
+    LEFT JOIN workflow_estado_etapa wr ON wr.wee_id = s.sol_wee_id
+    WHERE s.sol_cli_id = @0
     `;
 
     const params: any[] = [clienteId];
@@ -246,7 +246,7 @@ export class SolicitudesListadosService {
 
     if (filters?.estado && filters.estado !== 'todos') {
       const paramIndex = params.length;
-      sql += ` AND s.sol_estado_id = @${paramIndex}`;
+      sql += ` AND s.sol_ses_id = @${paramIndex}`;
       params.push(Number(filters.estado));
     }
 
@@ -274,17 +274,17 @@ export class SolicitudesListadosService {
     SELECT
       s.sol_id AS [sol_id],
       s.sol_numero_solicitud AS [sol_numero_solicitud],
-      s.sol_cliente_id AS [sol_cliente_id],
+      s.sol_cli_id AS [sol_cli_id],
       c.cli_razon_social AS [cliente_nombre],
-      s.sol_estado_id AS [sol_estado_id],
+      s.sol_ses_id AS [sol_ses_id],
       e.descripcion AS [estado_descripcion],
       s.sol_fecha_creacion AS [sol_fecha_creacion],
-      s.sol_etapa_actual_id AS [sol_etapa_actual_id],
-      s.sol_resultado_etapa_id AS [sol_resultado_etapa_id]
+      s.sol_wet_id AS [sol_wet_id],
+      s.sol_wee_id AS [sol_wee_id]
     FROM solicitudes s
-    LEFT JOIN clientes c ON s.sol_cliente_id = c.cli_id
-    LEFT JOIN solicitud_estados e ON e.est_id = s.sol_estado_id
-    WHERE s.sol_estado_id = 2
+    LEFT JOIN clientes c ON s.sol_cli_id = c.cli_id
+    LEFT JOIN solicitud_estados e ON e.est_id = s.sol_ses_id
+    WHERE s.sol_ses_id = 2
     ORDER BY s.sol_fecha_creacion DESC
   `;
     return await this.dataSource.query(sql);
@@ -328,8 +328,8 @@ export class SolicitudesListadosService {
     SELECT
       s.sol_id AS [sol_id],
       s.sol_numero_solicitud AS [sol_numero_solicitud],
-      s.sol_estado_id AS [sol_estado_id],
-      s.sol_cliente_id AS [sol_cliente_id],
+      s.sol_ses_id AS [sol_ses_id],
+      s.sol_cli_id AS [sol_cli_id],
       s.sol_fecha_creacion AS [sol_fecha_creacion],
       s.sol_fecha_envio AS [sol_fecha_envio],
       COALESCE(fe_vigente.swh_fecha_estimada, s.sol_fecha_est_gest_ejn) AS [sol_fecha_est_gest_ejn],
@@ -346,12 +346,12 @@ export class SolicitudesListadosService {
       cop_cli.cop_id AS [sol_co_id],
       cop_cli.cop_nombre AS [centro_operacion_nombre]
     FROM solicitudes s
-    LEFT JOIN clientes c ON s.sol_cliente_id = c.${columns.cliId}
+    LEFT JOIN clientes c ON s.sol_cli_id = c.${columns.cliId}
     LEFT JOIN Ejecutivo_negocio en_cli ON en_cli.ejng_id = c.ejng_id
     LEFT JOIN Centro_operacion cop_cli ON cop_cli.cop_id = en_cli.cop_id
     OUTER APPLY (
       -- Ancla siempre a la etapa EJN específicamente, no a
-      -- sol_etapa_actual_id -- si se usara la etapa actual, una solicitud
+      -- sol_wet_id -- si se usara la etapa actual, una solicitud
       -- que ya está en Auxiliar/Comité mostraría la fecha estimada de esa
       -- otra etapa bajo la etiqueta "ejecutivo".
       SELECT TOP 1 swh.swh_fecha_estimada
@@ -360,15 +360,15 @@ export class SolicitudesListadosService {
         AND swh.swh_etapa_id = (SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'EJN')
       ORDER BY swh.swh_fecha DESC
     ) fe_vigente
-    WHERE s.sol_ejecutivo_id = @0
-      AND s.sol_estado_id = 2
-      -- sol_estado_id = 2 (PENDIENTE) por sí solo no basta: también es el
+    WHERE s.sol_ejng_id = @0
+      AND s.sol_ses_id = 2
+      -- sol_ses_id = 2 (PENDIENTE) por sí solo no basta: también es el
       -- estado de "cliente esperando documentos diferidos" (CLI/PEND_DOCS,
       -- antes de llegar a EJN) y de "auxiliar rechazó, cliente corrigiendo"
       -- (ASC/RECHAZADO cliente_actualiza, después de EJN). Sin este filtro,
       -- ambos casos aparecían en la bandeja del ejecutivo aunque no le
       -- tocara actuar todavía (o ya nunca más).
-      AND s.sol_etapa_actual_id = (SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'EJN')
+      AND s.sol_wet_id = (SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'EJN')
     ORDER BY s.sol_fecha_creacion DESC
   `;
 
@@ -409,9 +409,9 @@ export class SolicitudesListadosService {
     SELECT
       s.sol_id AS [sol_id],
       s.sol_numero_solicitud AS [sol_numero_solicitud],
-      s.sol_estado_id AS [sol_estado_id],
-      s.sol_etapa_actual_id AS [sol_etapa_actual_id],
-      s.sol_cliente_id AS [sol_cliente_id],
+      s.sol_ses_id AS [sol_ses_id],
+      s.sol_wet_id AS [sol_wet_id],
+      s.sol_cli_id AS [sol_cli_id],
       s.sol_fecha_creacion AS [sol_fecha_creacion],
       s.sol_gestion_rechazo_finalizada AS [sol_gestion_rechazo_finalizada],
       c.${columns.cliRazonSocial} AS [cliente_nombre],
@@ -425,10 +425,10 @@ export class SolicitudesListadosService {
       rechazo.fecha_rechazo AS [fecha_rechazo],
       rechazo.comentario_rechazo AS [comentario_rechazo]
     FROM solicitudes s
-    LEFT JOIN clientes c ON s.sol_cliente_id = c.${columns.cliId}
+    LEFT JOIN clientes c ON s.sol_cli_id = c.${columns.cliId}
     LEFT JOIN Ejecutivo_negocio en_cli ON en_cli.ejng_id = c.ejng_id
     LEFT JOIN Centro_operacion cop_cli ON cop_cli.cop_id = en_cli.cop_id
-    LEFT JOIN Motivos_rechazo_solicitud mr ON mr.mrs_id = s.sol_motivo_rechazo_id
+    LEFT JOIN Motivos_rechazo_solicitud mr ON mr.mrs_id = s.sol_mrs_id
     OUTER APPLY (
       SELECT TOP 1
         we.wet_codigo AS etapa_rechazo_codigo,
@@ -445,9 +445,9 @@ export class SolicitudesListadosService {
         AND we.wet_codigo IN ('OFC', 'CC2')
       ORDER BY swh.swh_fecha DESC
     ) rechazo
-    WHERE s.sol_ejecutivo_id = @0
-      AND s.sol_estado_id = (SELECT ses_id FROM solicitud_estados WHERE ses_codigo = 'RECHAZADA')
-      AND s.sol_etapa_actual_id IN (
+    WHERE s.sol_ejng_id = @0
+      AND s.sol_ses_id = (SELECT ses_id FROM solicitud_estados WHERE ses_codigo = 'RECHAZADA')
+      AND s.sol_wet_id IN (
         SELECT wet_id FROM workflow_etapas WHERE wet_codigo IN ('OFC', 'CC2')
       )
       AND s.sol_gestion_rechazo_finalizada = 0
@@ -465,7 +465,7 @@ export class SolicitudesListadosService {
       `
       SELECT
         s.sol_id,
-        s.sol_motivo_rechazo_id,
+        s.sol_mrs_id,
         mr.mrs_descripcion AS motivo_rechazo,
         s.sol_gestion_rechazo_finalizada,
         s.sol_fecha_gestion_rechazo,
@@ -476,8 +476,8 @@ export class SolicitudesListadosService {
         rechazo.fecha_rechazo,
         rechazo.comentario_rechazo
       FROM solicitudes s
-      LEFT JOIN Motivos_rechazo_solicitud mr ON mr.mrs_id = s.sol_motivo_rechazo_id
-      LEFT JOIN usuarios u ON u.usr_id = s.sol_usuario_gestion_rechazo
+      LEFT JOIN Motivos_rechazo_solicitud mr ON mr.mrs_id = s.sol_mrs_id
+      LEFT JOIN usuarios u ON u.usr_id = s.sol_usr_id_gest_rechazo
       OUTER APPLY (
         SELECT TOP 1
           we.wet_codigo AS etapa_rechazo_codigo,
@@ -513,17 +513,15 @@ export class SolicitudesListadosService {
     const whereClauses: string[] = [];
 
     if (filtros?.etapa_id !== undefined) {
-      whereClauses.push(`s.sol_etapa_actual_id = ${filtros.etapa_id}`);
+      whereClauses.push(`s.sol_wet_id = ${filtros.etapa_id}`);
     }
 
     if (filtros?.resultado_etapa_id !== undefined) {
-      whereClauses.push(
-        `s.sol_resultado_etapa_id = ${filtros.resultado_etapa_id}`,
-      );
+      whereClauses.push(`s.sol_wee_id = ${filtros.resultado_etapa_id}`);
     }
 
     if (filtros?.estado_id !== undefined) {
-      whereClauses.push(`s.sol_estado_id = ${filtros.estado_id}`);
+      whereClauses.push(`s.sol_ses_id = ${filtros.estado_id}`);
     }
 
     if (whereClauses.length === 0) {
@@ -542,8 +540,8 @@ export class SolicitudesListadosService {
       SELECT TOP (@0)
         sol_id AS [sol_id],
         sol_numero_solicitud AS [sol_numero_solicitud],
-        sol_cliente_id AS [sol_cliente_id],
-        sol_estado_id AS [sol_estado_id],
+        sol_cli_id AS [sol_cli_id],
+        sol_ses_id AS [sol_ses_id],
         sol_fecha_creacion AS [sol_fecha_creacion],
         sol_es_zona_franca AS [sol_es_zona_franca]
       FROM solicitudes
@@ -557,16 +555,16 @@ export class SolicitudesListadosService {
       SELECT TOP 1
         s.sol_id AS [sol_id],
         s.sol_numero_solicitud AS [sol_numero_solicitud],
-        s.sol_estado_id AS [sol_estado_id],
-        s.sol_etapa_actual_id AS [sol_etapa_actual_id],
-        s.sol_resultado_etapa_id AS [sol_resultado_etapa_id],
+        s.sol_ses_id AS [sol_ses_id],
+        s.sol_wet_id AS [sol_wet_id],
+        s.sol_wee_id AS [sol_wee_id],
         s.sol_fecha_creacion AS [sol_fecha_creacion],
         s.sol_fecha_envio AS [sol_fecha_envio],
         c.cli_razon_social AS [cliente_nombre],
         c.cli_nro_identificacion AS [cliente_nit]
       FROM solicitudes s
-      LEFT JOIN clientes c ON c.cli_id = s.sol_cliente_id
-      WHERE s.sol_cliente_id = @0
+      LEFT JOIN clientes c ON c.cli_id = s.sol_cli_id
+      WHERE s.sol_cli_id = @0
       ORDER BY s.sol_fecha_creacion DESC
     `;
     const result = await this.dataSource.query(sql, [clienteId]);
@@ -574,7 +572,7 @@ export class SolicitudesListadosService {
   }
 
   // Igual que obtenerUltimaSolicitud pero solo considera solicitudes
-  // APROBADAS (sol_estado_id = 5) — usado para decidir si el cliente es
+  // APROBADAS (sol_ses_id = 5) — usado para decidir si el cliente es
   // candidato a "Ampliación de Cupo" y para precargar respuestas desde su
   // última solicitud aprobada (no desde cualquier solicitud previa, que
   // podría estar rechazada/cancelada/en trámite).
@@ -583,17 +581,17 @@ export class SolicitudesListadosService {
       SELECT TOP 1
         s.sol_id AS [sol_id],
         s.sol_numero_solicitud AS [sol_numero_solicitud],
-        s.sol_estado_id AS [sol_estado_id],
-        s.sol_etapa_actual_id AS [sol_etapa_actual_id],
-        s.sol_resultado_etapa_id AS [sol_resultado_etapa_id],
+        s.sol_ses_id AS [sol_ses_id],
+        s.sol_wet_id AS [sol_wet_id],
+        s.sol_wee_id AS [sol_wee_id],
         s.sol_fecha_creacion AS [sol_fecha_creacion],
         s.sol_fecha_envio AS [sol_fecha_envio],
         s.sol_cupo_aprobado AS [sol_cupo_aprobado],
         c.cli_razon_social AS [cliente_nombre],
         c.cli_nro_identificacion AS [cliente_nit]
       FROM solicitudes s
-      LEFT JOIN clientes c ON c.cli_id = s.sol_cliente_id
-      WHERE s.sol_cliente_id = @0 AND s.sol_estado_id = 5
+      LEFT JOIN clientes c ON c.cli_id = s.sol_cli_id
+      WHERE s.sol_cli_id = @0 AND s.sol_ses_id = 5
       ORDER BY s.sol_fecha_creacion DESC
     `;
     const result = await this.dataSource.query(sql, [clienteId]);
@@ -608,15 +606,15 @@ export class SolicitudesListadosService {
       SELECT TOP 1
         s.sol_id AS [sol_id],
         s.sol_numero_solicitud AS [sol_numero_solicitud],
-        s.sol_estado_id AS [sol_estado_id],
-        s.sol_etapa_actual_id AS [sol_etapa_actual_id],
-        s.sol_resultado_etapa_id AS [sol_resultado_etapa_id],
+        s.sol_ses_id AS [sol_ses_id],
+        s.sol_wet_id AS [sol_wet_id],
+        s.sol_wee_id AS [sol_wee_id],
         s.sol_fecha_creacion AS [sol_fecha_creacion],
         s.sol_fecha_envio AS [sol_fecha_envio],
         c.cli_razon_social AS [cliente_nombre],
         c.cli_nro_identificacion AS [cliente_nit]
       FROM solicitudes s
-      LEFT JOIN clientes c ON c.cli_id = s.sol_cliente_id
+      LEFT JOIN clientes c ON c.cli_id = s.sol_cli_id
       WHERE s.sol_id = @0
     `;
     const result = await this.dataSource.query(sql, [solicitudId]);
@@ -629,7 +627,7 @@ export class SolicitudesListadosService {
         sol_id AS [sol_id],
         sol_numero_solicitud AS [sol_numero_solicitud]
       FROM solicitudes
-      WHERE sol_cliente_id = @0 AND sol_estado_id = 2
+      WHERE sol_cli_id = @0 AND sol_ses_id = 2
       ORDER BY sol_id DESC
     `;
     const result = await this.dataSource.query(sql, [clienteId]);
@@ -642,7 +640,7 @@ export class SolicitudesListadosService {
         sol_id AS [sol_id],
         sol_numero_solicitud AS [sol_numero_solicitud]
       FROM solicitudes
-      WHERE sol_cliente_id = @0 AND sol_estado_id NOT IN (1, 2, 3)
+      WHERE sol_cli_id = @0 AND sol_ses_id NOT IN (1, 2, 3)
       ORDER BY sol_fecha_creacion DESC
     `;
     const result = await this.dataSource.query(sql, [clienteId]);
@@ -655,8 +653,8 @@ export class SolicitudesListadosService {
     const columns = await this.resolveLookupColumns();
     const sql = this.buildSolicitudesQuery(
       columns,
-      `s.sol_etapa_actual_id = (SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'ASC')
-       AND s.sol_resultado_etapa_id = (SELECT wee_id FROM workflow_estado_etapa WHERE wee_codigo = 'PENDIENTE')`,
+      `s.sol_wet_id = (SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'ASC')
+       AND s.sol_wee_id = (SELECT wee_id FROM workflow_estado_etapa WHERE wee_codigo = 'PENDIENTE')`,
     );
     return await this.dataSource.query(sql);
   }
@@ -665,8 +663,8 @@ export class SolicitudesListadosService {
     const columns = await this.resolveLookupColumns();
     const sql = this.buildSolicitudesQuery(
       columns,
-      `s.sol_etapa_actual_id = (SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'OFC')
-       AND s.sol_resultado_etapa_id = (SELECT wee_id FROM workflow_estado_etapa WHERE wee_codigo = 'PENDIENTE')`,
+      `s.sol_wet_id = (SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'OFC')
+       AND s.sol_wee_id = (SELECT wee_id FROM workflow_estado_etapa WHERE wee_codigo = 'PENDIENTE')`,
     );
     return await this.dataSource.query(sql);
   }
@@ -675,8 +673,8 @@ export class SolicitudesListadosService {
     const columns = await this.resolveLookupColumns();
     const sql = this.buildSolicitudesQuery(
       columns,
-      `s.sol_etapa_actual_id = (SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'CC1')
-       AND s.sol_resultado_etapa_id = (SELECT wee_id FROM workflow_estado_etapa WHERE wee_codigo = 'PENDIENTE')`,
+      `s.sol_wet_id = (SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'CC1')
+       AND s.sol_wee_id = (SELECT wee_id FROM workflow_estado_etapa WHERE wee_codigo = 'PENDIENTE')`,
     );
     return await this.dataSource.query(sql);
   }
@@ -685,8 +683,8 @@ export class SolicitudesListadosService {
     const columns = await this.resolveLookupColumns();
     const sql = this.buildSolicitudesQuery(
       columns,
-      `s.sol_etapa_actual_id = (SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'CC2')
-       AND s.sol_resultado_etapa_id = (SELECT wee_id FROM workflow_estado_etapa WHERE wee_codigo = 'PENDIENTE')`,
+      `s.sol_wet_id = (SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'CC2')
+       AND s.sol_wee_id = (SELECT wee_id FROM workflow_estado_etapa WHERE wee_codigo = 'PENDIENTE')`,
     );
     return await this.dataSource.query(sql);
   }
@@ -696,11 +694,11 @@ export class SolicitudesListadosService {
       SELECT
         s.sol_id AS [sol_id],
         s.sol_numero_solicitud AS [sol_numero_solicitud],
-        s.sol_cliente_id AS [sol_cliente_id],
+        s.sol_cli_id AS [sol_cli_id],
         c.${columns.cliRazonSocial} AS [cliente_nombre],
-        s.sol_estado_id AS [sol_estado_id],
-        s.sol_etapa_actual_id AS [sol_etapa_actual_id],
-        s.sol_resultado_etapa_id AS [sol_resultado_etapa_id],
+        s.sol_ses_id AS [sol_ses_id],
+        s.sol_wet_id AS [sol_wet_id],
+        s.sol_wee_id AS [sol_wee_id],
         s.sol_fecha_creacion AS [sol_fecha_creacion],
         s.sol_fecha_envio AS [sol_fecha_envio],
         s.sol_fecha_estimada_respuesta_comercial AS [sol_fecha_estimada_respuesta_comercial],
@@ -722,21 +720,21 @@ export class SolicitudesListadosService {
         CAST(CASE WHEN ${SolicitudesListadosService.ES_AMPLIACION_CUPO_SQL} THEN 1 ELSE 0 END AS BIT) AS [es_ampliacion_cupo],
         we.wet_nombre AS [etapa_nombre],
         wr.wee_nombre AS [resultado_nombre],
-        s.sol_ejecutivo_id AS [sol_ejecutivo_id],
+        s.sol_ejng_id AS [sol_ejng_id],
         u.${columns.usrNombre} AS [ejecutivo_nombre],
         cop_cli.cop_id AS [sol_co_id],
         cop_cli.cop_nombre AS [centro_operacion_nombre]
       FROM solicitudes s
-      LEFT JOIN clientes c ON s.sol_cliente_id = c.${columns.cliId}
-      LEFT JOIN usuarios u ON s.sol_ejecutivo_id = u.${columns.usrId}
+      LEFT JOIN clientes c ON s.sol_cli_id = c.${columns.cliId}
+      LEFT JOIN usuarios u ON s.sol_ejng_id = u.${columns.usrId}
       LEFT JOIN Ejecutivo_negocio en_cli ON en_cli.ejng_id = c.ejng_id
       LEFT JOIN Centro_operacion cop_cli ON cop_cli.cop_id = en_cli.cop_id
-      LEFT JOIN workflow_etapas we ON we.wet_id = s.sol_etapa_actual_id
-      LEFT JOIN workflow_estado_etapa wr ON wr.wee_id = s.sol_resultado_etapa_id
+      LEFT JOIN workflow_etapas we ON we.wet_id = s.sol_wet_id
+      LEFT JOIN workflow_estado_etapa wr ON wr.wee_id = s.sol_wee_id
       OUTER APPLY (
         SELECT TOP 1 swh.swh_fecha_estimada
         FROM solicitud_workflow_historial swh
-        WHERE swh.swh_sol_id = s.sol_id AND swh.swh_etapa_id = s.sol_etapa_actual_id
+        WHERE swh.swh_sol_id = s.sol_id AND swh.swh_etapa_id = s.sol_wet_id
         ORDER BY swh.swh_fecha DESC
       ) fe_vigente
       WHERE ${whereClause}

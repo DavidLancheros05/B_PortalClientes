@@ -47,7 +47,7 @@ export class VariablePlantilla {
   // VariablesPlantillaService.resolverParaSolicitud(). Solo dos tablas
   // "ancla" permitidas (whitelist validado en el service, no solo acá):
   // 'solicitudes' (directo por sol_id) y 'clientes' (vía
-  // solicitudes.sol_cliente_id). Si están en null, la variable sigue
+  // solicitudes.sol_cli_id). Si están en null, la variable sigue
   // resolviéndose a mano en código (ej. representante_legal_*,
   // fecha_aprobacion, que no son una columna fija).
   @Column({ type: 'varchar', length: 20, nullable: true })

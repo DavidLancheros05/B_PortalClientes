@@ -117,9 +117,9 @@ export class SolicitudesService {
       // activas a la vez. Mismo criterio (estados 1/2/3) que ya usa
       // AmpliacionCupoService.create() para el mismo problema.
       const solicitudEnTramite = await queryRunner.query(
-        `SELECT TOP 1 sol_id, sol_numero_solicitud, sol_estado_id
+        `SELECT TOP 1 sol_id, sol_numero_solicitud, sol_ses_id
          FROM solicitudes
-         WHERE sol_cliente_id = @0 AND sol_estado_id IN (1, 2, 3)
+         WHERE sol_cli_id = @0 AND sol_ses_id IN (1, 2, 3)
          ORDER BY sol_id DESC`,
         [clienteId],
       );
@@ -131,7 +131,7 @@ export class SolicitudesService {
           3: 'en revisión',
         };
         const estadoTexto =
-          nombresEstado[solicitudEnTramite[0].sol_estado_id] || 'en trámite';
+          nombresEstado[solicitudEnTramite[0].sol_ses_id] || 'en trámite';
         throw new Error(
           `El cliente ya tiene una solicitud ${estadoTexto} (No. ${solicitudEnTramite[0].sol_numero_solicitud}). Complétala o resuélvela antes de crear una nueva.`,
         );
@@ -284,16 +284,16 @@ export class SolicitudesService {
       // Ejecutivo" en cuanto este último gestionaba.
       const insertSolicitudSQL = `
         INSERT INTO solicitudes (
-          sol_cliente_id, sol_estado_id,
+          sol_cli_id, sol_ses_id,
           sol_fecha_creacion, sol_created_at,
-          sol_updated_at, sol_version, sol_formulario_version, sol_usuario_crea,
+          sol_updated_at, sol_version, sol_formulario_version, sol_usr_id_crea,
           sol_numero_solicitud, sol_es_zona_franca,
-          sol_ejecutivo_id, sol_fecha_envio,
+          sol_ejng_id, sol_fecha_envio,
           sol_fecha_est_gest_ejn, sol_fecha_est_gest_asc,
           sol_fecha_est_gest_oc, sol_fecha_est_gest_cc1,
           sol_fecha_est_gest_cc2,
-          sol_motivo_rechazo_id, sol_usuario_modifica,
-          sol_etapa_actual_id, sol_resultado_etapa_id, sol_observacion_cliente
+          sol_mrs_id, sol_usr_id_modifica,
+          sol_wet_id, sol_wee_id, sol_observacion_cliente
         ) VALUES (
           @0, @1, @2, @3,
           @4, @5, @6, @7, @8, @9,
@@ -423,8 +423,8 @@ export class SolicitudesService {
 
         null, // @17 motivo_rechazo_id
         null, // @18 usuario_modifica
-        etapaActualId, // @19 sol_etapa_actual_id (CLI si BORRADOR, EJN si PENDIENTE)
-        resultadoFinalId, // @20 sol_resultado_etapa_id (PENDIENTE, o PEND_DOCS si faltan documentos diferidos)
+        etapaActualId, // @19 sol_wet_id (CLI si BORRADOR, EJN si PENDIENTE)
+        resultadoFinalId, // @20 sol_wee_id (PENDIENTE, o PEND_DOCS si faltan documentos diferidos)
         observacionClienteInicial, // @21 sol_observacion_cliente
       ];
 

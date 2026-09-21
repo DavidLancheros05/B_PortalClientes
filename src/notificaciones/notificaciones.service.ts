@@ -90,7 +90,8 @@ export class NotificacionesService {
       {
         codigo: 'SOLICITUD_RECHAZADA_CLIENTE',
         nombre: 'Solicitud rechazada - Cliente',
-        asunto: 'Solicitud {{numero_solicitud}} - Requiere corrección de documentos',
+        asunto:
+          'Solicitud {{numero_solicitud}} - Requiere corrección de documentos',
         cuerpo_html:
           '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6fb;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;"><tr><td align="center"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;"><tr><td style="background-color:#003d99;padding:28px 32px;text-align:center;"><p style="margin:0;color:#ffffff;font-size:19px;font-weight:bold;letter-spacing:0.5px;">CARTONERA NACIONAL S.A.</p><p style="margin:6px 0 0;color:#a9c2f0;font-size:13px;">Portal de Clientes</p></td></tr><tr><td style="padding:32px;"><p style="margin:0 0 16px;color:#1f2937;font-size:15px;">Hola <b>{{cliente_nombre}}</b>,</p><p style="margin:0 0 20px;color:#374151;font-size:14px;line-height:1.6;">Tu solicitud <b>{{numero_solicitud}}</b> fue rechazada y requiere corrección de documentos.</p><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef4ff;border-radius:8px;border:1px solid #d6e4ff;margin-bottom:20px;"><tr><td style="padding:18px 20px;"><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Motivo</p><p style="margin:0;color:#003d99;font-size:15px;font-weight:bold;">{{motivo_rechazo}}</p></td></tr></table><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#fff7ed;border-radius:8px;border:1px solid #fed7aa;margin-bottom:24px;"><tr><td style="padding:18px 20px;"><p style="margin:0 0 8px;color:#9a5b1e;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Documentos a corregir</p>{{documentos_html}}</td></tr></table><table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 4px;"><tr><td style="border-radius:8px;background-color:#0052cc;"><a href="{{portal_url}}" style="display:inline-block;padding:12px 36px;color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;">Corregir solicitud</a></td></tr></table></td></tr><tr><td style="background-color:#f9fafc;padding:16px 32px;text-align:center;border-top:1px solid #eef1f6;"><p style="margin:0;color:#9aa4b5;font-size:11px;">Este es un mensaje automatico, por favor no respondas a este correo.</p></td></tr></table></td></tr></table>',
         activa: true,
@@ -162,7 +163,8 @@ export class NotificacionesService {
       {
         codigo: 'CARTA_VINCULACION_APROBADA_CLIENTE',
         nombre: 'Carta de Vinculación Aprobada - Cliente',
-        asunto: 'Carta de Vinculación Comercial - Solicitud {{numero_solicitud}}',
+        asunto:
+          'Carta de Vinculación Comercial - Solicitud {{numero_solicitud}}',
         cuerpo_html:
           '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6fb;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;"><tr><td align="center"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;"><tr><td style="background-color:#003d99;padding:28px 32px;text-align:center;"><p style="margin:0;color:#ffffff;font-size:19px;font-weight:bold;letter-spacing:0.5px;">CARTONERA NACIONAL S.A.</p><p style="margin:6px 0 0;color:#a9c2f0;font-size:13px;">Vinculación Comercial</p></td></tr><tr><td style="padding:32px;"><p style="margin:0 0 16px;color:#1f2937;font-size:15px;">Estimado <b>{{cliente_nombre}}</b>,</p><p style="margin:0 0 20px;color:#374151;font-size:14px;line-height:1.6;">Adjuntamos la <b>Carta de Vinculación Comercial</b> correspondiente a tu solicitud <b>{{numero_solicitud}}</b>, que fue aprobada.</p><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef4ff;border-radius:8px;border:1px solid #d6e4ff;margin-bottom:24px;"><tr><td style="padding:18px 20px;"><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Cupo aprobado</p><p style="margin:0 0 14px;color:#003d99;font-size:15px;font-weight:bold;">{{cupo_aprobado}}</p><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Plazo de pago</p><p style="margin:0 0 14px;color:#003d99;font-size:15px;font-weight:bold;">{{plazo_pago}}</p><p style="margin:0 0 4px;color:#5b6b85;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Forma de pago</p><p style="margin:0;color:#003d99;font-size:15px;font-weight:bold;">{{forma_pago}}</p></td></tr></table><p style="margin:0;color:#8a94a6;font-size:12px;line-height:1.5;">Cordialmente,<br/>Equipo de Vinculación Comercial</p></td></tr><tr><td style="background-color:#f9fafc;padding:16px 32px;text-align:center;border-top:1px solid #eef1f6;"><p style="margin:0;color:#9aa4b5;font-size:11px;">Este es un mensaje automatico, por favor no respondas a este correo.</p></td></tr></table></td></tr></table>',
         activa: true,
@@ -227,7 +229,8 @@ export class NotificacionesService {
   }
 
   private formatearMoneda(value: number | string | null | undefined): string {
-    if (value === null || value === undefined || value === '') return 'No definido';
+    if (value === null || value === undefined || value === '')
+      return 'No definido';
     return new Intl.NumberFormat('es-CO', {
       style: 'currency',
       currency: 'COP',
@@ -356,7 +359,7 @@ export class NotificacionesService {
       SELECT TOP 1
         s.sol_id,
         s.sol_numero_solicitud AS numero_solicitud,
-        s.sol_estado_id,
+        s.sol_ses_id,
         s.sol_fecha_creacion AS fecha_creacion,
         s.sol_cupo_aprobado AS cupo_aprobado,
         s.sol_plazo_pago AS plazo_pago,
@@ -364,7 +367,7 @@ export class NotificacionesService {
         c.cli_razon_social AS cliente_nombre,
         c.cli_correo AS cliente_email
       FROM solicitudes s
-      LEFT JOIN clientes c ON c.cli_id = s.sol_cliente_id
+      LEFT JOIN clientes c ON c.cli_id = s.sol_cli_id
       WHERE s.sol_id = @0
       `,
       [solicitudId],
@@ -454,7 +457,7 @@ export class NotificacionesService {
   // Usuarios activos (usr_estado = 'A') con correo, para un rol dado
   // (rol_codigo en pc_roles: ASC, OC, CC1, CC2, COMERCIAL, etc). A diferencia
   // del Ejecutivo de Negocios (asignado 1 a 1 por solicitud vía
-  // sol_ejecutivo_id), estos roles funcionan como bandeja compartida: puede
+  // sol_ejng_id), estos roles funcionan como bandeja compartida: puede
   // haber 0, 1 o varios usuarios activos con el mismo rol, y cada uno recibe
   // su propio correo personalizado (no un solo correo con varios "to").
   private async obtenerUsuariosActivosPorRol(
@@ -543,8 +546,8 @@ export class NotificacionesService {
         u.usr_correo AS ejecutivo_email,
         u.usr_nombre AS ejecutivo_nombre
       FROM solicitudes s
-      LEFT JOIN clientes c ON c.cli_id = s.sol_cliente_id
-      LEFT JOIN usuarios u ON u.ejng_id = s.sol_ejecutivo_id
+      LEFT JOIN clientes c ON c.cli_id = s.sol_cli_id
+      LEFT JOIN usuarios u ON u.ejng_id = s.sol_ejng_id
       LEFT JOIN pc_usuario_rol ur ON ur.ur_usuario_id = u.usr_id AND ur.ur_activo = 1
       LEFT JOIN pc_roles r ON r.rol_id = ur.ur_rol_id AND r.rol_nombre = 'EJECUTIVO'
       WHERE s.sol_id = @0 AND r.rol_id IS NOT NULL
@@ -597,11 +600,11 @@ export class NotificacionesService {
         u.usr_nombre AS ejecutivo_nombre,
         mr.mrs_descripcion AS motivo_rechazo
       FROM solicitudes s
-      LEFT JOIN clientes c ON c.cli_id = s.sol_cliente_id
-      LEFT JOIN usuarios u ON u.ejng_id = s.sol_ejecutivo_id
+      LEFT JOIN clientes c ON c.cli_id = s.sol_cli_id
+      LEFT JOIN usuarios u ON u.ejng_id = s.sol_ejng_id
       LEFT JOIN pc_usuario_rol ur ON ur.ur_usuario_id = u.usr_id AND ur.ur_activo = 1
       LEFT JOIN pc_roles r ON r.rol_id = ur.ur_rol_id AND r.rol_nombre = 'EJECUTIVO'
-      LEFT JOIN Motivos_rechazo_solicitud mr ON mr.mrs_id = s.sol_motivo_rechazo_id
+      LEFT JOIN Motivos_rechazo_solicitud mr ON mr.mrs_id = s.sol_mrs_id
       WHERE s.sol_id = @0 AND r.rol_id IS NOT NULL
       `,
       [solicitudId],
@@ -624,7 +627,8 @@ export class NotificacionesService {
       centro_operacion_nombre: solicitud.centro_operacion_nombre || '-',
       ejecutivo_nombre: solicitud.ejecutivo_nombre || 'Ejecutivo',
       etapa_rechazo: etapaNombre,
-      motivo_rechazo: solicitud.motivo_rechazo || 'No se indicó un motivo adicional',
+      motivo_rechazo:
+        solicitud.motivo_rechazo || 'No se indicó un motivo adicional',
       comentario: comentario || 'Sin comentario adicional',
       portal_url: this.construirPortalUrl(
         `/solicitudes/rechazadas-ejecutivo/${solicitud.sol_id}`,
@@ -759,7 +763,9 @@ export class NotificacionesService {
       cliente_nombre: solicitud.cliente_nombre || 'Cliente',
       cupo_aprobado: this.formatearMoneda(solicitud.cupo_aprobado),
       plazo_pago:
-        solicitud.plazo_pago != null ? `${solicitud.plazo_pago} días` : 'No definido',
+        solicitud.plazo_pago != null
+          ? `${solicitud.plazo_pago} días`
+          : 'No definido',
       forma_pago: solicitud.forma_pago || 'No definida',
       portal_url: this.construirPortalUrl(`/solicitudes/${solicitudId}`),
     };
@@ -825,7 +831,7 @@ export class NotificacionesService {
         END AS estado
       FROM Solicitud_archivo sa
       INNER JOIN solicitudes s ON s.sol_id = sa.sa_sol_id
-      LEFT JOIN clientes c ON c.cli_id = s.sol_cliente_id
+      LEFT JOIN clientes c ON c.cli_id = s.sol_cli_id
       WHERE sa.sa_fecha_vencimiento IS NOT NULL
         AND sa.sa_estado = 'activo'
         AND (
@@ -933,9 +939,11 @@ export class NotificacionesService {
     };
 
     try {
-      const result = await this.enviarConPlantilla('RESET_PASSWORD', variables, [
-        email,
-      ]);
+      const result = await this.enviarConPlantilla(
+        'RESET_PASSWORD',
+        variables,
+        [email],
+      );
       return { ok: !!result?.sent, ...result };
     } catch (error: any) {
       const mensaje =

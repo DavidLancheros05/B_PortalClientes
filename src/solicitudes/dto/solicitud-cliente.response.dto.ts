@@ -4,15 +4,15 @@ export class SolicitudClienteDto {
   sol_numero_solicitud: string;
 
   // Estado del flujo
-  sol_estado_id: number;
+  sol_ses_id: number;
   estado_codigo?: string;
-  sol_etapa_actual_id: number;
+  sol_wet_id: number;
   etapa_codigo?: string;
-  sol_resultado_etapa_id: number;
+  sol_wee_id: number;
   resultado_codigo?: string;
 
   // Cliente
-  sol_cliente_id: number;
+  sol_cli_id: number;
   cliente_nombre: string;
   cliente_nit: string;
 
@@ -34,6 +34,6 @@ export class SolicitudClienteDto {
   // Metadata
   sol_formulario_version?: number;
   sol_version?: number;
-  sol_usuario_aprueba_condiciones?: number;
+  sol_usr_id_apr_cond?: number;
   sol_observacion_cliente?: string;
 }

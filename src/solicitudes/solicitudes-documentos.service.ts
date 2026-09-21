@@ -59,15 +59,15 @@ export class SolicitudesDocumentosService {
               AND ISNULL(fp.fp_version, 1) = s.sol_formulario_version
           ) as cliente_toneladas_proyectadas
         FROM solicitudes s
-        LEFT JOIN clientes c ON s.sol_cliente_id = c.cli_id
-        LEFT JOIN usuarios u_crea ON s.sol_usuario_crea = u_crea.usr_id
-        LEFT JOIN Ejecutivo_negocio ejn ON ejn.ejng_id = s.sol_ejecutivo_id
-        LEFT JOIN usuarios u_ej ON s.sol_ejecutivo_id = u_ej.usr_id
+        LEFT JOIN clientes c ON s.sol_cli_id = c.cli_id
+        LEFT JOIN usuarios u_crea ON s.sol_usr_id_crea = u_crea.usr_id
+        LEFT JOIN Ejecutivo_negocio ejn ON ejn.ejng_id = s.sol_ejng_id
+        LEFT JOIN usuarios u_ej ON s.sol_ejng_id = u_ej.usr_id
         LEFT JOIN Solicitudes_estados_hist seh ON s.sol_id = seh.seh_sol_id AND seh.seh_estado_id = 2
         LEFT JOIN usuarios u_rev ON seh.seh_usr_id = u_rev.usr_id
-        LEFT JOIN workflow_etapas we ON we.wet_id = s.sol_etapa_actual_id
-        LEFT JOIN workflow_estado_etapa wr ON wr.wee_id = s.sol_resultado_etapa_id
-        LEFT JOIN solicitud_estados se ON se.ses_id = s.sol_estado_id
+        LEFT JOIN workflow_etapas we ON we.wet_id = s.sol_wet_id
+        LEFT JOIN workflow_estado_etapa wr ON wr.wee_id = s.sol_wee_id
+        LEFT JOIN solicitud_estados se ON se.ses_id = s.sol_ses_id
         WHERE s.sol_id = @0
       `;
 
@@ -172,7 +172,7 @@ export class SolicitudesDocumentosService {
       // (getArchivoPreviewUrl) que use sa_ruta_almacenamiento directo en vez
       // de armar esa URL.
       const [solicitud] = await this.dataSource.query(
-        `SELECT sol_cliente_id, sol_cupo_solicitado FROM solicitudes WHERE sol_id = @0`,
+        `SELECT sol_cli_id, sol_cupo_solicitado FROM solicitudes WHERE sol_id = @0`,
         [solicitudId],
       );
       if (!solicitud || solicitud.sol_cupo_solicitado == null) {
@@ -198,7 +198,7 @@ export class SolicitudesDocumentosService {
          JOIN Tipos_documentos td ON td.tdo_id = ca.ca_tdo_id
          WHERE ca.ca_cli_id = @0
          ORDER BY td.tdo_nombre ASC`,
-        [solicitud.sol_cliente_id],
+        [solicitud.sol_cli_id],
       );
     } catch (error) {
       console.error('Error obteniendo documentos con vigencia:', error);
@@ -378,25 +378,23 @@ export class SolicitudesDocumentosService {
 
     const clienteId = user?.cliente_id ?? user?.cli_id;
     const [row] = await this.dataSource.query(
-      `SELECT sol_cliente_id FROM solicitudes WHERE sol_id = @0`,
+      `SELECT sol_cli_id FROM solicitudes WHERE sol_id = @0`,
       [solicitudId],
     );
 
-    if (!row || Number(row.sol_cliente_id) !== Number(clienteId)) {
+    if (!row || Number(row.sol_cli_id) !== Number(clienteId)) {
       throw new ForbiddenException('No tienes acceso a esta solicitud');
     }
   }
 
   async getDocumentos(mode?: string, usuarioId?: number) {
-
-
     // Query simplificada para obtener documentos con archivos
     const sql = `
       SELECT
         sa.sa_id,
         sa.sa_sol_id,
         s.sol_numero_solicitud,
-        s.sol_estado_id,
+        s.sol_ses_id,
         ses.ses_nombre AS estado_solicitud,
         s.sol_fecha_envio AS sol_fecha_envio,
         td.tdo_nombre AS documento_nombre,
@@ -414,7 +412,7 @@ export class SolicitudesDocumentosService {
         END AS estado_vencimiento,
         c.cli_id AS cliente_id,
         c.cli_razon_social AS cliente_nombre,
-        s.sol_ejecutivo_id AS ejecutivo_id,
+        s.sol_ejng_id AS ejecutivo_id,
         COALESCE(e.ejng_nombre, u.usr_nombre) AS ejecutivo_nombre,
         CAST(CASE WHEN (
           EXISTS (
@@ -430,12 +428,12 @@ export class SolicitudesDocumentosService {
         ) THEN 1 ELSE 0 END AS BIT) AS es_ampliacion_cupo
       FROM Solicitud_archivo sa
       INNER JOIN solicitudes s ON sa.sa_sol_id = s.sol_id
-      INNER JOIN solicitud_estados ses ON s.sol_estado_id = ses.ses_id
+      INNER JOIN solicitud_estados ses ON s.sol_ses_id = ses.ses_id
       LEFT JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
       LEFT JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tipo_documento_id
-      INNER JOIN Clientes c ON s.sol_cliente_id = c.cli_id
-      LEFT JOIN Ejecutivo_negocio e ON e.ejng_id = s.sol_ejecutivo_id
-      LEFT JOIN usuarios u ON u.usr_id = s.sol_ejecutivo_id
+      INNER JOIN Clientes c ON s.sol_cli_id = c.cli_id
+      LEFT JOIN Ejecutivo_negocio e ON e.ejng_id = s.sol_ejng_id
+      LEFT JOIN usuarios u ON u.usr_id = s.sol_ejng_id
       WHERE sa.sa_estado = 'activo'
       ORDER BY sa.sa_created_at DESC
     `;
@@ -532,7 +530,7 @@ export class SolicitudesDocumentosService {
     try {
       // Validar que la solicitud exista
       const solicitudResult = await queryRunner.query(
-        `SELECT sol_id, sol_numero_solicitud, sol_estado_id, sol_cliente_id FROM solicitudes WHERE sol_id = @0`,
+        `SELECT sol_id, sol_numero_solicitud, sol_ses_id, sol_cli_id FROM solicitudes WHERE sol_id = @0`,
         [solicitudId],
       );
 
@@ -550,13 +548,13 @@ export class SolicitudesDocumentosService {
         // un cliente nunca debe poder borrar una solicitud ajena o que ya
         // salió de sus manos, sin importar qué diga ese permiso genérico.
         const clienteId = user?.cliente_id ?? user?.cli_id;
-        if (Number(solicitud.sol_cliente_id) !== Number(clienteId)) {
+        if (Number(solicitud.sol_cli_id) !== Number(clienteId)) {
           const error = new Error('No tienes acceso a esta solicitud');
           (error as any).statusCode = 403;
           throw error;
         }
 
-        if (Number(solicitud.sol_estado_id) !== 1) {
+        if (Number(solicitud.sol_ses_id) !== 1) {
           const error = new Error(
             'Solo se pueden eliminar solicitudes en estado borrador',
           );

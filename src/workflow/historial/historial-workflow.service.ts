@@ -117,7 +117,7 @@ export class HistorialWorkflowService {
         sol_fecha_creacion,
         COALESCE(c.cli_razon_social COLLATE SQL_Latin1_General_CP1_CI_AS, 'Cliente') as cliente_nombre
       FROM solicitudes s
-      LEFT JOIN Clientes c ON s.sol_cliente_id = c.cli_id
+      LEFT JOIN Clientes c ON s.sol_cli_id = c.cli_id
       WHERE s.sol_id = @0
     `,
         [solicitudId],

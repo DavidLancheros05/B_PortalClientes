@@ -4,11 +4,11 @@ export class SolicitudListadoGestionDto {
   sol_numero_solicitud: string;
 
   // Cliente
-  sol_cliente_id: number;
+  sol_cli_id: number;
   cliente_nombre: string;
 
   // Ejecutivo
-  sol_ejecutivo_id: number;
+  sol_ejng_id: number;
   ejecutivo_nombre: string;
   ejecutivo_area?: string;
 
@@ -18,10 +18,10 @@ export class SolicitudListadoGestionDto {
   auxiliar_area?: string | null;
 
   // Estado del Flujo
-  sol_estado_id: number;
-  sol_etapa_actual_id: number;
+  sol_ses_id: number;
+  sol_wet_id: number;
   etapa_nombre: string;
-  sol_resultado_etapa_id: number;
+  sol_wee_id: number;
   resultado_nombre: string;
 
   // Fecha base

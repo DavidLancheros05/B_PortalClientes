@@ -85,6 +85,9 @@ export class ClientesService {
         c.cli_acceso_pc AS [cli_acceso_pc],
         c.cli_correo AS [cli_correo],
         c.cli_estado AS [cli_estado],
+        c.cli_es_distribuidor AS [cli_es_distribuidor],
+        c.cli_nit_dig_vf AS [cli_nit_dig_vf],
+        c.cli_es_extranjero AS [cli_es_extranjero],
         c.pai_id AS [pai_id],
         c.dpto_id AS [dpto_id],
         c.ciu_id AS [ciu_id],
@@ -124,6 +127,9 @@ export class ClientesService {
       cli_correo: cliente.cli_correo,
       cli_acceso_pc: cliente.cli_acceso_pc,
       cli_estado: cliente.cli_estado,
+      cli_es_distribuidor: cliente.cli_es_distribuidor,
+      cli_nit_dig_vf: cliente.cli_nit_dig_vf,
+      cli_es_extranjero: cliente.cli_es_extranjero,
       pai_id: cliente.pai_id,
       dpto_id: cliente.dpto_id,
       ciu_id: cliente.ciu_id,
@@ -134,7 +140,7 @@ export class ClientesService {
   }
 
   // ========================
-  // SOLO CLIENTES YA APROBADOS (con al menos una solicitud en sol_estado_id
+  // SOLO CLIENTES YA APROBADOS (con al menos una solicitud en sol_ses_id
   // = 5/APROBADA según la tabla real `solicitud_estados` — ver
   // documentacion/Portal Clientes/Solicitudes/FLUJO_ETAPAS.md; ojo, NO es el mismo id que
   // FRONTEND/src/constants/estado-solicitud.ts, que tiene APROBADA=4 y no
@@ -157,7 +163,7 @@ export class ClientesService {
       LEFT JOIN dbo.Ejecutivo_negocio e ON e.ejng_id = c.ejng_id
       WHERE EXISTS (
         SELECT 1 FROM dbo.solicitudes s
-        WHERE s.sol_cliente_id = c.cli_id AND s.sol_estado_id = 5
+        WHERE s.sol_cli_id = c.cli_id AND s.sol_ses_id = 5
       )
       ORDER BY c.cli_razon_social ASC
     `);
@@ -272,6 +278,9 @@ export class ClientesService {
       cli_correo: dto.cli_correo,
       cli_acceso_pc: habilitaAcceso,
       cli_password: passwordHasheada,
+      cli_es_distribuidor: dto.cli_es_distribuidor ?? false,
+      cli_nit_dig_vf: dto.cli_nit_dig_vf ?? null,
+      cli_es_extranjero: dto.cli_es_extranjero ?? false,
       ejng_id: dto.ejng_id,
       cli_estado: 'A',
       pai_id: dto.pai_id,
@@ -330,8 +339,7 @@ export class ClientesService {
 
     const actual = await this.clienteRepo.findOne({ where: { cli_id } });
     const habilitandoAccesoAhora =
-      dto.cli_acceso_pc === true &&
-      !actual?.cli_acceso_pc;
+      dto.cli_acceso_pc === true && !actual?.cli_acceso_pc;
     const correoDestino = dto.cli_correo ?? actual?.cli_correo ?? undefined;
 
     let passwordGenerada: string | null = null;

@@ -1,4 +1,9 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { VariablePlantilla } from './variables-plantilla.entity';
@@ -68,7 +73,10 @@ export class VariablesPlantillaService {
     }
     if (tieneTabla && tieneColumna) {
       this.validarTablaPermitida(tablaOrigen!);
-      await this.validarColumnaExiste(tablaOrigen as TablaOrigen, columnaOrigen!);
+      await this.validarColumnaExiste(
+        tablaOrigen as TablaOrigen,
+        columnaOrigen!,
+      );
     }
   }
 
@@ -97,9 +105,14 @@ export class VariablesPlantillaService {
     const item = await this.repo.findOne({ where: { pvp_id: id } });
     if (!item) throw new NotFoundException('Variable no encontrada');
 
-    if (dto.pvp_tabla_origen !== undefined || dto.pvp_columna_origen !== undefined) {
+    if (
+      dto.pvp_tabla_origen !== undefined ||
+      dto.pvp_columna_origen !== undefined
+    ) {
       const tabla =
-        dto.pvp_tabla_origen !== undefined ? dto.pvp_tabla_origen : item.pvp_tabla_origen;
+        dto.pvp_tabla_origen !== undefined
+          ? dto.pvp_tabla_origen
+          : item.pvp_tabla_origen;
       const columna =
         dto.pvp_columna_origen !== undefined
           ? dto.pvp_columna_origen
@@ -173,7 +186,9 @@ export class VariablesPlantillaService {
   // enviarCartaVinculacionPorCorreo en el backend). Variables sin mapeo
   // (representante_legal_*, fecha_aprobacion) simplemente no aparecen acá —
   // quien llame sigue resolviéndolas a mano y las mezcla aparte.
-  async resolverParaSolicitud(solicitudId: number): Promise<Record<string, string>> {
+  async resolverParaSolicitud(
+    solicitudId: number,
+  ): Promise<Record<string, string>> {
     const variables = await this.repo.find({
       where: { pvp_estado: true, pvp_resuelta: true },
     });
@@ -182,8 +197,12 @@ export class VariablesPlantillaService {
     );
     if (conMapeo.length === 0) return {};
 
-    const necesitaSolicitud = conMapeo.some((v) => v.pvp_tabla_origen === 'solicitudes');
-    const necesitaCliente = conMapeo.some((v) => v.pvp_tabla_origen === 'clientes');
+    const necesitaSolicitud = conMapeo.some(
+      (v) => v.pvp_tabla_origen === 'solicitudes',
+    );
+    const necesitaCliente = conMapeo.some(
+      (v) => v.pvp_tabla_origen === 'clientes',
+    );
 
     const [solicitudRows] = await Promise.all([
       this.dataSource.query('SELECT * FROM solicitudes WHERE sol_id = @0', [
@@ -194,10 +213,10 @@ export class VariablesPlantillaService {
     if (!solicitud) return {};
 
     let cliente: any = null;
-    if (necesitaCliente && solicitud.sol_cliente_id) {
+    if (necesitaCliente && solicitud.sol_cli_id) {
       const clienteRows = await this.dataSource.query(
         'SELECT * FROM clientes WHERE cli_id = @0',
-        [solicitud.sol_cliente_id],
+        [solicitud.sol_cli_id],
       );
       cliente = clienteRows[0] || null;
     }
@@ -207,7 +226,10 @@ export class VariablesPlantillaService {
     for (const v of conMapeo) {
       const fuente = v.pvp_tabla_origen === 'clientes' ? cliente : solicitud;
       const valorCrudo = fuente ? fuente[v.pvp_columna_origen as string] : null;
-      resultado[v.pvp_placeholder] = this.formatearValor(valorCrudo, v.pvp_formato);
+      resultado[v.pvp_placeholder] = this.formatearValor(
+        valorCrudo,
+        v.pvp_formato,
+      );
     }
     return resultado;
   }

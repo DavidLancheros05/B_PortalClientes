@@ -37,7 +37,7 @@ export class CreateSolicitudDto {
   // ===== Cliente =====
   @IsInt()
   @IsNotEmpty()
-  sol_cliente_id: number;
+  sol_cli_id: number;
 
   // ===== Datos de la solicitud =====
   @IsNumber()
@@ -52,12 +52,12 @@ export class CreateSolicitudDto {
   // ===== Estado =====
   @IsInt()
   @IsOptional()
-  sol_estado_id?: number; // si no se envía, se asigna por defecto en el servicio
+  sol_ses_id?: number; // si no se envía, se asigna por defecto en el servicio
 
   // ===== Usuario que crea =====
   @IsInt()
   @IsOptional()
-  sol_usuario_crea?: number; // se puede tomar del token
+  sol_usr_id_crea?: number; // se puede tomar del token
 
   // ===== Respuestas del formulario =====
   @ValidateNested({ each: true })

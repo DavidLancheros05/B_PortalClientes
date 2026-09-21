@@ -1,7 +1,10 @@
 // src/cliente-archivo/cliente-archivo.service.ts
 import { ForbiddenException, Inject, Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
-import { IStorageService, STORAGE_SERVICE } from '../common/storage/storage.interface';
+import {
+  IStorageService,
+  STORAGE_SERVICE,
+} from '../common/storage/storage.interface';
 import {
   CarpetaAlmacenamientoService,
   TIPO_ARCHIVO_URLS,
@@ -180,15 +183,13 @@ export class ClienteArchivoService {
     }
 
     const [solicitud] = await this.dataSource.query(
-      `SELECT sol_cliente_id, sol_numero_solicitud FROM solicitudes WHERE sol_id = @0`,
+      `SELECT sol_cli_id, sol_numero_solicitud FROM solicitudes WHERE sol_id = @0`,
       [solicitudId],
     );
     if (!solicitud) {
       throw new Error(`Solicitud ${solicitudId} no encontrada`);
     }
-    if (
-      Number(solicitud.sol_cliente_id) !== Number(documentoCliente.ca_cli_id)
-    ) {
+    if (Number(solicitud.sol_cli_id) !== Number(documentoCliente.ca_cli_id)) {
       throw new ForbiddenException(
         'El documento de archivo no pertenece al cliente de esta solicitud',
       );

@@ -257,10 +257,10 @@ export class FormulariosService {
         -- Necesita este conteo por CADA versión a la vez, así que va inline
         -- como subquery correlacionada en vez de llamar a
         -- contarSolicitudesQueBloqueanVersion() (./version-formulario.util)
-        -- en un loop. La condición (sol_estado_id <> 1, un borrador no
+        -- en un loop. La condición (sol_ses_id <> 1, un borrador no
         -- cuenta) debe mantenerse igual a la de ese util — es la misma
         -- regla de negocio, ver el comentario ahí para el porqué.
-        (SELECT COUNT(*) FROM solicitudes WHERE sol_formulario_version = fv_numero AND sol_estado_id <> 1) AS total_solicitudes
+        (SELECT COUNT(*) FROM solicitudes WHERE sol_formulario_version = fv_numero AND sol_ses_id <> 1) AS total_solicitudes
       FROM Formulario_versiones
       WHERE fv_frm_id = @0
       ORDER BY fv_numero DESC

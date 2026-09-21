@@ -91,7 +91,7 @@ export class IndicadoresService {
         SUM(CASE WHEN se.ses_codigo = 'RECHAZADA' THEN 1 ELSE 0 END) AS rechazadas,
         SUM(CASE WHEN se.ses_codigo IN ('PENDIENTE', 'REVISION') THEN 1 ELSE 0 END) AS pendientes
       FROM solicitudes s
-      JOIN solicitud_estados se ON se.ses_id = s.sol_estado_id
+      JOIN solicitud_estados se ON se.ses_id = s.sol_ses_id
       WHERE se.ses_codigo != 'BORRADOR'
         AND (@0 IS NULL OR s.sol_fecha_envio >= @0)
         AND (@1 IS NULL OR s.sol_fecha_envio <= @1)
@@ -257,8 +257,8 @@ export class IndicadoresService {
         ) AS real_general
 
       FROM solicitudes s
-      LEFT JOIN clientes c ON c.cli_id = s.sol_cliente_id
-      LEFT JOIN solicitud_estados se ON s.sol_estado_id = se.ses_id
+      LEFT JOIN clientes c ON c.cli_id = s.sol_cli_id
+      LEFT JOIN solicitud_estados se ON s.sol_ses_id = se.ses_id
       OUTER APPLY (
         SELECT TOP 1 swh.swh_fecha_estimada FROM solicitud_workflow_historial swh
         WHERE swh.swh_sol_id = s.sol_id AND swh.swh_etapa_id = (SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'EJN')
@@ -451,8 +451,8 @@ export class IndicadoresService {
           23
         ) AS real_general
       FROM solicitudes s
-      LEFT JOIN clientes c ON c.cli_id = s.sol_cliente_id
-      LEFT JOIN solicitud_estados se ON s.sol_estado_id = se.ses_id
+      LEFT JOIN clientes c ON c.cli_id = s.sol_cli_id
+      LEFT JOIN solicitud_estados se ON s.sol_ses_id = se.ses_id
       WHERE s.sol_fecha_envio IS NOT NULL
         AND (@0 IS NULL OR s.sol_numero_solicitud LIKE '%' + @0 + '%')
         AND (@1 IS NULL OR s.sol_fecha_envio >= @1)
@@ -577,7 +577,7 @@ export class IndicadoresService {
         DATEDIFF(day, s.sol_fecha_envio, COALESCE(fe.swh_fecha_estimada, s.${cols.col_est})) AS dias_estimados,
         DATEDIFF(day, COALESCE(fe.swh_fecha_estimada, s.${cols.col_est}), s.${cols.col_real}) AS diferencia
       FROM solicitudes s
-      LEFT JOIN clientes c ON c.cli_id = s.sol_cliente_id
+      LEFT JOIN clientes c ON c.cli_id = s.sol_cli_id
       OUTER APPLY (
         SELECT TOP 1 swh.swh_fecha_estimada
         FROM solicitud_workflow_historial swh
@@ -614,7 +614,7 @@ export class IndicadoresService {
         SUM(CASE WHEN se.ses_codigo = 'APROBADA' THEN 1 ELSE 0 END) AS aprobadas,
         SUM(CASE WHEN se.ses_codigo = 'RECHAZADA' THEN 1 ELSE 0 END) AS rechazadas
       FROM solicitudes s
-      JOIN solicitud_estados se ON se.ses_id = s.sol_estado_id
+      JOIN solicitud_estados se ON se.ses_id = s.sol_ses_id
       WHERE se.ses_codigo != 'BORRADOR'
         AND s.sol_fecha_envio IS NOT NULL
         AND s.sol_fecha_envio >= DATEADD(month, -6, GETDATE())

@@ -114,10 +114,10 @@ export class WorkflowService {
       await queryRunner.query(
         `
         UPDATE solicitudes
-        SET sol_etapa_actual_id = @0,
-            sol_resultado_etapa_id = @1,
+        SET sol_wet_id = @0,
+            sol_wee_id = @1,
             sol_updated_at = GETDATE(),
-            sol_usuario_modifica = @2
+            sol_usr_id_modifica = @2
         WHERE sol_id = @3
       `,
         [etapaId, resultadoId, usuarioId, solicitudId],

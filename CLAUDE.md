@@ -51,10 +51,8 @@ parado (`git -C BACKEND status`, `git -C FRONTEND status`), nunca asumir.
 ## Base de datos — convenciones y documentación
 
 - Prefijos de columnas por tabla: `sol_` (solicitudes), `sa_`
-  (Solicitud_archivo), `fp_` (Formulario_pregunta), `fs_`
-  (Formulario_secciones), `fr_` (Formulario_respuesta), `tdo_`
-  (Tipos_documentos), `wet_`/`wee_` (workflow_etapas /
-  workflow_estado_etapa), `cli_` (Clientes), `usr_` (usuarios).
+  (Solicitud*archivo), `fp*`(Formulario_pregunta),`fs*`(Formulario_secciones),`fr*`(Formulario_respuesta),`tdo*`(Tipos_documentos),`wet*`/`wee*`(workflow_etapas /
+workflow_estado_etapa),`cli*`(Clientes),`usr\_` (usuarios).
 - **`FRONTEND/DATABASE.md`** (~12k líneas) es un dump completo y
   auto-generado del esquema (123 tablas, columnas, FKs, conteo de filas).
   Se regenera con `npm run db:doc` desde `FRONTEND/` (requiere
@@ -70,8 +68,8 @@ parado (`git -C BACKEND status`, `git -C FRONTEND status`), nunca asumir.
   orden cronológico (nombre = fecha) — es la fuente más confiable de qué
   columnas existen hoy si `DATABASE.md` está desactualizado.
 - **`documentacion/Portal Clientes/Solicitudes/FLUJO_ETAPAS.md`**: tabla de referencia completa de la
-  máquina de estados del workflow (`sol_estado_id` × `sol_etapa_actual_id` ×
-  `sol_resultado_etapa_id` → quién debe actuar y qué endpoint usa). Consultar
+  máquina de estados del workflow (`sol_ses_id` × `sol_wet_id` ×
+  `sol_wee_id` → quién debe actuar y qué endpoint usa). Consultar
   esto en vez de reconstruir la lógica de estados desde cero.
 
 ## Arquitectura backend
@@ -105,8 +103,8 @@ parado (`git -C BACKEND status`, `git -C FRONTEND status`), nunca asumir.
   `fs_oculta_en_formulario`) y vinculada a un `Tipos_documentos` con
   `tdo_tiene_plantilla=true`. Estos documentos no bloquean el llenado del
   formulario, pero si faltan al enviar, la solicitud se queda en
-  `sol_estado_id=2, sol_etapa_actual_id=1(CLI), sol_resultado_etapa_id=5
-  (PEND_DOCS)` en vez de pasar a Ejecutivo de Negocios — ver
+  `sol_ses_id=2, sol_wet_id=1(CLI), sol_wee_id=5
+(PEND_DOCS)` en vez de pasar a Ejecutivo de Negocios — ver
   `documentacion/Portal Clientes/Solicitudes/FLUJO_ETAPAS.md`.
 
 ## Arquitectura frontend
@@ -256,7 +254,7 @@ hardcodeado — moverlo requeriría cambiar esa ruta en el script.
   tokens nuevos aunque el proceso ya se había reiniciado — confirmado
   comparando el CSS servido (`curl` al chunk) contra el archivo en disco.
   Fix: borrar la carpeta `.next` (`rm -rf .next` / `Remove-Item -Recurse
-  -Force .next`) antes de volver a correr `npm run dev`. Reiniciar el
+-Force .next`) antes de volver a correr `npm run dev`. Reiniciar el
   proceso solo, sin borrar `.next`, no fue suficiente.
 - **`ModulosService.findByRol` (`BACKEND/src/modulos/modulos.service.ts`)
   hacía `leftJoin('m.roles', ...)` sobre una relación ORM que nunca existió**
@@ -264,10 +262,10 @@ hardcodeado — moverlo requeriría cambiar esa ruta en el script.
   tiene relación hacia `ModuloEntity`, solo columnas `rm_mod_id`/`rm_rol_id`
   crudas) — el endpoint `GET /seguridad/modulos/por-rol` daba 500 para
   **cualquier** rol. No afectaba el login (`PermissionsService
-  .getModulesByRole`/`getModulesByUsuario` usan SQL crudo aparte y sí
+.getModulesByRole`/`getModulesByUsuario` usan SQL crudo aparte y sí
   funcionan), pero si algo más en el frontend llega a consumir ese
   endpoint quedaría roto. Fix: `leftJoin('pc_rol_modulo', 'rm', 'rm.rm_mod_id
-  = m.mod_id AND rm.rm_rol_id = :rolId', { rolId })` — unir por nombre de
+= m.mod_id AND rm.rm_rol_id = :rolId', { rolId })` — unir por nombre de
   tabla en vez de por relación inexistente.
 - **Un módulo padre con hijos (ej. "Clientes") nunca es clickeable por sí
   mismo en el menú, solo se despliega con la flechita** — `Header.tsx` es
@@ -291,7 +289,7 @@ hardcodeado — moverlo requeriría cambiar esa ruta en el script.
   ningún error visible, simplemente el link nunca aparece o apunta a un
   404 silencioso. **Causa raíz real** (no un typo humano en un campo
   libre, como se pensó al principio — esa pantalla, `seguridad/modulos/
-  crear/page.tsx`, resultó ser código huérfano sin ningún link hacia ella
+crear/page.tsx`, resultó ser código huérfano sin ningún link hacia ella
   en toda la app, y ya se borró): la pantalla que sí se usa
   (`seguridad/modulos/page.tsx`) **generaba la ruta sola** a partir del
   nombre del módulo + la ruta del padre (`generateRoute()`/
@@ -306,13 +304,13 @@ hardcodeado — moverlo requeriría cambiar esa ruta en el script.
   que **solo deja elegir entre páginas que ya existen** — ya no se puede
   crear un módulo apuntando a una ruta inventada, ni por fórmula ni a
   mano. `FRONTEND/scripts/generate-app-routes.ts` (`npm run
-  routes:generate`) escanea `src/app` y escribe todas las rutas reales a
+routes:generate`) escanea `src/app` y escribe todas las rutas reales a
   `FRONTEND/src/data/app-routes.json`; `seguridad/modulos/page.tsx` filtra
   esa lista según el módulo padre elegido (solo rutas iguales o anidadas
   bajo la ruta del padre; todas las rutas si es un módulo raíz) y la
   ofrece como `<select>` tanto al crear como al editar. **Orden de trabajo
   correcto**: construir la página primero, correr `npm run
-  routes:generate`, y recién ahí crear/editar el módulo de menú — si el
+routes:generate`, y recién ahí crear/editar el módulo de menú — si el
   campo de ruta se genera vacío o falta la página que buscas, casi
   siempre es porque `app-routes.json` está desactualizado.
 - **`leftJoinAndSelect` de TypeORM + columnas `nvarchar(MAX)` = timeout de
@@ -325,8 +323,8 @@ hardcodeado — moverlo requeriría cambiar esa ruta en el script.
   archivo). `FormularioPreguntasService.findAll`
   (`GET /parametrizacion/formulario-preguntas`, usado por "Nueva solicitud"
   para cargar el formulario) hacía `createQueryBuilder('fp')
-  .leftJoinAndSelect('fp.opciones', ...).leftJoinAndSelect('fp.seccion',
-  ...)`. `Formulario_pregunta` tiene 4 columnas `nvarchar(MAX)`
+.leftJoinAndSelect('fp.opciones', ...).leftJoinAndSelect('fp.seccion',
+...)`. `Formulario_pregunta` tiene 4 columnas `nvarchar(MAX)`
   (`fp_descripcion`, `fp_tabla_columnas`, `fp_tabla_limite_reglas`,
   `fp_catalogo_filtro_reglas`); el `JOIN` con `opciones` multiplica filas.
   Confirmado con SQL crudo (`db-query.mjs`) que **una sola** columna MAX
@@ -335,7 +333,7 @@ hardcodeado — moverlo requeriría cambiar esa ruta en el script.
   no es un bug de TypeORM ni de este código en particular, es el motor de
   SQL Server manejando mal LOB data multiplicada por un JOIN.
   **Primer intento de fix, revertido**: `repository.find({ relations:
-  {opciones: true, seccion: true}, relationLoadStrategy: 'query' })` sí
+{opciones: true, seccion: true}, relationLoadStrategy: 'query' })` sí
   soluciona el timeout (~200ms), pero tiene su propio bug — con esta
   combinación de relaciones (`OneToMany` con `@JoinColumn` explícito del
   lado `ManyToOne`), TypeORM 0.3.28 arma **dos** queries distintas para la
