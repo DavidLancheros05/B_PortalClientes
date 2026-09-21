@@ -388,11 +388,7 @@ export class SolicitudesDocumentosService {
   }
 
   async getDocumentos(mode?: string, usuarioId?: number) {
-    console.log('🔴🔴🔴 [getDocumentos] INICIANDO', {
-      mode,
-      usuarioId,
-      timestamp: new Date().toISOString(),
-    });
+
 
     // Query simplificada para obtener documentos con archivos
     const sql = `

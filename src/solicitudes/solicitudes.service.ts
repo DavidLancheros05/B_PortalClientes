@@ -289,9 +289,9 @@ export class SolicitudesService {
           sol_updated_at, sol_version, sol_formulario_version, sol_usuario_crea,
           sol_numero_solicitud, sol_es_zona_franca,
           sol_ejecutivo_id, sol_fecha_envio,
-          sol_fecha_estimada_ejecutivo, sol_fecha_estimada_auxiliar_servicio_cliente,
-          sol_fecha_estimada_oficial_cumplimiento, sol_fecha_estimada_comite_credito_1,
-          sol_fecha_estimada_comite_credito_2,
+          sol_fecha_est_gest_ejn, sol_fecha_est_gest_asc,
+          sol_fecha_est_gest_oc, sol_fecha_est_gest_cc1,
+          sol_fecha_est_gest_cc2,
           sol_motivo_rechazo_id, sol_usuario_modifica,
           sol_etapa_actual_id, sol_resultado_etapa_id, sol_observacion_cliente
         ) VALUES (
@@ -415,11 +415,11 @@ export class SolicitudesService {
         fechaEnvio, // @11 fecha_envio (now si estado_id=2, null si estado_id=1)
 
         // Fechas estimadas para cada etapa del workflow
-        fechaEstimadaEjecutivo, // @12 sol_fecha_estimada_ejecutivo
-        fechaEstimadaAuxiliar, // @13 sol_fecha_estimada_auxiliar_servicio_cliente
-        fechaEstimadaOficial, // @14 sol_fecha_estimada_oficial_cumplimiento
-        fechaEstimadaCC1, // @15 sol_fecha_estimada_comite_credito_1
-        fechaEstimadaCC2, // @16 sol_fecha_estimada_comite_credito_2
+        fechaEstimadaEjecutivo, // @12 sol_fecha_est_gest_ejn
+        fechaEstimadaAuxiliar, // @13 sol_fecha_est_gest_asc
+        fechaEstimadaOficial, // @14 sol_fecha_est_gest_oc
+        fechaEstimadaCC1, // @15 sol_fecha_est_gest_cc1
+        fechaEstimadaCC2, // @16 sol_fecha_est_gest_cc2
 
         null, // @17 motivo_rechazo_id
         null, // @18 usuario_modifica

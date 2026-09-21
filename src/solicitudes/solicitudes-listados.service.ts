@@ -95,11 +95,11 @@ export class SolicitudesListadosService {
     const resultadoId = Number(query.resultado_etapa_id || 0);
 
     if (fechaDesde) {
-      whereClauses.push(`CAST(s.sol_fecha_creacion AS DATE) >= @${idx++}`);
+      whereClauses.push(`CAST(s.sol_fecha_envio AS DATE) >= @${idx++}`);
       params.push(fechaDesde);
     }
     if (fechaHasta) {
-      whereClauses.push(`CAST(s.sol_fecha_creacion AS DATE) <= @${idx++}`);
+      whereClauses.push(`CAST(s.sol_fecha_envio AS DATE) <= @${idx++}`);
       params.push(fechaHasta);
     }
     if (Number.isInteger(ejecutivoId) && ejecutivoId > 0) {
@@ -157,16 +157,16 @@ export class SolicitudesListadosService {
         wr.wee_nombre AS [resultado_nombre],
         s.sol_formulario_version AS [sol_formulario_version],
         s.sol_fecha_estimada_respuesta_comercial AS [sol_fecha_estimada_respuesta_comercial],
-        s.sol_fecha_estimada_oficial_cumplimiento AS [sol_fecha_estimada_oficial_cumplimiento],
-        s.sol_fecha_real_oficial_cumplimiento AS [sol_fecha_real_oficial_cumplimiento],
-        s.sol_fecha_estimada_ejecutivo AS [sol_fecha_estimada_ejecutivo],
-        s.sol_fecha_real_ejecutivo AS [sol_fecha_real_ejecutivo],
-        s.sol_fecha_estimada_auxiliar_servicio_cliente AS [sol_fecha_estimada_auxiliar_servicio_cliente],
-        s.sol_fecha_real_auxiliar_servicio_cliente AS [sol_fecha_real_auxiliar_servicio_cliente],
-        s.sol_fecha_estimada_comite_credito_1 AS [sol_fecha_estimada_comite_credito_1],
-        s.sol_fecha_real_comite_credito_1 AS [sol_fecha_real_comite_credito_1],
-        s.sol_fecha_estimada_comite_credito_2 AS [sol_fecha_estimada_comite_credito_2],
-        s.sol_fecha_real_comite_credito_2 AS [sol_fecha_real_comite_credito_2],
+        s.sol_fecha_est_gest_oc AS [sol_fecha_est_gest_oc],
+        s.sol_fecha_gest_oc AS [sol_fecha_gest_oc],
+        s.sol_fecha_est_gest_ejn AS [sol_fecha_est_gest_ejn],
+        s.sol_fecha_gest_ejn AS [sol_fecha_gest_ejn],
+        s.sol_fecha_est_gest_asc AS [sol_fecha_est_gest_asc],
+        s.sol_fecha_gest_asc AS [sol_fecha_gest_asc],
+        s.sol_fecha_est_gest_cc1 AS [sol_fecha_est_gest_cc1],
+        s.sol_fecha_gest_cc1 AS [sol_fecha_gest_cc1],
+        s.sol_fecha_est_gest_cc2 AS [sol_fecha_est_gest_cc2],
+        s.sol_fecha_gest_cc2 AS [sol_fecha_gest_cc2],
         s.sol_cupo_aprobado AS [sol_cupo_aprobado],
         s.sol_cupo_solicitado AS [sol_cupo_solicitado],
         CAST(CASE WHEN ${SolicitudesListadosService.ES_AMPLIACION_CUPO_SQL} THEN 1 ELSE 0 END AS BIT) AS [es_ampliacion_cupo],
@@ -332,7 +332,7 @@ export class SolicitudesListadosService {
       s.sol_cliente_id AS [sol_cliente_id],
       s.sol_fecha_creacion AS [sol_fecha_creacion],
       s.sol_fecha_envio AS [sol_fecha_envio],
-      COALESCE(fe_vigente.swh_fecha_estimada, s.sol_fecha_estimada_ejecutivo) AS [sol_fecha_estimada_ejecutivo],
+      COALESCE(fe_vigente.swh_fecha_estimada, s.sol_fecha_est_gest_ejn) AS [sol_fecha_est_gest_ejn],
       s.sol_created_at AS [sol_created_at],
       s.sol_updated_at AS [sol_updated_at],
       s.sol_consumo_mensual_proyectado AS [sol_consumo_mensual_proyectado],
@@ -704,18 +704,18 @@ export class SolicitudesListadosService {
         s.sol_fecha_creacion AS [sol_fecha_creacion],
         s.sol_fecha_envio AS [sol_fecha_envio],
         s.sol_fecha_estimada_respuesta_comercial AS [sol_fecha_estimada_respuesta_comercial],
-        CASE WHEN we.wet_codigo = 'ASC' THEN COALESCE(fe_vigente.swh_fecha_estimada, s.sol_fecha_estimada_auxiliar_servicio_cliente) ELSE s.sol_fecha_estimada_auxiliar_servicio_cliente END AS [sol_fecha_estimada_auxiliar_servicio_cliente],
-        CASE WHEN we.wet_codigo = 'OFC' THEN COALESCE(fe_vigente.swh_fecha_estimada, s.sol_fecha_estimada_oficial_cumplimiento) ELSE s.sol_fecha_estimada_oficial_cumplimiento END AS [sol_fecha_estimada_oficial_cumplimiento],
-        CASE WHEN we.wet_codigo = 'CC1' THEN COALESCE(fe_vigente.swh_fecha_estimada, s.sol_fecha_estimada_comite_credito_1) ELSE s.sol_fecha_estimada_comite_credito_1 END AS [sol_fecha_estimada_comite_credito_1],
-        CASE WHEN we.wet_codigo = 'CC2' THEN COALESCE(fe_vigente.swh_fecha_estimada, s.sol_fecha_estimada_comite_credito_2) ELSE s.sol_fecha_estimada_comite_credito_2 END AS [sol_fecha_estimada_comite_credito_2],
+        CASE WHEN we.wet_codigo = 'ASC' THEN COALESCE(fe_vigente.swh_fecha_estimada, s.sol_fecha_est_gest_asc) ELSE s.sol_fecha_est_gest_asc END AS [sol_fecha_est_gest_asc],
+        CASE WHEN we.wet_codigo = 'OFC' THEN COALESCE(fe_vigente.swh_fecha_estimada, s.sol_fecha_est_gest_oc) ELSE s.sol_fecha_est_gest_oc END AS [sol_fecha_est_gest_oc],
+        CASE WHEN we.wet_codigo = 'CC1' THEN COALESCE(fe_vigente.swh_fecha_estimada, s.sol_fecha_est_gest_cc1) ELSE s.sol_fecha_est_gest_cc1 END AS [sol_fecha_est_gest_cc1],
+        CASE WHEN we.wet_codigo = 'CC2' THEN COALESCE(fe_vigente.swh_fecha_estimada, s.sol_fecha_est_gest_cc2) ELSE s.sol_fecha_est_gest_cc2 END AS [sol_fecha_est_gest_cc2],
         -- Fecha en que la etapa INMEDIATAMENTE ANTERIOR del flujo
         -- (CLI->EJN->ASC->OFC->CC1->CC2) completó su gestión — cada página
         -- de bandeja (ASC/OFC/CC1/CC2) usa solo la columna de su
         -- antecesor real, ver gestion-*/page.tsx.
-        s.sol_fecha_real_ejecutivo AS [sol_fecha_real_ejecutivo],
-        s.sol_fecha_real_auxiliar_servicio_cliente AS [sol_fecha_real_auxiliar_servicio_cliente],
-        s.sol_fecha_real_oficial_cumplimiento AS [sol_fecha_real_oficial_cumplimiento],
-        s.sol_fecha_real_comite_credito_1 AS [sol_fecha_real_comite_credito_1],
+        s.sol_fecha_gest_ejn AS [sol_fecha_gest_ejn],
+        s.sol_fecha_gest_asc AS [sol_fecha_gest_asc],
+        s.sol_fecha_gest_oc AS [sol_fecha_gest_oc],
+        s.sol_fecha_gest_cc1 AS [sol_fecha_gest_cc1],
         s.sol_consumo_mensual_proyectado AS [consumo_mensual_proyectado],
         s.sol_observacion_ejn AS [observacionesComercial],
         s.sol_cupo_solicitado AS [sol_cupo_solicitado],

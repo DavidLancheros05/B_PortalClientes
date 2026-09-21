@@ -97,7 +97,7 @@ export class SolicitudEntity {
   sol_fecha_estimada_respuesta_comercial: Date | null;
 
   // Fecha real de la aprobación final en Comité de Crédito 2 — a diferencia
-  // de sol_fecha_real_comite_credito_2 (que se pisa también en rechazo), esta
+  // de sol_fecha_gest_cc2 (que se pisa también en rechazo), esta
   // solo se escribe cuando aprobado=true. Fuente de {{fecha_aprobacion}} en
   // Variables de Plantilla (ver solicitudes-workflow.service.ts).
   @Column({

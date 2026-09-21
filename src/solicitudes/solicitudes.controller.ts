@@ -410,27 +410,11 @@ export class SolicitudesController {
 
   @Get('listado')
   async getListado(@Query() query: any): Promise<SolicitudListadoGestionDto[]> {
-    console.log(
-      '\n🔴🔴🔴 [SOLICITUDES-CONTROLLER] getListado() LLAMADO 🔴🔴🔴',
-    );
-    console.log(
-      '🟡 [BACKEND-CONTROLLER] Parámetros de consulta recibidos:',
-      query,
-    );
-    console.log('🟡 [BACKEND-CONTROLLER] Tipos de parámetros:', {
-      fecha_desde: typeof query.fecha_desde,
-      fecha_hasta: typeof query.fecha_hasta,
-      cliente_id: typeof query.cliente_id,
-      ejecutivo_id: typeof query.ejecutivo_id,
-      estado_id: typeof query.estado_id,
-    });
+
+
     try {
       const result = await this.listadosService.getListado(query);
-      console.log('🟡 [BACKEND-CONTROLLER] Resultado retornado: ', result);
-      console.log(
-        '🟡 [BACKEND-CONTROLLER] Resultado retornado: ',
-        result?.length ? `${result.length} registros` : 'vacío',
-      );
+
       return result;
     } catch (error) {
       console.error('🟡 [BACKEND-CONTROLLER] ❌ ERROR en getListado:', error);

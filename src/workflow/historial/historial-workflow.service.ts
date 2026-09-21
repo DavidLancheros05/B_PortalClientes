@@ -28,8 +28,7 @@ export class HistorialWorkflowService {
       comentario?: string;
     },
   ): Promise<{ swh_id: number; fechaEstimada: Date | null }> {
-    const { solicitudId, etapaId, resultadoId, usuarioId, comentario } =
-      params;
+    const { solicitudId, etapaId, resultadoId, usuarioId, comentario } = params;
 
     const [etapa] = await queryRunner.query(
       `SELECT wet_nombre FROM workflow_etapas WHERE wet_id = @0`,
@@ -94,7 +93,14 @@ export class HistorialWorkflowService {
 
       SELECT SCOPE_IDENTITY() AS swh_id;
     `,
-      [solicitudId, etapaId, resultadoId, usuarioId, comentario || null, fechaEstimada],
+      [
+        solicitudId,
+        etapaId,
+        resultadoId,
+        usuarioId,
+        comentario || null,
+        fechaEstimada,
+      ],
     );
 
     return { swh_id: result[0]?.swh_id, fechaEstimada };
@@ -128,11 +134,11 @@ export class HistorialWorkflowService {
         --    etapa) — no se mueve aunque la solicitud se demore en etapas
         --    anteriores. No existe para CREACION/CLI (no tienen columna).
         CASE we.wet_codigo
-          WHEN 'EJN' THEN s.sol_fecha_estimada_ejecutivo
-          WHEN 'ASC' THEN s.sol_fecha_estimada_auxiliar_servicio_cliente
-          WHEN 'OFC' THEN s.sol_fecha_estimada_oficial_cumplimiento
-          WHEN 'CC1' THEN s.sol_fecha_estimada_comite_credito_1
-          WHEN 'CC2' THEN s.sol_fecha_estimada_comite_credito_2
+          WHEN 'EJN' THEN s.sol_fecha_est_gest_ejn
+          WHEN 'ASC' THEN s.sol_fecha_est_gest_asc
+          WHEN 'OFC' THEN s.sol_fecha_est_gest_oc
+          WHEN 'CC1' THEN s.sol_fecha_est_gest_cc1
+          WHEN 'CC2' THEN s.sol_fecha_est_gest_cc2
           ELSE NULL
         END as fechaEstimadaInicio,
         -- 2) "desde etapa anterior": swh_fecha_estimada, calculada en

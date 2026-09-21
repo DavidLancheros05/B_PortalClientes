@@ -811,7 +811,7 @@ export class SolicitudesWorkflowService {
           sol_resultado_etapa_id = ${resultadoWorkflow.wee_id},
           sol_motivo_rechazo_id = ${motivoValue},
           sol_fecha_estimada_respuesta_comercial = ${fechaEstimadaValue},
-          sol_fecha_real_auxiliar_servicio_cliente = GETDATE(),
+          sol_fecha_gest_asc = GETDATE(),
           sol_usuario_modifica = ${usuarioModificaValue},
           sol_observacion_cliente = @0,
           sol_updated_at = GETDATE()
@@ -1009,10 +1009,10 @@ export class SolicitudesWorkflowService {
       let updateSQL = `UPDATE solicitudes SET sol_consumo_mensual_proyectado = @0, sol_toneladas_proyectadas = @1, sol_observacion_ejn = @2, sol_estado_id = @3, sol_usuario_modifica = @4, sol_updated_at = GETDATE(), sol_observacion_cliente = @5`;
 
       if (fecha_real_ejecutivo) {
-        updateSQL += `, sol_fecha_real_ejecutivo = @${updateParams.length}`;
+        updateSQL += `, sol_fecha_gest_ejn = @${updateParams.length}`;
         updateParams.push(fecha_real_ejecutivo);
       } else {
-        updateSQL += `, sol_fecha_real_ejecutivo = GETDATE()`;
+        updateSQL += `, sol_fecha_gest_ejn = GETDATE()`;
       }
 
       updateSQL += ` WHERE sol_id = @${updateParams.length}`;
@@ -1152,17 +1152,17 @@ export class SolicitudesWorkflowService {
       );
 
       const fechaColumna: Record<string, string> = {
-        EJN: 'sol_fecha_real_ejecutivo',
-        ASC: 'sol_fecha_real_auxiliar_servicio_cliente',
-        OFC: 'sol_fecha_real_oficial_cumplimiento',
-        CC1: 'sol_fecha_real_comite_credito_1',
-        CC2: 'sol_fecha_real_comite_credito_2',
+        EJN: 'sol_fecha_gest_ejn',
+        ASC: 'sol_fecha_gest_asc',
+        OFC: 'sol_fecha_gest_oc',
+        CC1: 'sol_fecha_gest_cc1',
+        CC2: 'sol_fecha_gest_cc2',
       };
       const columnaFecha =
         (etapaActualCodigo && fechaColumna[etapaActualCodigo]
           ? `, ${fechaColumna[etapaActualCodigo]} = GETDATE()`
           : '') +
-        // A diferencia de sol_fecha_real_comite_credito_2 (que se pisa
+        // A diferencia de sol_fecha_gest_cc2 (que se pisa
         // también en rechazo), esta solo se escribe cuando de verdad se
         // aprueba — es la fuente real de {{fecha_aprobacion}} en Variables
         // de Plantilla, en vez del new Date() que se usaba antes al armar
@@ -1309,15 +1309,19 @@ export class SolicitudesWorkflowService {
         ? `Aprobado en etapa ${etapaActualCodigo}`
         : `Rechazado en etapa ${etapaActualCodigo}`;
 
-      // etapaDestId (no etapaActualId): el historial registra la etapa a la
-      // que ENTRA la solicitud, igual que sol_etapa_actual_id arriba — usar
-      // etapaActualId aquí duplicaba la etapa que se está dejando en vez de
-      // reflejar la etapa siguiente (bug encontrado 2026-09-13).
+      // etapaActualId (no etapaDestId): el historial registra la etapa que
+      // TOMÓ la decisión (igual que hace aprobarRechazarSolicitud para ASC,
+      // con etapaSAC.wet_id) — no la etapa siguiente a la que se mueve la
+      // solicitud. El cambio a etapaDestId hecho el 2026-09-13 fue el bug,
+      // no el fix: hacía que el comentario/soportes de OFC quedaran
+      // etiquetados como CC1, y los de CC1 como CC2, dejando esas tarjetas
+      // vacías en el detalle de la solicitud (detectado en solicitud 2211,
+      // 2026-09-20).
       await this.historialWorkflowService.registrarTransicionConSLA(
         queryRunner,
         {
           solicitudId: sa_sol_id,
-          etapaId: etapaDestId,
+          etapaId: etapaActualId,
           resultadoId: resultadoWorkflow.wee_id,
           usuarioId: usuario_modifica,
           comentario: comentario || mensajeHistorial,
@@ -1734,7 +1738,7 @@ export class SolicitudesWorkflowService {
           sol_resultado_etapa_id = @2,
           sol_usuario_modifica = @3,
           sol_updated_at = GETDATE(),
-          sol_fecha_real_comite_credito_1 = GETDATE(),
+          sol_fecha_gest_cc1 = GETDATE(),
           sol_observacion_cliente = @5
         WHERE sol_id = @4`,
         [
@@ -1747,13 +1751,15 @@ export class SolicitudesWorkflowService {
         ],
       );
 
-      // etapaSiguiente.wet_id (CC2), no etapaActualId (CC1) — mismo bug y
-      // mismo fix que en guardarConceptoGenerico (ver comentario ahí).
+      // etapaActualId (CC1), no etapaSiguiente.wet_id (CC2) — mismo bug y
+      // mismo fix que en guardarConceptoGenerico (ver comentario ahí): el
+      // historial debe registrar la etapa que hizo la revisión, no la
+      // siguiente.
       await this.historialWorkflowService.registrarTransicionConSLA(
         queryRunner,
         {
           solicitudId: sa_sol_id,
-          etapaId: etapaSiguiente.wet_id,
+          etapaId: etapaActualId,
           resultadoId: resultadoPendiente.wee_id,
           usuarioId: usuario_modifica,
           comentario: comentario || 'Revisión de Comité de Crédito 1',

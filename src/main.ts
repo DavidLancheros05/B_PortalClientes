@@ -14,38 +14,6 @@ async function bootstrap() {
   expressApp.use(express.json({ limit: '25mb' }));
   expressApp.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
-  // Campos que nunca deben salir en texto plano a consola/logs, sin importar
-  // el endpoint — antes esto imprimía contraseñas reales de /auth/login,
-  // /auth/register y /change-password (ver auditoria-valores-quemados-hardcodeados.md).
-  const CAMPOS_SENSIBLES = ['password', 'contrasena', 'contraseña', 'clave'];
-  function redactarSensibles(body: unknown): unknown {
-    if (!body || typeof body !== 'object') return body;
-    const copia: Record<string, unknown> = { ...(body as Record<string, unknown>) };
-    for (const key of Object.keys(copia)) {
-      if (CAMPOS_SENSIBLES.includes(key.toLowerCase())) {
-        copia[key] = '***REDACTED***';
-      }
-    }
-    return copia;
-  }
-
-  // 🔵 MIDDLEWARE GLOBAL: Log todas las solicitudes - ACTIVADO para debugging
-  expressApp.use((req, res, next) => {
-    console.log(
-      `\n🔵 [MIDDLEWARE] ${new Date().toISOString()} ${req.method} ${req.url}`,
-    );
-    console.log(`🔵 [MIDDLEWARE] Query params:`, req.query);
-    console.log(`🔵 [MIDDLEWARE] Headers:`, {
-      authorization: req.headers.authorization ? '✓ Present' : '✗ Missing',
-      'content-type': req.headers['content-type'],
-    });
-    console.log(
-      `🔵 [MIDDLEWARE] Body:`,
-      JSON.stringify(redactarSensibles(req.body), null, 2),
-    );
-    next();
-  });
-
   const adapter = new ExpressAdapter(expressApp);
   const app = await NestFactory.create(AppModule, adapter);
   app.setGlobalPrefix('api');

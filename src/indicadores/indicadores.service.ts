@@ -114,36 +114,36 @@ export class IndicadoresService {
       {
         area: 'EJECUTIVO',
         label: 'Ejecutivo de Negocios',
-        col_real: 'sol_fecha_real_ejecutivo',
-        col_est: 'sol_fecha_estimada_ejecutivo',
+        col_real: 'sol_fecha_gest_ejn',
+        col_est: 'sol_fecha_est_gest_ejn',
         wet_codigo: 'EJN',
       },
       {
         area: 'AUXILIAR_SC',
         label: 'Auxiliar Serv. Cliente',
-        col_real: 'sol_fecha_real_auxiliar_servicio_cliente',
-        col_est: 'sol_fecha_estimada_auxiliar_servicio_cliente',
+        col_real: 'sol_fecha_gest_asc',
+        col_est: 'sol_fecha_est_gest_asc',
         wet_codigo: 'ASC',
       },
       {
         area: 'OFICIAL_CUMPLIMIENTO',
         label: 'Oficial de Cumplimiento',
-        col_real: 'sol_fecha_real_oficial_cumplimiento',
-        col_est: 'sol_fecha_estimada_oficial_cumplimiento',
+        col_real: 'sol_fecha_gest_oc',
+        col_est: 'sol_fecha_est_gest_oc',
         wet_codigo: 'OFC',
       },
       {
         area: 'COMITE_1',
         label: 'Comité de Crédito 1',
-        col_real: 'sol_fecha_real_comite_credito_1',
-        col_est: 'sol_fecha_estimada_comite_credito_1',
+        col_real: 'sol_fecha_gest_cc1',
+        col_est: 'sol_fecha_est_gest_cc1',
         wet_codigo: 'CC1',
       },
       {
         area: 'COMITE_2',
         label: 'Comité de Crédito 2',
-        col_real: 'sol_fecha_real_comite_credito_2',
-        col_est: 'sol_fecha_estimada_comite_credito_2',
+        col_real: 'sol_fecha_gest_cc2',
+        col_est: 'sol_fecha_est_gest_cc2',
         wet_codigo: 'CC2',
       },
     ];
@@ -218,24 +218,24 @@ export class IndicadoresService {
         ISNULL(se.ses_codigo, '') AS estado,
 
         -- EJECUTIVO
-        CONVERT(varchar(10), COALESCE(fe_ejn.swh_fecha_estimada, s.sol_fecha_estimada_ejecutivo), 23) AS est_ejecutivo,
-        CONVERT(varchar(10), s.sol_fecha_real_ejecutivo, 23) AS real_ejecutivo,
+        CONVERT(varchar(10), COALESCE(fe_ejn.swh_fecha_estimada, s.sol_fecha_est_gest_ejn), 23) AS est_ejecutivo,
+        CONVERT(varchar(10), s.sol_fecha_gest_ejn, 23) AS real_ejecutivo,
 
         -- AUXILIAR SC
-        CONVERT(varchar(10), COALESCE(fe_asc.swh_fecha_estimada, s.sol_fecha_estimada_auxiliar_servicio_cliente), 23) AS est_auxiliar_sc,
-        CONVERT(varchar(10), s.sol_fecha_real_auxiliar_servicio_cliente, 23) AS real_auxiliar_sc,
+        CONVERT(varchar(10), COALESCE(fe_asc.swh_fecha_estimada, s.sol_fecha_est_gest_asc), 23) AS est_auxiliar_sc,
+        CONVERT(varchar(10), s.sol_fecha_gest_asc, 23) AS real_auxiliar_sc,
 
         -- OFICIAL CUMPLIMIENTO
-        CONVERT(varchar(10), COALESCE(fe_ofc.swh_fecha_estimada, s.sol_fecha_estimada_oficial_cumplimiento), 23) AS est_oficial,
-        CONVERT(varchar(10), s.sol_fecha_real_oficial_cumplimiento, 23) AS real_oficial,
+        CONVERT(varchar(10), COALESCE(fe_ofc.swh_fecha_estimada, s.sol_fecha_est_gest_oc), 23) AS est_oficial,
+        CONVERT(varchar(10), s.sol_fecha_gest_oc, 23) AS real_oficial,
 
         -- COMITE 1
-        CONVERT(varchar(10), COALESCE(fe_cc1.swh_fecha_estimada, s.sol_fecha_estimada_comite_credito_1), 23) AS est_comite1,
-        CONVERT(varchar(10), s.sol_fecha_real_comite_credito_1, 23) AS real_comite1,
+        CONVERT(varchar(10), COALESCE(fe_cc1.swh_fecha_estimada, s.sol_fecha_est_gest_cc1), 23) AS est_comite1,
+        CONVERT(varchar(10), s.sol_fecha_gest_cc1, 23) AS real_comite1,
 
         -- COMITE 2
-        CONVERT(varchar(10), COALESCE(fe_cc2.swh_fecha_estimada, s.sol_fecha_estimada_comite_credito_2), 23) AS est_comite2,
-        CONVERT(varchar(10), s.sol_fecha_real_comite_credito_2, 23) AS real_comite2,
+        CONVERT(varchar(10), COALESCE(fe_cc2.swh_fecha_estimada, s.sol_fecha_est_gest_cc2), 23) AS est_comite2,
+        CONVERT(varchar(10), s.sol_fecha_gest_cc2, 23) AS real_comite2,
 
         -- SLA GENERAL (nivel empresa, el que se le comunica al cliente): la
         -- meta es la fecha estimada de la última etapa (CC2), encadenada
@@ -243,15 +243,15 @@ export class IndicadoresService {
         -- La fecha real es la de la etapa más avanzada que ya respondió,
         -- sea que la solicitud haya llegado hasta CC2 o se haya resuelto
         -- (aprobada/rechazada) antes.
-        CONVERT(varchar(10), s.sol_fecha_estimada_comite_credito_2, 23) AS meta_general,
+        CONVERT(varchar(10), s.sol_fecha_est_gest_cc2, 23) AS meta_general,
         CONVERT(
           varchar(10),
           COALESCE(
-            s.sol_fecha_real_comite_credito_2,
-            s.sol_fecha_real_comite_credito_1,
-            s.sol_fecha_real_oficial_cumplimiento,
-            s.sol_fecha_real_auxiliar_servicio_cliente,
-            s.sol_fecha_real_ejecutivo
+            s.sol_fecha_gest_cc2,
+            s.sol_fecha_gest_cc1,
+            s.sol_fecha_gest_oc,
+            s.sol_fecha_gest_asc,
+            s.sol_fecha_gest_ejn
           ),
           23
         ) AS real_general
@@ -438,15 +438,15 @@ export class IndicadoresService {
         ISNULL(c.cli_razon_social, '') AS razon_social,
         CONVERT(varchar(10), s.sol_fecha_envio, 23) AS fecha_envio,
         ISNULL(se.ses_codigo, '') AS estado,
-        CONVERT(varchar(10), s.sol_fecha_estimada_comite_credito_2, 23) AS meta_general,
+        CONVERT(varchar(10), s.sol_fecha_est_gest_cc2, 23) AS meta_general,
         CONVERT(
           varchar(10),
           COALESCE(
-            s.sol_fecha_real_comite_credito_2,
-            s.sol_fecha_real_comite_credito_1,
-            s.sol_fecha_real_oficial_cumplimiento,
-            s.sol_fecha_real_auxiliar_servicio_cliente,
-            s.sol_fecha_real_ejecutivo
+            s.sol_fecha_gest_cc2,
+            s.sol_fecha_gest_cc1,
+            s.sol_fecha_gest_oc,
+            s.sol_fecha_gest_asc,
+            s.sol_fecha_gest_ejn
           ),
           23
         ) AS real_general
@@ -475,9 +475,13 @@ export class IndicadoresService {
       const realGeneral = r.real_general as string | null;
 
       const diasMeta =
-        fechaEnvio && metaGeneral ? this.diffDias(fechaEnvio, metaGeneral) : null;
+        fechaEnvio && metaGeneral
+          ? this.diffDias(fechaEnvio, metaGeneral)
+          : null;
       const diasReales =
-        fechaEnvio && realGeneral ? this.diffDias(fechaEnvio, realGeneral) : null;
+        fechaEnvio && realGeneral
+          ? this.diffDias(fechaEnvio, realGeneral)
+          : null;
       const procesada = !!realGeneral;
       const diasBase = procesada
         ? diasReales
@@ -513,8 +517,7 @@ export class IndicadoresService {
     if (!query.sla) return resultado;
     if (query.sla === 'vencida')
       return resultado.filter((r) => r.sla_general.vencida);
-    if (query.sla === 'en_riesgo')
-      return resultado.filter((r) => r.en_riesgo);
+    if (query.sla === 'en_riesgo') return resultado.filter((r) => r.en_riesgo);
     if (query.sla === 'a_tiempo')
       return resultado.filter((r) => !r.sla_general.vencida && !r.en_riesgo);
     return resultado;
@@ -530,28 +533,28 @@ export class IndicadoresService {
       { col_real: string; col_est: string; wet_codigo: string }
     > = {
       EJECUTIVO: {
-        col_real: 'sol_fecha_real_ejecutivo',
-        col_est: 'sol_fecha_estimada_ejecutivo',
+        col_real: 'sol_fecha_gest_ejn',
+        col_est: 'sol_fecha_est_gest_ejn',
         wet_codigo: 'EJN',
       },
       AUXILIAR_SC: {
-        col_real: 'sol_fecha_real_auxiliar_servicio_cliente',
-        col_est: 'sol_fecha_estimada_auxiliar_servicio_cliente',
+        col_real: 'sol_fecha_gest_asc',
+        col_est: 'sol_fecha_est_gest_asc',
         wet_codigo: 'ASC',
       },
       OFICIAL_CUMPLIMIENTO: {
-        col_real: 'sol_fecha_real_oficial_cumplimiento',
-        col_est: 'sol_fecha_estimada_oficial_cumplimiento',
+        col_real: 'sol_fecha_gest_oc',
+        col_est: 'sol_fecha_est_gest_oc',
         wet_codigo: 'OFC',
       },
       COMITE_1: {
-        col_real: 'sol_fecha_real_comite_credito_1',
-        col_est: 'sol_fecha_estimada_comite_credito_1',
+        col_real: 'sol_fecha_gest_cc1',
+        col_est: 'sol_fecha_est_gest_cc1',
         wet_codigo: 'CC1',
       },
       COMITE_2: {
-        col_real: 'sol_fecha_real_comite_credito_2',
-        col_est: 'sol_fecha_estimada_comite_credito_2',
+        col_real: 'sol_fecha_gest_cc2',
+        col_est: 'sol_fecha_est_gest_cc2',
         wet_codigo: 'CC2',
       },
     };

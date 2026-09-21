@@ -42,22 +42,22 @@ export class SolicitudListadoGestionDto {
   sol_fecha_estimada_respuesta_comercial?: Date;
 
   // Timeline: Oficial Cumplimiento
-  sol_fecha_estimada_oficial_cumplimiento?: Date;
-  sol_fecha_real_oficial_cumplimiento?: Date;
+  sol_fecha_est_gest_oc?: Date;
+  sol_fecha_gest_oc?: Date;
 
   // Timeline: Ejecutivo
-  sol_fecha_estimada_ejecutivo?: Date;
-  sol_fecha_real_ejecutivo?: Date;
+  sol_fecha_est_gest_ejn?: Date;
+  sol_fecha_gest_ejn?: Date;
 
   // Timeline: Auxiliar Servicio Cliente
-  sol_fecha_estimada_auxiliar_servicio_cliente?: Date;
-  sol_fecha_real_auxiliar_servicio_cliente?: Date;
+  sol_fecha_est_gest_asc?: Date;
+  sol_fecha_gest_asc?: Date;
 
   // Timeline: Comité Crédito 1
-  sol_fecha_estimada_comite_credito_1?: Date;
-  sol_fecha_real_comite_credito_1?: Date;
+  sol_fecha_est_gest_cc1?: Date;
+  sol_fecha_gest_cc1?: Date;
 
   // Timeline: Comité Crédito 2
-  sol_fecha_estimada_comite_credito_2?: Date;
-  sol_fecha_real_comite_credito_2?: Date;
+  sol_fecha_est_gest_cc2?: Date;
+  sol_fecha_gest_cc2?: Date;
 }
