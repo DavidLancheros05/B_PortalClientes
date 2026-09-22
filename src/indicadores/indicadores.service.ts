@@ -159,8 +159,8 @@ export class IndicadoresService {
       const sql = `
         SELECT
           COUNT(*) AS total,
-          SUM(CASE WHEN s.${a.col_real} <= COALESCE(fe.swh_fecha_estimada, s.${a.col_est}) THEN 1 ELSE 0 END) AS a_tiempo,
-          SUM(CASE WHEN s.${a.col_real} > COALESCE(fe.swh_fecha_estimada, s.${a.col_est}) THEN 1 ELSE 0 END) AS vencidas,
+          SUM(CASE WHEN CAST(s.${a.col_real} AS date) <= CAST(COALESCE(fe.swh_fecha_estimada, s.${a.col_est}) AS date) THEN 1 ELSE 0 END) AS a_tiempo,
+          SUM(CASE WHEN CAST(s.${a.col_real} AS date) > CAST(COALESCE(fe.swh_fecha_estimada, s.${a.col_est}) AS date) THEN 1 ELSE 0 END) AS vencidas,
           AVG(CAST(DATEDIFF(day, s.sol_fecha_envio, s.${a.col_real}) AS FLOAT)) AS dias_promedio_real,
           AVG(CAST(DATEDIFF(day, s.sol_fecha_envio, COALESCE(fe.swh_fecha_estimada, s.${a.col_est})) AS FLOAT)) AS dias_promedio_estimado
         FROM solicitudes s
@@ -211,7 +211,7 @@ export class IndicadoresService {
     const sql = `
       SELECT TOP 1
         s.sol_id,
-        s.sol_numero_solicitud,
+        s.sol_numero,
         ISNULL(c.cli_razon_social, '') AS razon_social,
         ISNULL(c.cli_nro_identificacion, '') AS nit,
         CONVERT(varchar(10), s.sol_fecha_envio, 23) AS fecha_envio,
@@ -285,7 +285,7 @@ export class IndicadoresService {
         ORDER BY swh.swh_fecha DESC
       ) fe_cc2
       WHERE (@0 IS NULL OR s.sol_id = @0)
-        AND (@1 IS NULL OR s.sol_numero_solicitud = @1)
+        AND (@1 IS NULL OR s.sol_numero = @1)
     `;
 
     const rows = await this.dataSource.query(sql, [byId, byNumero]);
@@ -378,7 +378,7 @@ export class IndicadoresService {
 
     return {
       sol_id: Number(r.sol_id),
-      numero_solicitud: r.sol_numero_solicitud || '',
+      numero_solicitud: r.sol_numero || '',
       razon_social: r.razon_social || '',
       nit: r.nit || '',
       fecha_envio: fechaEnvio || '',
@@ -434,7 +434,7 @@ export class IndicadoresService {
     const sql = `
       SELECT
         s.sol_id,
-        s.sol_numero_solicitud,
+        s.sol_numero,
         ISNULL(c.cli_razon_social, '') AS razon_social,
         CONVERT(varchar(10), s.sol_fecha_envio, 23) AS fecha_envio,
         ISNULL(se.ses_codigo, '') AS estado,
@@ -454,7 +454,7 @@ export class IndicadoresService {
       LEFT JOIN clientes c ON c.cli_id = s.sol_cli_id
       LEFT JOIN solicitud_estados se ON s.sol_ses_id = se.ses_id
       WHERE s.sol_fecha_envio IS NOT NULL
-        AND (@0 IS NULL OR s.sol_numero_solicitud LIKE '%' + @0 + '%')
+        AND (@0 IS NULL OR s.sol_numero LIKE '%' + @0 + '%')
         AND (@1 IS NULL OR s.sol_fecha_envio >= @1)
         AND (@2 IS NULL OR s.sol_fecha_envio <= @2)
         AND (@3 IS NULL OR se.ses_codigo = @3)
@@ -467,7 +467,12 @@ export class IndicadoresService {
       estado,
     ]);
 
-    const hoy = new Date().toISOString().slice(0, 10);
+    const hoy = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Bogota',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
 
     const resultado: SolicitudSlaListado[] = rows.map((r: any) => {
       const fechaEnvio = r.fecha_envio as string | null;
@@ -497,7 +502,7 @@ export class IndicadoresService {
 
       return {
         sol_id: Number(r.sol_id),
-        numero_solicitud: r.sol_numero_solicitud || '',
+        numero_solicitud: r.sol_numero || '',
         razon_social: r.razon_social || '',
         fecha_envio: fechaEnvio || '',
         estado: r.estado || '',
@@ -568,7 +573,7 @@ export class IndicadoresService {
     const sql = `
       SELECT
         s.sol_id,
-        s.sol_numero_solicitud,
+        s.sol_numero,
         ISNULL(c.cli_razon_social, '') AS razon_social,
         CONVERT(varchar(10), s.sol_fecha_envio, 23) AS fecha_envio,
         CONVERT(varchar(10), COALESCE(fe.swh_fecha_estimada, s.${cols.col_est}), 23) AS fecha_estimada,
@@ -594,7 +599,7 @@ export class IndicadoresService {
     const rows = await this.dataSource.query(sql, [fechaDesde, fechaHasta]);
     return rows.map((r: any) => ({
       sol_id: Number(r.sol_id),
-      numero_solicitud: r.sol_numero_solicitud || '',
+      numero_solicitud: r.sol_numero || '',
       razon_social: r.razon_social || '',
       fecha_envio: r.fecha_envio || '',
       fecha_estimada: r.fecha_estimada || '',

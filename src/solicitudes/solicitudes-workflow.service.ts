@@ -22,6 +22,7 @@ import {
   PreguntaRenderizable,
 } from './formulario-renderizable.service';
 import { VariablesPlantillaService } from '../parametrizacion/variables-plantilla/variables-plantilla.service';
+import { nombreGuardadoArchivo } from '../common/utils/storage-file-name.util';
 
 @Injectable()
 export class SolicitudesWorkflowService {
@@ -109,9 +110,10 @@ export class SolicitudesWorkflowService {
    * "Documentos diferidos": preguntas ARCHIVO/DOCUMENTOS_TABLA ocultas del
    * formulario en vivo (fp_oculto_en_formulario, o su sección tiene
    * fs_oculta_en_formulario) cuyo tipo de documento tiene plantilla
-   * descargable (tdo_tiene_plantilla) — se generan DESPUÉS de guardar la
-   * solicitud (necesitan el número de solicitud) y se suben aparte desde
-   * Mis Documentos. Mientras falten, la solicitud no debe pasar a EJN.
+   * descargable (tdo_tiene_plantilla). Los documentos generados ya quedan
+   * guardados en Solicitud_archivo; aquí también se muestran para consulta,
+   * pero el bloqueo del workflow solo aplica a las versiones firmadas que
+   * todavía faltan por subir.
    */
   private async obtenerDocumentosDiferidosConSubidos(
     solicitudId: number,
@@ -133,11 +135,11 @@ export class SolicitudesWorkflowService {
       ),
       runner.query(
         `
-        SELECT sa.sa_id, sa.sa_nombre_original, fp.fp_tipo_documento_id AS tdo_id
+        SELECT sa.sa_id, sa.sa_nombre_original, fp.fp_tdo_id AS tdo_id
         FROM Solicitud_archivo sa
         JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
         WHERE sa.sa_sol_id = @0 AND sa.sa_estado = 'activo'
-          AND fp.fp_tipo_documento_id IS NOT NULL
+          AND fp.fp_tdo_id IS NOT NULL
         ORDER BY sa.sa_id ASC
         `,
         [solicitudId],
@@ -158,11 +160,20 @@ export class SolicitudesWorkflowService {
         td.tdo_pie_pagina_tipo, td.tdo_pie_pagina_texto, td.tdo_pie_pagina_imagen_url,
         fp.fp_id
       FROM Formulario_pregunta fp
-      JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tipo_documento_id
+      JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tdo_id
       LEFT JOIN Formulario_secciones fs ON fs.fs_id = fp.seccion_id
       WHERE fp.fp_estado = 1
-        AND td.tdo_tiene_plantilla = 1
-        AND (fp.fp_oculto_en_formulario = 1 OR fs.fs_oculta_en_formulario = 1)
+        AND (
+          td.tdo_tiene_plantilla = 1
+          OR td.tdo_nombre LIKE '%Firmad%'
+        )
+        AND (
+          fp.fp_oculto_en_formulario = 1
+          OR fs.fs_oculta_en_formulario = 1
+          OR td.tdo_tipo_plantilla = 'PDF_SOLICITUD'
+          OR td.tdo_plantilla_contenido IS NOT NULL
+          OR td.tdo_nombre LIKE '%Firmad%'
+        )
         AND ISNULL(fp.fp_version, 1) = @0
         AND (td.tdo_solo_distribuidor = 0 OR @1 = 1)
       `,
@@ -220,6 +231,9 @@ export class SolicitudesWorkflowService {
   > {
     const { diferidos, subidosSet } =
       await this.obtenerDocumentosDiferidosConSubidos(solicitudId, runner);
+    // Todos los documentos diferidos deben existir antes de avanzar:
+    // primero se generan las plantillas/PDF y luego el cliente sube los
+    // documentos firmados. Ninguno de los dos tipos puede quedar pendiente.
     return diferidos.filter((d: any) => !subidosSet.has(d.tdo_id));
   }
 
@@ -271,7 +285,10 @@ export class SolicitudesWorkflowService {
     sol_wee_id: number;
   }): Promise<boolean> {
     const [resultadoPendDocs] = await this.dataSource.query(
-      `SELECT wee_id FROM workflow_estado_etapa WHERE wee_codigo = 'PEND_DOCS'`,
+      `SELECT TOP 1 wee_id
+       FROM workflow_estado_etapa
+       WHERE wee_codigo IN ('PEND_FIRMA', 'PEND_FIRMA')
+       ORDER BY CASE wee_codigo WHEN 'PEND_FIRMA' THEN 0 ELSE 1 END`,
     );
     return (
       Number(solicitud.sol_ses_id) === 2 &&
@@ -379,21 +396,16 @@ export class SolicitudesWorkflowService {
           );
 
         if (documentosDiferidosFaltantes.length > 0) {
-          // Aún faltan documentos que se generan/suben después de guardar
-          // (ej. cartas con {{numero_solicitud}}) — se queda en etapa CLI
-          // con un resultado distinto, en vez de pasar a Ejecutivo de
-          // Negocios, hasta que el cliente los suba desde Mis Documentos.
+          // Aún faltan documentos firmados por subir — se queda en etapa CLI
+          // hasta que el cliente los suba desde Mis Documentos.
           const etapaResult = await queryRunner.query(
             `SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'CLI'`,
           );
           etapaId = etapaResult?.[0]?.wet_id;
-          resultadoCodigo = 'PEND_DOCS';
-          mensajeTransicion = `Solicitud registrada - faltan documentos por generar y subir: ${documentosDiferidosFaltantes
-            .map((d) => d.tdo_nombre)
-            .join(', ')}`;
-          observacionCliente = `Aún faltan generar y subir: ${documentosDiferidosFaltantes
-            .map((d) => d.tdo_nombre)
-            .join(', ')}.`;
+          resultadoCodigo = 'PEND_FIRMA';
+          mensajeTransicion =
+            'Solicitud registrada: faltan subir documentos firmados y enviar.';
+          observacionCliente = 'Faltan subir documentos firmados y enviar.';
         } else {
           // PENDIENTE → Etapa EJN
           const etapaResult = await queryRunner.query(
@@ -407,14 +419,18 @@ export class SolicitudesWorkflowService {
       }
       // Para estados 3+ (REVISIÓN, COMPLETADA), no cambiamos la etapa
 
-      // Resolver el resultado de etapa (PENDIENTE, o PEND_DOCS si faltan
-      // documentos diferidos) una sola vez, para usarlo tanto en el UPDATE
-      // como en el historial.
+      // Resolver el resultado de etapa una sola vez. Algunas bases usan
+      // PEND_FIRMA y otras PEND_FIRMA para el mismo estado.
       let resultadoId: number | null = null;
       if (etapaId !== null) {
         const resultadoResult = await queryRunner.query(
-          `SELECT wee_id FROM workflow_estado_etapa WHERE wee_codigo = @0`,
-          [resultadoCodigo],
+          resultadoCodigo === 'PEND_FIRMA'
+            ? `SELECT TOP 1 wee_id
+               FROM workflow_estado_etapa
+               WHERE wee_codigo IN ('PEND_FIRMA', 'PEND_FIRMA')
+               ORDER BY CASE wee_codigo WHEN 'PEND_FIRMA' THEN 0 ELSE 1 END`
+            : `SELECT wee_id FROM workflow_estado_etapa WHERE wee_codigo = @0`,
+          resultadoCodigo === 'PEND_FIRMA' ? [] : [resultadoCodigo],
         );
         resultadoId = resultadoResult?.[0]?.wee_id ?? null;
       }
@@ -547,7 +563,7 @@ export class SolicitudesWorkflowService {
           // Transición real hacia PENDIENTE (p.ej. cliente envía un borrador
           // ya existente): notificar registro igual que al crear una
           // solicitud nueva, para que cliente/comercial/ejecutivo se enteren.
-          // No se notifica todavía si quedó en PEND_DOCS: aún no llega a
+          // No se notifica todavía si quedó en PEND_FIRMA: aún no llega a
           // Ejecutivo de Negocios.
           await this.notificacionesService.notificarRegistroSolicitud(
             solicitudId,
@@ -577,7 +593,7 @@ export class SolicitudesWorkflowService {
   /**
    * Se llama desde "Mis Documentos" después de subir un documento diferido
    * (ej. la carta generada con la plantilla). Si ya no falta ninguno, recién
-   * ahí pasa la solicitud de CLI+PEND_DOCS a EJN+PENDIENTE (la transición
+   * ahí pasa la solicitud de CLI+PEND_FIRMA a EJN+PENDIENTE (la transición
    * que quedó pendiente en cambiarEstado). Si todavía falta alguno, no toca
    * nada y solo informa cuáles.
    */
@@ -607,10 +623,11 @@ export class SolicitudesWorkflowService {
       [solicitudId],
     );
 
-    if (
-      !solicitud ||
-      !(await this.solicitudEnEsperaDocumentosDiferidos(solicitud))
-    ) {
+    if (!solicitud) {
+      return { ok: false, avanzo: false, documentosDiferidosFaltantes: [] };
+    }
+
+    if (!(await this.solicitudEnEsperaDocumentosDiferidos(solicitud))) {
       // No estaba en espera de documentos diferidos por este gate (ej. la
       // solicitud ya había avanzado de etapa por otra vía) — no hay nada
       // que avanzar, pero la Observación que ve el cliente puede haber
@@ -620,10 +637,17 @@ export class SolicitudesWorkflowService {
       await this.dataSource.query(
         `UPDATE solicitudes
          SET sol_observacion_cliente = @0
-         WHERE sol_id = @1 AND sol_observacion_cliente LIKE 'Aún faltan generar y subir%'`,
+         WHERE sol_id = @1
+           AND (
+             sol_observacion_cliente LIKE 'Aún faltan generar y subir%'
+             OR sol_observacion_cliente = 'Faltan subir documentos firmados y enviar.'
+           )`,
         [observacionAlDia, solicitudId],
       );
-      return { ok: true, avanzo: false, documentosDiferidosFaltantes: [] };
+      // La solicitud ya superó este gate en un intento anterior. Para el
+      // cliente es un envío confirmado, aunque no haya una nueva transición
+      // que ejecutar en esta llamada.
+      return { ok: true, avanzo: true, documentosDiferidosFaltantes: [] };
     }
 
     const queryRunner = this.dataSource.createQueryRunner();
@@ -664,7 +688,7 @@ export class SolicitudesWorkflowService {
           resultadoId: resultadoPendiente.wee_id,
           usuarioId: usuarioId ?? 1,
           comentario:
-            'Cliente subió los documentos generados pendientes - Solicitud enviada a Ejecutivo de Negocios',
+            'Cliente subió los documentos firmados pendientes - Solicitud enviada a Ejecutivo de Negocios',
         },
       );
 
@@ -696,7 +720,6 @@ export class SolicitudesWorkflowService {
     aprobado: boolean,
     motivo_rechazo_id?: number,
     modo_solucion?: string,
-    fecha_estimada_respuesta_comercial?: Date,
     usuario_modifica?: number,
     documentosFaltantes?: number[],
   ) {
@@ -798,9 +821,6 @@ export class SolicitudesWorkflowService {
 
       const motivoValue =
         aprobado || !motivo_rechazo_id ? 'NULL' : motivo_rechazo_id;
-      const fechaEstimadaValue = fecha_estimada_respuesta_comercial
-        ? `'${fecha_estimada_respuesta_comercial.toISOString().split('T')[0]}'`
-        : 'NULL';
       const usuarioModificaValue = usuario_modifica ?? 'NULL';
 
       await queryRunner.query(
@@ -810,7 +830,6 @@ export class SolicitudesWorkflowService {
           sol_wet_id = ${etapaDestId},
           sol_wee_id = ${resultadoWorkflow.wee_id},
           sol_mrs_id = ${motivoValue},
-          sol_fecha_estimada_respuesta_comercial = ${fechaEstimadaValue},
           sol_fecha_gest_asc = GETDATE(),
           sol_usr_id_modifica = ${usuarioModificaValue},
           sol_observacion_cliente = @0,
@@ -859,7 +878,7 @@ export class SolicitudesWorkflowService {
              FROM Solicitud_archivo sa
              JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
              WHERE sa.sa_sol_id = @0 AND sa.sa_estado = 'activo'
-               AND fp.fp_tipo_documento_id IN (${placeholders})`,
+               AND fp.fp_tdo_id IN (${placeholders})`,
             [solicitudId, ...documentosFaltantes],
           );
         }
@@ -957,10 +976,6 @@ export class SolicitudesWorkflowService {
     usuario_modifica?: number,
     fecha_real_ejecutivo?: string,
   ) {
-    console.log(
-      `💾 [guardarGestionEjecutivo] Guardando concepto para solicitud ${sa_sol_id}`,
-    );
-
     try {
       const [solicitudActual] = await this.dataSource.query(
         `SELECT we.wet_codigo
@@ -1008,12 +1023,7 @@ export class SolicitudesWorkflowService {
       ];
       let updateSQL = `UPDATE solicitudes SET sol_consumo_mensual_proyectado = @0, sol_toneladas_proyectadas = @1, sol_observacion_ejn = @2, sol_ses_id = @3, sol_usr_id_modifica = @4, sol_updated_at = GETDATE(), sol_observacion_cliente = @5`;
 
-      if (fecha_real_ejecutivo) {
-        updateSQL += `, sol_fecha_gest_ejn = @${updateParams.length}`;
-        updateParams.push(fecha_real_ejecutivo);
-      } else {
-        updateSQL += `, sol_fecha_gest_ejn = GETDATE()`;
-      }
+      updateSQL += `, sol_fecha_gest_ejn = GETDATE()`;
 
       updateSQL += ` WHERE sol_id = @${updateParams.length}`;
       updateParams.push(sa_sol_id);
@@ -1043,7 +1053,7 @@ export class SolicitudesWorkflowService {
         );
       } catch (respuestasError) {
         console.error(
-          '⚠️ [guardarGestionEjecutivo] Error llenando sección CONCEPTO DEL EJECUTIVO:',
+          '[guardarGestionEjecutivo] Error llenando sección CONCEPTO DEL EJECUTIVO:',
           respuestasError,
         );
       }
@@ -1059,7 +1069,7 @@ export class SolicitudesWorkflowService {
         );
       } catch (notificationError) {
         console.error(
-          '⚠️ [guardarGestionEjecutivo] Error enviando correo a Auxiliar Servicio Cliente:',
+          '[guardarGestionEjecutivo] Error enviando correo a Auxiliar Servicio Cliente:',
           notificationError,
         );
       }
@@ -1071,7 +1081,7 @@ export class SolicitudesWorkflowService {
         workflow: resultado,
       };
     } catch (error) {
-      console.error(`❌ [guardarGestionEjecutivo] Error:`, error);
+      console.error(`[guardarGestionEjecutivo] Error:`, error);
       throw error;
     }
   }
@@ -1898,6 +1908,151 @@ export class SolicitudesWorkflowService {
     }
   }
 
+  async reiniciarEdicionSolicitud(
+    solicitudId: number,
+    usuarioId: number | null = 1,
+  ) {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const [solicitudActual] = await queryRunner.query(
+        `SELECT sol_ses_id, sol_wet_id, sol_wee_id, sol_observacion_cliente
+         FROM solicitudes
+         WHERE sol_id = @0`,
+        [solicitudId],
+      );
+
+      if (!solicitudActual) {
+        throw new Error(`Solicitud ${solicitudId} no encontrada`);
+      }
+
+      if (Number(solicitudActual.sol_ses_id) > 2) {
+        throw new Error(
+          'La solicitud ya está en revisión y no puede reiniciarse desde el formulario',
+        );
+      }
+
+      // Una edición cambia los datos que alimentan las plantillas. Por eso
+      // los documentos diferidos anteriores dejan de ser válidos antes de
+      // guardar las nuevas respuestas: se conservan los soportes normales
+      // del formulario, pero se vacían las plantillas y firmas del paso 2.
+      const archivosDiferidos = await queryRunner.query(
+        `SELECT sa.sa_id, sa.sa_cloudinary_public_id, sa.sa_resource_type
+         FROM Solicitud_archivo sa
+         JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
+         JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tdo_id
+         LEFT JOIN Formulario_secciones fs ON fs.fs_id = fp.seccion_id
+         JOIN solicitudes s ON s.sol_id = sa.sa_sol_id
+         JOIN Clientes c ON c.cli_id = s.sol_cli_id
+         WHERE sa.sa_sol_id = @0
+           AND sa.sa_estado = 'activo'
+           AND fp.fp_estado = 1
+           AND ISNULL(fp.fp_version, 1) = ISNULL(s.sol_formulario_version, 1)
+           AND (
+             td.tdo_tiene_plantilla = 1
+             OR td.tdo_nombre LIKE '%Firmad%'
+           )
+           AND (
+             fp.fp_oculto_en_formulario = 1
+             OR fs.fs_oculta_en_formulario = 1
+             OR td.tdo_tipo_plantilla = 'PDF_SOLICITUD'
+             OR td.tdo_plantilla_contenido IS NOT NULL
+             OR td.tdo_nombre LIKE '%Firmad%'
+           )
+           AND (ISNULL(td.tdo_solo_distribuidor, 0) = 0 OR c.cli_es_distribuidor = 1)`,
+        [solicitudId],
+      );
+
+      if (archivosDiferidos.length > 0) {
+        await queryRunner.query(
+          `UPDATE Solicitud_archivo
+           SET sa_estado = 'inactivo', sa_updated_at = GETDATE()
+           WHERE sa_sol_id = @0
+             AND sa_id IN (${archivosDiferidos.map((_: any, index: number) => `@${index + 1}`).join(', ')})`,
+          [
+            solicitudId,
+            ...archivosDiferidos.map((archivo: any) => archivo.sa_id),
+          ],
+        );
+      }
+
+      const [etapaCliente] = await queryRunner.query(
+        `SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'CLI'`,
+      );
+      const [resultadoPendDocs] = await queryRunner.query(
+        `SELECT TOP 1 wee_id
+         FROM workflow_estado_etapa
+         WHERE wee_codigo IN ('PEND_FIRMA', 'PEND_FIRMA')
+         ORDER BY CASE wee_codigo WHEN 'PEND_FIRMA' THEN 0 ELSE 1 END`,
+      );
+
+      const etapaId = etapaCliente?.wet_id ?? 1;
+      const resultadoId = resultadoPendDocs?.wee_id ?? 5;
+      const observacion =
+        'Tu solicitud fue editada antes de la revisión. Debes generar y subir nuevamente los documentos firmados para enviarla.';
+
+      await queryRunner.query(
+        `UPDATE solicitudes
+         SET sol_ses_id = @0,
+             sol_wet_id = @1,
+             sol_wee_id = @2,
+             sol_usr_id_modifica = @3,
+             sol_updated_at = GETDATE(),
+             sol_observacion_cliente = @5
+         WHERE sol_id = @4`,
+        [2, etapaId, resultadoId, usuarioId, solicitudId, observacion],
+      );
+
+      await this.historialWorkflowService.registrarTransicionConSLA(
+        queryRunner,
+        {
+          solicitudId,
+          etapaId,
+          resultadoId,
+          usuarioId: usuarioId ?? 1,
+          comentario:
+            'Cliente editó la solicitud antes de revisión - Debe volver a firmar documentos',
+        },
+      );
+
+      await queryRunner.commitTransaction();
+
+      // El registro inactivo deja de contar para el workflow. La eliminación
+      // física es secundaria y no debe deshacer el reinicio si el proveedor
+      // de almacenamiento ya no encuentra algún archivo.
+      for (const archivo of archivosDiferidos) {
+        if (!archivo.sa_cloudinary_public_id) continue;
+        try {
+          await this.storageService.destroy(
+            archivo.sa_cloudinary_public_id,
+            archivo.sa_resource_type,
+          );
+        } catch (storageError) {
+          console.warn(
+            `[reiniciarEdicionSolicitud] No se pudo eliminar el archivo físico ${archivo.sa_id}:`,
+            storageError,
+          );
+        }
+      }
+
+      return {
+        ok: true,
+        reinicio: true,
+        solicitudId,
+        etapaId,
+        resultadoId,
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      console.error(`❌ [reiniciarEdicionSolicitud] Error:`, error);
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
   async actualizarResultadoPendiente(
     solicitudId: number,
     usuarioId: number | null = 1,
@@ -1965,7 +2120,7 @@ export class SolicitudesWorkflowService {
 
       const [solicitud] = await this.dataSource.query(
         `SELECT
-          s.sol_numero_solicitud,
+          s.sol_numero,
           c.${lookup.cliId} AS cliente_id,
           c.${lookup.cliRazonSocial} AS cliente_nombre,
           c.cli_correo AS cliente_email,
@@ -2050,7 +2205,7 @@ export class SolicitudesWorkflowService {
         '{{fecha_aprobacion}}': solicitud.sol_fecha_aprobacion
           ? new Date(solicitud.sol_fecha_aprobacion).toLocaleDateString('es-CO')
           : new Date().toLocaleDateString('es-CO'),
-        '{{numero_solicitud}}': solicitud.sol_numero_solicitud || '-',
+        '{{numero_solicitud}}': solicitud.sol_numero || '-',
         ...reemplazosDinamicos,
       };
 
@@ -2086,6 +2241,7 @@ export class SolicitudesWorkflowService {
         plantillaCartaPDF.tdo_pie_pagina_texto,
         plantillaCartaPDF.tdo_pie_pagina_imagen_url,
       );
+      const nombreCarta = 'Carta de vinculacion comercial.pdf';
 
       // Persistir el PDF para que aparezca en "Mis Documentos" del cliente.
       // Independiente del envío de correo (try/catch propio): si el storage
@@ -2094,11 +2250,16 @@ export class SolicitudesWorkflowService {
       // aprobación, que ya quedó confirmada (commitTransaction) antes de
       // que se invoque esta función.
       try {
-        const nombreArchivo = `carta-vinculacion-${solicitud.sol_numero_solicitud}.pdf`;
+        const nombreOriginal = nombreCarta;
+        const nombreArchivo = nombreGuardadoArchivo(
+          new Date(),
+          solicitud.sol_numero,
+          nombreOriginal,
+        );
         const carpetaBase = await this.carpetaAlmacenamiento.obtenerBase(
           TIPO_ARCHIVO_URLS.SOLICITUDES,
         );
-        const carpeta = `${carpetaBase}cartas/${solicitud.sol_numero_solicitud}`;
+        const carpeta = `${carpetaBase}cartas/${solicitud.sol_numero}`;
         const subida = await this.storageService.upload(pdfBuffer, {
           folder: carpeta,
           filename: nombreArchivo,
@@ -2120,7 +2281,7 @@ export class SolicitudesWorkflowService {
               scv_created_at = GETDATE()
             WHERE scv_sol_id = @4`,
             [
-              nombreArchivo,
+              nombreOriginal,
               subida.url,
               'application/pdf',
               pdfBuffer.length,
@@ -2134,7 +2295,7 @@ export class SolicitudesWorkflowService {
              VALUES (@0, @1, @2, @3, @4)`,
             [
               sa_sol_id,
-              nombreArchivo,
+              nombreOriginal,
               subida.url,
               'application/pdf',
               pdfBuffer.length,
@@ -2152,7 +2313,7 @@ export class SolicitudesWorkflowService {
       let cuerpoHtml = plantilla.cuerpo_html;
 
       const reemplazosCorreo: Record<string, string> = {
-        '{{numero_solicitud}}': solicitud.sol_numero_solicitud || '-',
+        '{{numero_solicitud}}': solicitud.sol_numero || '-',
         '{{cliente_nombre}}': solicitud.cliente_nombre || '-',
         '{{cupo_aprobado}}': this.formatCurrency(solicitud.sol_cupo_aprobado),
         '{{plazo_pago}}': solicitud.sol_plazo_pago
@@ -2172,7 +2333,7 @@ export class SolicitudesWorkflowService {
         html: cuerpoHtml,
         attachments: [
           {
-            filename: `carta-vinculacion-${solicitud.sol_numero_solicitud}.pdf`,
+            filename: nombreCarta,
             content: pdfBuffer,
             contentType: 'application/pdf',
           },

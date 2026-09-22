@@ -44,27 +44,74 @@ import { ExistenciasModule } from './existencias/existencias.module';
 import { CarteraModule } from './cartera/cartera.module';
 import { UnoModule } from './integraciones/uno/uno.module';
 
+const resolveDbConfig = () => {
+  const appEnv = (process.env.APP_ENV || 'development').toLowerCase();
+
+  const envKey =
+    {
+      development: 'DEV',
+      test: 'TEST',
+      production: 'PROD',
+    }[appEnv] ?? 'DEV';
+
+  const dbHost = process.env[`DB_HOST_${envKey}`] ?? process.env.DB_HOST;
+  const dbPort = process.env[`DB_PORT_${envKey}`] ?? process.env.DB_PORT;
+  const dbUser = process.env[`DB_USER_${envKey}`] ?? process.env.DB_USER;
+  const dbPassword =
+    process.env[`DB_PASSWORD_${envKey}`] ?? process.env.DB_PASSWORD;
+  const dbName = process.env[`DB_NAME_${envKey}`] ?? process.env.DB_NAME;
+
+  return {
+    host: dbHost,
+    port: dbPort ? Number(dbPort) : undefined,
+    username: dbUser,
+    password: dbPassword,
+    database: dbName,
+  };
+};
+
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }), // carga .env
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: ['.env', '.env.development', '.env.test', '.env.production'],
+    }),
     ScheduleModule.forRoot(),
-    TypeOrmModule.forRoot({
-      type: 'mssql',
-      host: process.env.DB_HOST,
-      port: Number(process.env.DB_PORT),
-      username: process.env.DB_USER,
-      password: process.env.DB_PASSWORD,
-      database: process.env.DB_NAME,
-      entities: [__dirname + '/**/*.entity{.ts,.js}'],
-      synchronize: false, // <-- importante
-      options: {
-        encrypt: true,
-        trustServerCertificate: true,
-      },
-      pool: {
-        max: 10,
-        min: 1, // mantener al menos una conexion viva, evita reconectar (~900ms) en cada request tras inactividad
-        idleTimeoutMillis: 300000,
+    TypeOrmModule.forRootAsync({
+      useFactory: () => {
+        const dbConfig = resolveDbConfig();
+
+        if (
+          !dbConfig.host ||
+          !dbConfig.username ||
+          !dbConfig.password ||
+          !dbConfig.database
+        ) {
+          throw new Error(
+            `Falta configuración de la base de datos para APP_ENV=${process.env.APP_ENV || 'development'}. ` +
+              'Define DB_HOST_DEV/DB_USER_DEV/DB_PASSWORD_DEV/DB_NAME_DEV o DB_HOST/DB_USER/DB_PASSWORD/DB_NAME.',
+          );
+        }
+
+        return {
+          type: 'mssql',
+          host: dbConfig.host,
+          port: dbConfig.port,
+          username: dbConfig.username,
+          password: dbConfig.password,
+          database: dbConfig.database,
+          entities: [__dirname + '/**/*.entity{.ts,.js}'],
+          synchronize: false,
+          options: {
+            encrypt: true,
+            trustServerCertificate: true,
+          },
+          pool: {
+            max: 10,
+            min: 1,
+            idleTimeoutMillis: 300000,
+          },
+        };
       },
     }),
 

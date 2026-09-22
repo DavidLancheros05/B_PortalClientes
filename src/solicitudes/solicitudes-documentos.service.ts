@@ -10,6 +10,10 @@ import {
   CarpetaAlmacenamientoService,
   TIPO_ARCHIVO_URLS,
 } from '../common/storage/carpeta-almacenamiento.service';
+import {
+  nombreGuardadoArchivo,
+  nombreOriginalArchivo,
+} from '../common/utils/storage-file-name.util';
 import { PermissionsService } from '../permissions/permissions.service';
 
 @Injectable()
@@ -22,7 +26,6 @@ export class SolicitudesDocumentosService {
   ) {}
 
   async obtenerSolicitud(id: number) {
-    console.log(`📋 [obtenerSolicitud] Obteniendo solicitud con ID: ${id}`);
     try {
       const sql = `
         SELECT
@@ -72,13 +75,11 @@ export class SolicitudesDocumentosService {
       `;
 
       const result = await this.dataSource.query(sql, [id]);
-      console.log(
-        `✅ [obtenerSolicitud] Solicitud encontrada: ${result.length > 0 ? 'SÍ' : 'NO'}`,
-      );
+
       return result[0] || null;
     } catch (error) {
       console.error(
-        `❌ [obtenerSolicitud] Error al obtener solicitud ID ${id}:`,
+        `[obtenerSolicitud] Error al obtener solicitud ID ${id}:`,
         error,
       );
       throw error;
@@ -86,8 +87,6 @@ export class SolicitudesDocumentosService {
   }
 
   async obtenerArchivosExistentes(solicitudId: number) {
-    console.log(`Obteniendo archivos existentes: sa_sol_id=${solicitudId}`);
-
     const sql = `
       SELECT sa.sa_id, sa.sa_sol_id, sa.sa_fp_id AS fp_id, sa.sa_nombre_original, sa.sa_nombre_guardado,
              sa.sa_tamaño_bytes, sa.sa_tipo_mime, sa.sa_ruta_almacenamiento, sa.sa_cargado_por,
@@ -102,7 +101,6 @@ export class SolicitudesDocumentosService {
 
     try {
       const archivos = await this.dataSource.query(sql, [solicitudId]);
-      console.log(`Archivos encontrados: ${archivos.length}`, archivos);
       return archivos;
     } catch (error) {
       console.error('Error obteniendo archivos existentes:', error);
@@ -111,12 +109,6 @@ export class SolicitudesDocumentosService {
   }
 
   async obtenerDocumentosConVigencia(solicitudId: number) {
-    // La Carta de Vinculación (Solicitud_carta_vinculacion) no tiene
-    // Formulario_pregunta detrás (la genera el sistema al aprobar en CC2,
-    // no la sube el cliente), así que no puede vivir en Solicitud_archivo
-    // (sa_fp_id es NOT NULL). Se trae con UNION ALL, mapeada a las mismas
-    // columnas que ya consume el frontend, para que aparezca en "Mis
-    // Documentos" sin tocar el componente.
     const sql = `
       SELECT sa.sa_id, sa.sa_sol_id, sa.sa_fp_id AS fp_id, sa.sa_nombre_original, sa.sa_nombre_guardado,
              sa.sa_tamaño_bytes, sa.sa_tipo_mime, sa.sa_ruta_almacenamiento, sa.sa_cargado_por,
@@ -132,7 +124,7 @@ export class SolicitudesDocumentosService {
              td.tdo_pie_pagina_tipo, td.tdo_pie_pagina_texto, td.tdo_pie_pagina_imagen_url
       FROM Solicitud_archivo sa
       LEFT JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
-      LEFT JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tipo_documento_id
+      LEFT JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tdo_id
       WHERE sa.sa_sol_id = @0 AND sa.sa_estado = 'activo'
 
       UNION ALL
@@ -159,18 +151,6 @@ export class SolicitudesDocumentosService {
       const documentos = await this.dataSource.query(sql, [solicitudId]);
       if (documentos.length > 0) return documentos;
 
-      // Una ampliación de cupo creada por el Ejecutivo (Camino 2, ver
-      // documentacion/flujo-ampliacion-de-cupo.md) nunca hace que el cliente
-      // vuelva a subir documentos — por diseño, reutiliza los ya verificados.
-      // Sin este fallback, Solicitud_archivo para este sol_id sale vacío y la
-      // pantalla de revisión muestra "sin documentos", aunque el cliente sí
-      // tenga papeles vigentes en su archivo consolidado (Cliente_archivo).
-      // sa_id/fp_id quedan NULL a propósito: no existen como Solicitud_archivo
-      // de ESTA solicitud, así que no se pueden pedir por
-      // GET /solicitudes/:id/respuestas/archivo/:saId (ese endpoint exige
-      // sa_sol_id = :id). sa_origen le indica al frontend
-      // (getArchivoPreviewUrl) que use sa_ruta_almacenamiento directo en vez
-      // de armar esa URL.
       const [solicitud] = await this.dataSource.query(
         `SELECT sol_cli_id, sol_cupo_solicitado FROM solicitudes WHERE sol_id = @0`,
         [solicitudId],
@@ -206,11 +186,6 @@ export class SolicitudesDocumentosService {
     }
   }
 
-  // Soportes de análisis: archivos que sube el personal interno (Oficial de
-  // Cumplimiento, etc.) para respaldar su revisión — no son documentos del
-  // cliente, no están ligados a ninguna pregunta del formulario, por eso no
-  // viven en Solicitud_archivo. Reusa storageService.upload igual que
-  // guardarRespuestaArchivo.
   async subirSoporteAnalisis(
     solicitudId: number,
     wetId: number,
@@ -218,7 +193,7 @@ export class SolicitudesDocumentosService {
     usuarioId: number,
   ) {
     const [solicitud] = await this.dataSource.query(
-      `SELECT s.sol_numero_solicitud
+      `SELECT s.sol_numero
        FROM solicitudes s
        WHERE s.sol_id = @0`,
       [solicitudId],
@@ -230,8 +205,13 @@ export class SolicitudesDocumentosService {
     const carpetaBase = await this.carpetaAlmacenamiento.obtenerBase(
       TIPO_ARCHIVO_URLS.SOLICITUDES,
     );
-    const carpeta = `${carpetaBase}soportes/${solicitud.sol_numero_solicitud}`;
-    const nombreGuardado = `${Date.now()}_${file.originalname}`;
+    const carpeta = `${carpetaBase}soportes/${solicitud.sol_numero}`;
+    const nombreOriginal = nombreOriginalArchivo(file.originalname);
+    const nombreGuardado = nombreGuardadoArchivo(
+      new Date(),
+      solicitud.sol_numero,
+      nombreOriginal,
+    );
     const subida = await this.storageService.upload(file.buffer, {
       folder: carpeta,
       filename: nombreGuardado,
@@ -246,7 +226,7 @@ export class SolicitudesDocumentosService {
       [
         solicitudId,
         wetId,
-        file.originalname,
+        nombreOriginal,
         subida.url,
         file.mimetype,
         file.buffer.length,
@@ -279,13 +259,6 @@ export class SolicitudesDocumentosService {
     );
   }
 
-  // Evidencia por persona: un archivo por fila de una pregunta tipo TABLA
-  // (representante legal, suplentes, accionistas — ver
-  // FormularioRenderizableService.obtenerTablasCumplimiento), usado desde
-  // Gestión Oficial de Cumplimiento. Reemplazable: subir uno nuevo para la
-  // misma (solicitudId, fpId, filaIndex) inactiva el anterior en vez de
-  // acumular, mismo criterio de reemplazo que "Cambiar" en
-  // DocumentoTablaField.tsx.
   async subirEvidenciaPersona(
     solicitudId: number,
     fpId: number,
@@ -294,7 +267,7 @@ export class SolicitudesDocumentosService {
     usuarioId: number,
   ) {
     const [solicitud] = await this.dataSource.query(
-      `SELECT s.sol_numero_solicitud
+      `SELECT s.sol_numero
        FROM solicitudes s
        WHERE s.sol_id = @0`,
       [solicitudId],
@@ -313,8 +286,13 @@ export class SolicitudesDocumentosService {
     const carpetaBaseEvidencias = await this.carpetaAlmacenamiento.obtenerBase(
       TIPO_ARCHIVO_URLS.SOLICITUDES,
     );
-    const carpeta = `${carpetaBaseEvidencias}evidencias-personas/${solicitud.sol_numero_solicitud}`;
-    const nombreGuardado = `${Date.now()}_${file.originalname}`;
+    const carpeta = `${carpetaBaseEvidencias}evidencias-personas/${solicitud.sol_numero}`;
+    const nombreOriginal = nombreOriginalArchivo(file.originalname);
+    const nombreGuardado = nombreGuardadoArchivo(
+      new Date(),
+      solicitud.sol_numero,
+      nombreOriginal,
+    );
     const subida = await this.storageService.upload(file.buffer, {
       folder: carpeta,
       filename: nombreGuardado,
@@ -330,7 +308,7 @@ export class SolicitudesDocumentosService {
         solicitudId,
         fpId,
         filaIndex,
-        file.originalname,
+        nombreOriginal,
         subida.url,
         file.mimetype,
         file.buffer.length,
@@ -362,12 +340,6 @@ export class SolicitudesDocumentosService {
     );
   }
 
-  /**
-   * El personal interno (cualquier rol distinto de CLIENTE) puede gestionar
-   * archivos de cualquier solicitud (ej. ASC corrigiendo en nombre del
-   * cliente). Un usuario CLIENTE solo puede tocar archivos de sus propias
-   * solicitudes.
-   */
   async verificarAccesoSolicitud(
     solicitudId: number,
     user: { rol?: string; cliente_id?: number; cli_id?: number },
@@ -393,7 +365,7 @@ export class SolicitudesDocumentosService {
       SELECT
         sa.sa_id,
         sa.sa_sol_id,
-        s.sol_numero_solicitud,
+        s.sol_numero,
         s.sol_ses_id,
         ses.ses_nombre AS estado_solicitud,
         s.sol_fecha_envio AS sol_fecha_envio,
@@ -430,7 +402,7 @@ export class SolicitudesDocumentosService {
       INNER JOIN solicitudes s ON sa.sa_sol_id = s.sol_id
       INNER JOIN solicitud_estados ses ON s.sol_ses_id = ses.ses_id
       LEFT JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
-      LEFT JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tipo_documento_id
+      LEFT JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tdo_id
       INNER JOIN Clientes c ON s.sol_cli_id = c.cli_id
       LEFT JOIN Ejecutivo_negocio e ON e.ejng_id = s.sol_ejng_id
       LEFT JOIN usuarios u ON u.usr_id = s.sol_ejng_id
@@ -456,7 +428,7 @@ export class SolicitudesDocumentosService {
         td.${COLUMNAS.TIPOS_DOCUMENTOS.descripcion} AS descripcion,
         td.${COLUMNAS.TIPOS_DOCUMENTOS.obligatorio} AS obligatorio
       FROM ${TABLAS.TIPOS_DOCUMENTOS} td
-      INNER JOIN Formulario_pregunta fp ON fp.fp_tipo_documento_id = td.${COLUMNAS.TIPOS_DOCUMENTOS.id}
+      INNER JOIN Formulario_pregunta fp ON fp.fp_tdo_id = td.${COLUMNAS.TIPOS_DOCUMENTOS.id}
       INNER JOIN solicitudes s ON s.sol_id = @0
       WHERE fp.fp_estado = 1
         AND ISNULL(fp.fp_version, 1) = ISNULL(s.sol_formulario_version, 1)
@@ -504,16 +476,6 @@ export class SolicitudesDocumentosService {
     return { downloadUrl, nombreOriginal: sa_nombre_original };
   }
 
-  /**
-   * Permisos de borrado:
-   * - Cualquier rol con "eliminar" habilitado en pc_rol_modulo para el
-   *   módulo Solicitudes puede eliminar en cualquier estado (hoy solo
-   *   ADMIN, gestionable desde /seguridad/roles — ver migración
-   *   20260723_resetear_eliminar_solicitudes_pc_rol_modulo.sql).
-   * - CLIENTE, independientemente de ese permiso, solo puede eliminar sus
-   *   propias solicitudes y solo en estado 1 (BORRADOR) — es el "cancelar
-   *   antes de enviar" de siempre, una regla de dueño+estado, no de rol.
-   */
   async deleteSolicitud(
     solicitudId: number,
     user: {
@@ -530,7 +492,7 @@ export class SolicitudesDocumentosService {
     try {
       // Validar que la solicitud exista
       const solicitudResult = await queryRunner.query(
-        `SELECT sol_id, sol_numero_solicitud, sol_ses_id, sol_cli_id FROM solicitudes WHERE sol_id = @0`,
+        `SELECT sol_id, sol_numero, sol_ses_id, sol_cli_id FROM solicitudes WHERE sol_id = @0`,
         [solicitudId],
       );
 
@@ -543,10 +505,6 @@ export class SolicitudesDocumentosService {
       const solicitud = solicitudResult[0];
 
       if (user?.rol === 'CLIENTE') {
-        // Regla de dueño+estado, no de rol — a propósito NO pasa por
-        // pc_rol_modulo aunque alguien active "eliminar" para CLIENTE ahí:
-        // un cliente nunca debe poder borrar una solicitud ajena o que ya
-        // salió de sus manos, sin importar qué diga ese permiso genérico.
         const clienteId = user?.cliente_id ?? user?.cli_id;
         if (Number(solicitud.sol_cli_id) !== Number(clienteId)) {
           const error = new Error('No tienes acceso a esta solicitud');
@@ -576,11 +534,6 @@ export class SolicitudesDocumentosService {
         }
       }
 
-      // Formulario_respuesta, Solicitud_archivo, Solicitud_carta_vinculacion,
-      // Solicitud_soporte_analisis, solicitud_workflow_historial y
-      // Solicitudes_estados_hist tienen FK ON DELETE CASCADE hacia
-      // solicitudes(sol_id) (migración 20260722), así que este único DELETE
-      // arrastra todo — ya no hace falta borrarlas a mano una por una.
       await queryRunner.query(`DELETE FROM solicitudes WHERE sol_id = @0`, [
         solicitudId,
       ]);
@@ -590,7 +543,7 @@ export class SolicitudesDocumentosService {
       return {
         ok: true,
         sol_id: solicitudId,
-        numero_solicitud: solicitud.sol_numero_solicitud,
+        numero_solicitud: solicitud.sol_numero,
         message: 'Solicitud eliminada correctamente',
       };
     } catch (error) {

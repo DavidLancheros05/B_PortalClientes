@@ -104,7 +104,7 @@ workflow_estado_etapa),`cli*`(Clientes),`usr\_` (usuarios).
   `tdo_tiene_plantilla=true`. Estos documentos no bloquean el llenado del
   formulario, pero si faltan al enviar, la solicitud se queda en
   `sol_ses_id=2, sol_wet_id=1(CLI), sol_wee_id=5
-(PEND_DOCS)` en vez de pasar a Ejecutivo de Negocios — ver
+(PEND_FIRMA)` en vez de pasar a Ejecutivo de Negocios — ver
   `documentacion/Portal Clientes/Solicitudes/FLUJO_ETAPAS.md`.
 
 ## Arquitectura frontend
@@ -164,7 +164,7 @@ hardcodeado — moverlo requeriría cambiar esa ruta en el script.
 ## Gotchas ya encontrados (para no repetirlos)
 
 - `wee_codigo` en `workflow_estado_etapa` es `VARCHAR(10)` — códigos nuevos
-  deben ser cortos (ej. `PEND_DOCS`, no `PENDIENTE_DOCUMENTOS`).
+  deben ser cortos (ej. `PEND_FIRMA`, no `PENDIENTE_DOCUMENTOS`).
 - Cualquier query que traiga `Solicitud_archivo` debe alias-ear
   `sa.sa_fp_id AS fp_id` si el código consumidor espera `fp_id` — ya hubo una
   regresión real por esto (rompía "Reemplazar"/"Descargar plantilla" y el

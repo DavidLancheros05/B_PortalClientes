@@ -138,7 +138,7 @@ export class SolicitudesListadosService {
     const sql = `
       SELECT
         s.sol_id AS [sol_id],
-        s.sol_numero_solicitud AS [sol_numero_solicitud],
+        s.sol_numero AS [sol_numero],
         s.sol_cli_id AS [sol_cli_id],
         c.${columns.cliRazonSocial} AS [cliente_nombre],
         s.sol_ejng_id AS [sol_ejng_id],
@@ -156,7 +156,6 @@ export class SolicitudesListadosService {
         s.sol_wee_id AS [sol_wee_id],
         wr.wee_nombre AS [resultado_nombre],
         s.sol_formulario_version AS [sol_formulario_version],
-        s.sol_fecha_estimada_respuesta_comercial AS [sol_fecha_estimada_respuesta_comercial],
         s.sol_fecha_est_gest_oc AS [sol_fecha_est_gest_oc],
         s.sol_fecha_gest_oc AS [sol_fecha_gest_oc],
         s.sol_fecha_est_gest_ejn AS [sol_fecha_est_gest_ejn],
@@ -202,7 +201,7 @@ export class SolicitudesListadosService {
     let sql = `
     SELECT
       s.sol_id AS [sol_id],
-      s.sol_numero_solicitud AS [sol_numero_solicitud],
+      s.sol_numero AS [sol_numero],
       s.sol_ses_id AS [sol_ses_id],
       se.ses_codigo AS [estado_codigo],
       s.sol_wet_id AS [sol_wet_id],
@@ -238,7 +237,7 @@ export class SolicitudesListadosService {
 
     if (filters?.searchTerm) {
       sql += ` AND (
-        s.sol_numero_solicitud LIKE @1
+        s.sol_numero LIKE @1
         OR c.cli_razon_social LIKE @1
       )`;
       params.push(`%${filters.searchTerm}%`);
@@ -273,7 +272,7 @@ export class SolicitudesListadosService {
     const sql = `
     SELECT
       s.sol_id AS [sol_id],
-      s.sol_numero_solicitud AS [sol_numero_solicitud],
+      s.sol_numero AS [sol_numero],
       s.sol_cli_id AS [sol_cli_id],
       c.cli_razon_social AS [cliente_nombre],
       s.sol_ses_id AS [sol_ses_id],
@@ -327,7 +326,7 @@ export class SolicitudesListadosService {
     const sql = `
     SELECT
       s.sol_id AS [sol_id],
-      s.sol_numero_solicitud AS [sol_numero_solicitud],
+      s.sol_numero AS [sol_numero],
       s.sol_ses_id AS [sol_ses_id],
       s.sol_cli_id AS [sol_cli_id],
       s.sol_fecha_creacion AS [sol_fecha_creacion],
@@ -363,7 +362,7 @@ export class SolicitudesListadosService {
     WHERE s.sol_ejng_id = @0
       AND s.sol_ses_id = 2
       -- sol_ses_id = 2 (PENDIENTE) por sí solo no basta: también es el
-      -- estado de "cliente esperando documentos diferidos" (CLI/PEND_DOCS,
+      -- estado de "cliente esperando firma" (CLI/PEND_FIRMA,
       -- antes de llegar a EJN) y de "auxiliar rechazó, cliente corrigiendo"
       -- (ASC/RECHAZADO cliente_actualiza, después de EJN). Sin este filtro,
       -- ambos casos aparecían en la bandeja del ejecutivo aunque no le
@@ -408,7 +407,7 @@ export class SolicitudesListadosService {
     const sql = `
     SELECT
       s.sol_id AS [sol_id],
-      s.sol_numero_solicitud AS [sol_numero_solicitud],
+      s.sol_numero AS [sol_numero],
       s.sol_ses_id AS [sol_ses_id],
       s.sol_wet_id AS [sol_wet_id],
       s.sol_cli_id AS [sol_cli_id],
@@ -539,7 +538,7 @@ export class SolicitudesListadosService {
     const sql = `
       SELECT TOP (@0)
         sol_id AS [sol_id],
-        sol_numero_solicitud AS [sol_numero_solicitud],
+        sol_numero AS [sol_numero],
         sol_cli_id AS [sol_cli_id],
         sol_ses_id AS [sol_ses_id],
         sol_fecha_creacion AS [sol_fecha_creacion],
@@ -554,16 +553,20 @@ export class SolicitudesListadosService {
     const sql = `
       SELECT TOP 1
         s.sol_id AS [sol_id],
-        s.sol_numero_solicitud AS [sol_numero_solicitud],
+        s.sol_numero AS [sol_numero],
         s.sol_ses_id AS [sol_ses_id],
         s.sol_wet_id AS [sol_wet_id],
         s.sol_wee_id AS [sol_wee_id],
+        we.wet_codigo AS [etapa_codigo],
+        wr.wee_codigo AS [resultado_codigo],
         s.sol_fecha_creacion AS [sol_fecha_creacion],
         s.sol_fecha_envio AS [sol_fecha_envio],
         c.cli_razon_social AS [cliente_nombre],
         c.cli_nro_identificacion AS [cliente_nit]
       FROM solicitudes s
       LEFT JOIN clientes c ON c.cli_id = s.sol_cli_id
+      LEFT JOIN workflow_etapas we ON we.wet_id = s.sol_wet_id
+      LEFT JOIN workflow_estado_etapa wr ON wr.wee_id = s.sol_wee_id
       WHERE s.sol_cli_id = @0
       ORDER BY s.sol_fecha_creacion DESC
     `;
@@ -580,10 +583,12 @@ export class SolicitudesListadosService {
     const sql = `
       SELECT TOP 1
         s.sol_id AS [sol_id],
-        s.sol_numero_solicitud AS [sol_numero_solicitud],
+        s.sol_numero AS [sol_numero],
         s.sol_ses_id AS [sol_ses_id],
         s.sol_wet_id AS [sol_wet_id],
         s.sol_wee_id AS [sol_wee_id],
+        we.wet_codigo AS [etapa_codigo],
+        wr.wee_codigo AS [resultado_codigo],
         s.sol_fecha_creacion AS [sol_fecha_creacion],
         s.sol_fecha_envio AS [sol_fecha_envio],
         s.sol_cupo_aprobado AS [sol_cupo_aprobado],
@@ -591,6 +596,8 @@ export class SolicitudesListadosService {
         c.cli_nro_identificacion AS [cliente_nit]
       FROM solicitudes s
       LEFT JOIN clientes c ON c.cli_id = s.sol_cli_id
+      LEFT JOIN workflow_etapas we ON we.wet_id = s.sol_wet_id
+      LEFT JOIN workflow_estado_etapa wr ON wr.wee_id = s.sol_wee_id
       WHERE s.sol_cli_id = @0 AND s.sol_ses_id = 5
       ORDER BY s.sol_fecha_creacion DESC
     `;
@@ -605,16 +612,20 @@ export class SolicitudesListadosService {
     const sql = `
       SELECT TOP 1
         s.sol_id AS [sol_id],
-        s.sol_numero_solicitud AS [sol_numero_solicitud],
+        s.sol_numero AS [sol_numero],
         s.sol_ses_id AS [sol_ses_id],
         s.sol_wet_id AS [sol_wet_id],
         s.sol_wee_id AS [sol_wee_id],
+        we.wet_codigo AS [etapa_codigo],
+        wr.wee_codigo AS [resultado_codigo],
         s.sol_fecha_creacion AS [sol_fecha_creacion],
         s.sol_fecha_envio AS [sol_fecha_envio],
         c.cli_razon_social AS [cliente_nombre],
         c.cli_nro_identificacion AS [cliente_nit]
       FROM solicitudes s
       LEFT JOIN clientes c ON c.cli_id = s.sol_cli_id
+      LEFT JOIN workflow_etapas we ON we.wet_id = s.sol_wet_id
+      LEFT JOIN workflow_estado_etapa wr ON wr.wee_id = s.sol_wee_id
       WHERE s.sol_id = @0
     `;
     const result = await this.dataSource.query(sql, [solicitudId]);
@@ -625,7 +636,7 @@ export class SolicitudesListadosService {
     const sql = `
       SELECT TOP 1
         sol_id AS [sol_id],
-        sol_numero_solicitud AS [sol_numero_solicitud]
+        sol_numero AS [sol_numero]
       FROM solicitudes
       WHERE sol_cli_id = @0 AND sol_ses_id = 2
       ORDER BY sol_id DESC
@@ -638,7 +649,7 @@ export class SolicitudesListadosService {
     const sql = `
       SELECT TOP 1
         sol_id AS [sol_id],
-        sol_numero_solicitud AS [sol_numero_solicitud]
+        sol_numero AS [sol_numero]
       FROM solicitudes
       WHERE sol_cli_id = @0 AND sol_ses_id NOT IN (1, 2, 3)
       ORDER BY sol_fecha_creacion DESC
@@ -693,7 +704,7 @@ export class SolicitudesListadosService {
     return `
       SELECT
         s.sol_id AS [sol_id],
-        s.sol_numero_solicitud AS [sol_numero_solicitud],
+        s.sol_numero AS [sol_numero],
         s.sol_cli_id AS [sol_cli_id],
         c.${columns.cliRazonSocial} AS [cliente_nombre],
         s.sol_ses_id AS [sol_ses_id],
@@ -701,7 +712,6 @@ export class SolicitudesListadosService {
         s.sol_wee_id AS [sol_wee_id],
         s.sol_fecha_creacion AS [sol_fecha_creacion],
         s.sol_fecha_envio AS [sol_fecha_envio],
-        s.sol_fecha_estimada_respuesta_comercial AS [sol_fecha_estimada_respuesta_comercial],
         CASE WHEN we.wet_codigo = 'ASC' THEN COALESCE(fe_vigente.swh_fecha_estimada, s.sol_fecha_est_gest_asc) ELSE s.sol_fecha_est_gest_asc END AS [sol_fecha_est_gest_asc],
         CASE WHEN we.wet_codigo = 'OFC' THEN COALESCE(fe_vigente.swh_fecha_estimada, s.sol_fecha_est_gest_oc) ELSE s.sol_fecha_est_gest_oc END AS [sol_fecha_est_gest_oc],
         CASE WHEN we.wet_codigo = 'CC1' THEN COALESCE(fe_vigente.swh_fecha_estimada, s.sol_fecha_est_gest_cc1) ELSE s.sol_fecha_est_gest_cc1 END AS [sol_fecha_est_gest_cc1],

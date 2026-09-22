@@ -5,11 +5,11 @@ import { normalizeMojibake } from 'src/common/utils/text-encoding.util';
 import { contarSolicitudesQueBloqueanVersion } from './version-formulario.util';
 import { ClienteDatosNormalizadosService } from '../../cliente-datos-normalizados/cliente-datos-normalizados.service';
 
-export interface Formulario {
-  frm_id: number;
-  frm_nombre: string;
-  frm_descripcion: string | null;
-  frm_activo: boolean;
+export interface Formularios_solicitudes {
+  frs_id: number;
+  frs_nombre: string;
+  frs_descripcion: string | null;
+  frs_activo: boolean;
   formulario_version: number;
   Formulario_versiones_totales: number;
   created_at: string;
@@ -26,53 +26,55 @@ export class FormulariosService {
   async listar(
     busqueda?: string,
     estado?: 'ACTIVO' | 'INACTIVO' | 'TODOS',
-  ): Promise<Formulario[]> {
+  ): Promise<Formularios_solicitudes[]> {
     let query = `
       SELECT
-        f.frm_id,
-        f.frm_nombre,
-        f.frm_descripcion,
-        f.frm_activo,
+        f.frs_id,
+        f.frs_nombre,
+        f.frs_descripcion,
+        f.frs_activo,
         f.created_at,
-        ISNULL(f.frm_version_activa, ISNULL((SELECT MAX(v.fv_numero) FROM Formulario_versiones v WHERE v.fv_frm_id = f.frm_id), 1)) AS formulario_version,
-        ISNULL((SELECT COUNT(*) FROM Formulario_versiones v WHERE v.fv_frm_id = f.frm_id), 0) AS Formulario_versiones_totales
-      FROM formularios f
+        ISNULL(f.frs_version_activa, ISNULL((SELECT MAX(v.fv_numero) FROM Formulario_versiones v WHERE v.fv_frs_id = f.frs_id), 1)) AS formulario_version,
+        ISNULL((SELECT COUNT(*) FROM Formulario_versiones v WHERE v.fv_frs_id = f.frs_id), 0) AS Formulario_versiones_totales
+      FROM Formularios_solicitudes f
       WHERE 1=1
     `;
 
     if (busqueda && busqueda.trim()) {
       const escapedBusqueda = busqueda.replace(/'/g, "''");
       query += ` AND (
-        f.frm_nombre LIKE '%${escapedBusqueda}%'
-        OR f.frm_descripcion LIKE '%${escapedBusqueda}%'
+        f.frs_nombre LIKE '%${escapedBusqueda}%'
+        OR f.frs_descripcion LIKE '%${escapedBusqueda}%'
       )`;
     }
 
     if (estado === 'ACTIVO') {
-      query += ` AND f.frm_activo = 1`;
+      query += ` AND f.frs_activo = 1`;
     } else if (estado === 'INACTIVO') {
-      query += ` AND f.frm_activo = 0`;
+      query += ` AND f.frs_activo = 0`;
     }
 
-    query += ` ORDER BY f.frm_id DESC`;
+    query += ` ORDER BY f.frs_id DESC`;
 
     const result = await this.dataSource.query(query);
     return result;
   }
 
-  async obtenerPorId(formularioId: number): Promise<Formulario | null> {
+  async obtenerPorId(
+    formularioId: number,
+  ): Promise<Formularios_solicitudes | null> {
     const result = await this.dataSource.query(
       `
       SELECT
-        f.frm_id,
-        f.frm_nombre,
-        f.frm_descripcion,
-        f.frm_activo,
+        f.frs_id,
+        f.frs_nombre,
+        f.frs_descripcion,
+        f.frs_activo,
         f.created_at,
-        ISNULL(f.frm_version_activa, ISNULL((SELECT MAX(v.fv_numero) FROM Formulario_versiones v WHERE v.fv_frm_id = f.frm_id), 1)) AS formulario_version,
-        ISNULL((SELECT COUNT(*) FROM Formulario_versiones v WHERE v.fv_frm_id = f.frm_id), 0) AS Formulario_versiones_totales
-      FROM formularios f
-      WHERE f.frm_id = @0
+        ISNULL(f.frs_version_activa, ISNULL((SELECT MAX(v.fv_numero) FROM Formulario_versiones v WHERE v.fv_frs_id = f.frs_id), 1)) AS formulario_version,
+        ISNULL((SELECT COUNT(*) FROM Formulario_versiones v WHERE v.fv_frs_id = f.frs_id), 0) AS Formulario_versiones_totales
+      FROM Formularios_solicitudes f
+      WHERE f.frs_id = @0
     `,
       [formularioId],
     );
@@ -83,33 +85,36 @@ export class FormulariosService {
   async obtenerActivo() {
     const result = await this.dataSource.query(`
       SELECT TOP 1
-        f.frm_id,
-        f.frm_nombre,
-        f.frm_descripcion,
-        ISNULL(f.frm_version_activa, ISNULL((SELECT MAX(fv.fv_numero) FROM Formulario_versiones fv WHERE fv.fv_frm_id = f.frm_id), 1)) AS formulario_version
-      FROM formularios f
-      WHERE f.frm_activo = 1
-      ORDER BY f.frm_id
+        f.frs_id,
+        f.frs_nombre,
+        f.frs_descripcion,
+        ISNULL(f.frs_version_activa, ISNULL((SELECT MAX(fv.fv_numero) FROM Formulario_versiones fv WHERE fv.fv_frs_id = f.frs_id), 1)) AS formulario_version
+      FROM Formularios_solicitudes f
+      WHERE f.frs_activo = 1
+      ORDER BY f.frs_id
     `);
 
     return result[0] || null;
   }
 
-  async crear(nombre: string, descripcion?: string): Promise<Formulario> {
+  async crear(
+    nombre: string,
+    descripcion?: string,
+  ): Promise<Formularios_solicitudes> {
     const insertResult = await this.dataSource.query(
       `
-      INSERT INTO formularios (
-        frm_nombre,
-        frm_descripcion,
-        frm_activo,
+      INSERT INTO Formularios_solicitudes (
+        frs_nombre,
+        frs_descripcion,
+        frs_activo,
         created_at,
         updated_at
       )
       OUTPUT
-        INSERTED.frm_id,
-        INSERTED.frm_nombre,
-        INSERTED.frm_descripcion,
-        INSERTED.frm_activo,
+        INSERTED.frs_id,
+        INSERTED.frs_nombre,
+        INSERTED.frs_descripcion,
+        INSERTED.frs_activo,
         INSERTED.created_at
       VALUES (
         @0,
@@ -127,7 +132,7 @@ export class FormulariosService {
     await this.dataSource.query(
       `
       INSERT INTO Formulario_versiones (
-        fv_frm_id,
+        fv_frs_id,
         fv_numero,
         fv_cambios,
         fv_descripcion,
@@ -143,7 +148,7 @@ export class FormulariosService {
         SYSDATETIME()
       )
     `,
-      [nuevoFormulario.frm_id],
+      [nuevoFormulario.frs_id],
     );
 
     return {
@@ -155,7 +160,7 @@ export class FormulariosService {
 
   async eliminar(formularioId: number): Promise<boolean> {
     const existe = await this.dataSource.query(
-      `SELECT frm_id, frm_activo FROM formularios WHERE frm_id = @0`,
+      `SELECT frs_id, frs_activo FROM Formularios_solicitudes WHERE frs_id = @0`,
       [formularioId],
     );
 
@@ -163,7 +168,7 @@ export class FormulariosService {
       return false;
     }
 
-    if (existe[0].frm_activo) {
+    if (existe[0].frs_activo) {
       throw new Error(
         'No se puede eliminar el formulario activo. Actívalo desde otro formulario primero.',
       );
@@ -174,7 +179,7 @@ export class FormulariosService {
       SELECT COUNT(*) AS total
       FROM solicitudes
       WHERE sol_formulario_version IN (
-        SELECT fv_numero FROM Formulario_versiones WHERE fv_frm_id = @0
+        SELECT fv_numero FROM Formulario_versiones WHERE fv_frs_id = @0
       )
       `,
       [formularioId],
@@ -197,25 +202,26 @@ export class FormulariosService {
         WHERE fpo_fp_id IN (
           SELECT fp_id
           FROM Formulario_pregunta
-          WHERE frm_id = @0
+          WHERE fp_frs_id = @0
         )
       `,
         [formularioId],
       );
 
       await queryRunner.query(
-        `DELETE FROM Formulario_pregunta WHERE frm_id = @0`,
+        `DELETE FROM Formulario_pregunta WHERE fp_frs_id = @0`,
         [formularioId],
       );
 
       await queryRunner.query(
-        `DELETE FROM Formulario_versiones WHERE fv_frm_id = @0`,
+        `DELETE FROM Formulario_versiones WHERE fv_frs_id = @0`,
         [formularioId],
       );
 
-      await queryRunner.query(`DELETE FROM formularios WHERE frm_id = @0`, [
-        formularioId,
-      ]);
+      await queryRunner.query(
+        `DELETE FROM Formularios_solicitudes WHERE frs_id = @0`,
+        [formularioId],
+      );
 
       await queryRunner.commitTransaction();
       return true;
@@ -231,12 +237,12 @@ export class FormulariosService {
     const formulario = await this.dataSource.query(
       `
       SELECT
-        frm_id,
-        frm_nombre,
-        frm_activo,
-        ISNULL(frm_version_activa, ISNULL((SELECT MAX(fv_numero) FROM Formulario_versiones WHERE fv_frm_id = @0), 1)) AS formulario_version
-      FROM formularios
-      WHERE frm_id = @0
+        frs_id,
+        frs_nombre,
+        frs_activo,
+        ISNULL(frs_version_activa, ISNULL((SELECT MAX(fv_numero) FROM Formulario_versiones WHERE fv_frs_id = @0), 1)) AS formulario_version
+      FROM Formularios_solicitudes
+      WHERE frs_id = @0
     `,
       [formularioId],
     );
@@ -253,7 +259,7 @@ export class FormulariosService {
         ISNULL(fv_descripcion, fv_cambios) AS version_descripcion,
         ISNULL(fv_created_at, fv_fecha_cambio) AS created_at,
         ISNULL(fv_created_by, fv_usr_id_cambio) AS created_by,
-        (SELECT COUNT(*) FROM Formulario_pregunta WHERE frm_id = @0 AND ISNULL(fp_version, 1) = fv_numero) AS total_preguntas,
+        (SELECT COUNT(*) FROM Formulario_pregunta WHERE fp_frs_id = @0 AND ISNULL(fp_version, 1) = fv_numero) AS total_preguntas,
         -- Necesita este conteo por CADA versión a la vez, así que va inline
         -- como subquery correlacionada en vez de llamar a
         -- contarSolicitudesQueBloqueanVersion() (./version-formulario.util)
@@ -262,7 +268,7 @@ export class FormulariosService {
         -- regla de negocio, ver el comentario ahí para el porqué.
         (SELECT COUNT(*) FROM solicitudes WHERE sol_formulario_version = fv_numero AND sol_ses_id <> 1) AS total_solicitudes
       FROM Formulario_versiones
-      WHERE fv_frm_id = @0
+      WHERE fv_frs_id = @0
       ORDER BY fv_numero DESC
     `,
       [formularioId],
@@ -279,9 +285,9 @@ export class FormulariosService {
     // nunca actualizaba nada (fallaba con "Invalid column name") y por eso
     // "versión activa" en toda la app siempre terminaba siendo, sin que
     // nadie lo pudiera cambiar, la más reciente creada. La columna real es
-    // frm_version_activa (migración 20260718_agregar_frm_version_activa).
+    // frs_version_activa (migración 20260718_agregar_frs_version_activa).
     const existe = await this.dataSource.query(
-      `SELECT 1 AS existe FROM Formulario_versiones WHERE fv_frm_id = @0 AND fv_numero = @1`,
+      `SELECT 1 AS existe FROM Formulario_versiones WHERE fv_frs_id = @0 AND fv_numero = @1`,
       [formularioId, versionNumero],
     );
     if (existe.length === 0) {
@@ -309,9 +315,9 @@ export class FormulariosService {
 
     await this.dataSource.query(
       `
-      UPDATE formularios
-      SET frm_version_activa = @1
-      WHERE frm_id = @0
+      UPDATE Formularios_solicitudes
+      SET frs_version_activa = @1
+      WHERE frs_id = @0
     `,
       [formularioId, versionNumero],
     );
@@ -324,15 +330,15 @@ export class FormulariosService {
 
   async eliminarVersion(formularioId: number, versionNumero: number) {
     // "versión activa" = la fijada a mano con activarVersion
-    // (frm_version_activa), o si nadie la fijó, la más reciente creada —
+    // (frs_version_activa), o si nadie la fijó, la más reciente creada —
     // mismo criterio que obtenerActivo/listar/obtenerVersiones.
     const formulario = await this.dataSource.query(
       `
       SELECT
-        frm_id,
-        ISNULL(frm_version_activa, ISNULL((SELECT MAX(fv_numero) FROM Formulario_versiones WHERE fv_frm_id = frm_id), 1)) AS formulario_version
-      FROM formularios
-      WHERE frm_id = @0
+        frs_id,
+        ISNULL(frs_version_activa, ISNULL((SELECT MAX(fv_numero) FROM Formulario_versiones WHERE fv_frs_id = frs_id), 1)) AS formulario_version
+      FROM Formularios_solicitudes
+      WHERE frs_id = @0
       `,
       [formularioId],
     );
@@ -367,7 +373,7 @@ export class FormulariosService {
         WHERE fpo_fp_id IN (
           SELECT fp_id
           FROM Formulario_pregunta
-          WHERE frm_id = @0 AND ISNULL(fp_version, 1) = @1
+          WHERE fp_frs_id = @0 AND ISNULL(fp_version, 1) = @1
         )
       `,
         [formularioId, versionNumero],
@@ -376,7 +382,7 @@ export class FormulariosService {
       await queryRunner.query(
         `
         DELETE FROM Formulario_pregunta
-        WHERE frm_id = @0 AND ISNULL(fp_version, 1) = @1
+        WHERE fp_frs_id = @0 AND ISNULL(fp_version, 1) = @1
       `,
         [formularioId, versionNumero],
       );
@@ -384,7 +390,7 @@ export class FormulariosService {
       await queryRunner.query(
         `
         DELETE FROM Formulario_versiones
-        WHERE fv_frm_id = @0 AND fv_numero = @1
+        WHERE fv_frs_id = @0 AND fv_numero = @1
       `,
         [formularioId, versionNumero],
       );
@@ -455,14 +461,14 @@ export class FormulariosService {
       `
         SELECT ISNULL(MAX(fv_numero), 0) as max_version
         FROM Formulario_versiones
-        WHERE fv_frm_id = @0
+        WHERE fv_frs_id = @0
       `,
       [formularioId],
     );
 
     const nuevoNumeroVersion = maxVersionResult[0].max_version + 1;
 
-    const insertColumns = ['fv_frm_id', 'fv_numero'];
+    const insertColumns = ['fv_frs_id', 'fv_numero'];
     const insertValues = ['@0', '@1'];
     const params: any[] = [formularioId, nuevoNumeroVersion];
 
@@ -537,7 +543,7 @@ export class FormulariosService {
   //
   // Antes esto tenía una lista de columnas a mano (~12 de las ~25 que
   // tiene la tabla) — cualquier columna agregada después (fp_codigo,
-  // fp_tabla_columnas, fp_catalogo_*, fp_tipo_documento_id,
+  // fp_tabla_columnas, fp_catalogo_*, fp_tdo_id,
   // fp_oculto_en_formulario, ...) quedaba afuera en silencio: una pregunta
   // tipo tabla perdía sus columnas, un CATALOGO perdía el vínculo a su
   // tabla externa, una pregunta oculta (ver fp_oculto_en_formulario) volvía
@@ -565,7 +571,7 @@ export class FormulariosService {
       `
         SELECT fp_id, ${columnasACopiar.map((c) => `[${c}]`).join(', ')}
         FROM Formulario_pregunta
-        WHERE frm_id = @0 AND ISNULL(fp_version, 1) = @1
+        WHERE fp_frs_id = @0 AND ISNULL(fp_version, 1) = @1
       `,
       [formularioId, versionOrigen],
     );
@@ -708,7 +714,7 @@ export class FormulariosService {
           `
         SELECT
           fp_id,
-          frm_id,
+          fp_frs_id,
           fp_descripcion,
           fp_tipo,
           fp_subtipo,
@@ -727,7 +733,7 @@ export class FormulariosService {
           fp_catalogo_tabla,
           fp_catalogo_columna,
           fp_catalogo_pk_column,
-          fp_tipo_documento_id,
+          fp_tdo_id,
           fp_precarga_fuente,
           fp_precarga_campo_cliente,
           fp_tabla_columnas,
@@ -736,7 +742,7 @@ export class FormulariosService {
           fp_tabla_limite_pregunta_id,
           fp_tabla_limite_reglas
         FROM Formulario_pregunta
-        WHERE frm_id = @0
+        WHERE fp_frs_id = @0
           AND fp_version = @1
           AND fp_estado = 1
         ORDER BY fp_orden ASC
@@ -795,10 +801,13 @@ export class FormulariosService {
       );
     }
 
-    const preguntasConOpciones = preguntas.map((p: { fp_id: number }) => ({
-      ...p,
-      opciones: opcionesPorPregunta.get(p.fp_id) || [],
-    }));
+    const preguntasConOpciones = preguntas.map(
+      (p: { fp_id: number; fp_frs_id: number | null }) => ({
+        ...p,
+        frs_id: p.fp_frs_id,
+        opciones: opcionesPorPregunta.get(p.fp_id) || [],
+      }),
+    );
 
     return {
       formulario: {

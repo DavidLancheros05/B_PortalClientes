@@ -358,7 +358,7 @@ export class NotificacionesService {
       `
       SELECT TOP 1
         s.sol_id,
-        s.sol_numero_solicitud AS numero_solicitud,
+        s.sol_numero AS numero_solicitud,
         s.sol_ses_id,
         s.sol_fecha_creacion AS fecha_creacion,
         s.sol_cupo_aprobado AS cupo_aprobado,
@@ -540,7 +540,7 @@ export class NotificacionesService {
       `
       SELECT TOP 1
         s.sol_id,
-        s.sol_numero_solicitud AS numero_solicitud,
+        s.sol_numero AS numero_solicitud,
         s.sol_fecha_creacion AS fecha_creacion,
         c.cli_razon_social AS cliente_nombre,
         u.usr_correo AS ejecutivo_email,
@@ -594,7 +594,7 @@ export class NotificacionesService {
       `
       SELECT TOP 1
         s.sol_id,
-        s.sol_numero_solicitud AS numero_solicitud,
+        s.sol_numero AS numero_solicitud,
         c.cli_razon_social AS cliente_nombre,
         u.usr_correo AS ejecutivo_email,
         u.usr_nombre AS ejecutivo_nombre,
@@ -821,7 +821,7 @@ export class NotificacionesService {
 
     const rows = await this.dataSource.query(`
       SELECT
-        s.sol_numero_solicitud AS numero_solicitud,
+        s.sol_numero AS numero_solicitud,
         COALESCE(c.cli_razon_social, '-') AS cliente_nombre,
         sa.sa_nombre_original,
         sa.sa_fecha_vencimiento,

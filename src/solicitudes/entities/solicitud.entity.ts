@@ -38,8 +38,8 @@ export class SolicitudEntity {
   @JoinColumn({ name: 'sol_wee_id' })
   sol_wee_id: WorkflowResultadoEntity;
 
-  @Column({ name: 'sol_numero_solicitud', type: 'varchar', length: 30 })
-  sol_numero_solicitud: string;
+  @Column({ name: 'sol_numero', type: 'varchar', length: 30 })
+  sol_numero: string;
 
   @Column({ name: 'sol_version', type: 'int' })
   sol_version: number;
@@ -88,13 +88,6 @@ export class SolicitudEntity {
 
   @Column({ name: 'sol_fecha_envio', type: 'datetime2', nullable: true })
   sol_fecha_envio: Date | null;
-
-  @Column({
-    name: 'sol_fecha_estimada_respuesta_comercial',
-    type: 'date',
-    nullable: true,
-  })
-  sol_fecha_estimada_respuesta_comercial: Date | null;
 
   // Fecha real de la aprobación final en Comité de Crédito 2 — a diferencia
   // de sol_fecha_gest_cc2 (que se pisa también en rechazo), esta

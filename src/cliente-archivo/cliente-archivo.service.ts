@@ -41,14 +41,14 @@ export class ClienteArchivoService {
     const documentos = await queryRunner.query(
       `SELECT sa.sa_id, sa.sa_nombre_original, sa.sa_ruta_almacenamiento,
               sa.sa_tipo_mime, sa.sa_resource_type, sa.sa_fecha_emision, sa.sa_fecha_vencimiento,
-              fp.fp_tipo_documento_id AS tdo_id, td.tdo_nombre
+              fp.fp_tdo_id AS tdo_id, td.tdo_nombre
        FROM Solicitud_archivo sa
        JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
-       JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tipo_documento_id
+       JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tdo_id
        WHERE sa.sa_sol_id = @0
          AND sa.sa_estado = 'activo'
          AND ISNULL(sa.sa_requiere_cambio, 0) = 0
-         AND fp.fp_tipo_documento_id IS NOT NULL`,
+         AND fp.fp_tdo_id IS NOT NULL`,
       [solicitudId],
     );
 
@@ -183,7 +183,7 @@ export class ClienteArchivoService {
     }
 
     const [solicitud] = await this.dataSource.query(
-      `SELECT sol_cli_id, sol_numero_solicitud FROM solicitudes WHERE sol_id = @0`,
+      `SELECT sol_cli_id, sol_numero FROM solicitudes WHERE sol_id = @0`,
       [solicitudId],
     );
     if (!solicitud) {
@@ -198,7 +198,7 @@ export class ClienteArchivoService {
     const carpetaBase = await this.carpetaAlmacenamiento.obtenerBase(
       TIPO_ARCHIVO_URLS.SOLICITUDES,
     );
-    const carpetaDestino = `${carpetaBase}formularios/${solicitud.sol_numero_solicitud}`;
+    const carpetaDestino = `${carpetaBase}formularios/${solicitud.sol_numero}`;
 
     const duplicado = await this.storageService.duplicate(
       documentoCliente.ca_ruta_almacenamiento,

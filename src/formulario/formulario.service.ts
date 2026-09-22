@@ -14,7 +14,7 @@ export class FormularioService {
         s.fs_orden
       FROM Formulario_secciones s
       INNER JOIN Formulario_pregunta fp ON fp.seccion_id = s.fs_id
-      WHERE fp.frm_id = @0
+      WHERE fp.fp_frs_id = @0
         AND s.fs_activo = 1
         AND fp.fp_estado = 1
       GROUP BY
@@ -51,12 +51,12 @@ export class FormularioService {
         fp.fp_catalogo_base_datos,
         fp.fp_catalogo_tabla,
         fp.fp_catalogo_columna,
-        fp.fp_tipo_documento_id,
+        fp.fp_tdo_id,
         fp.fp_precarga_fuente,
         fp.fp_precarga_campo_cliente,
         fp.fp_version
        FROM Formulario_pregunta fp
-       WHERE fp.frm_id = @0
+      WHERE fp.fp_frs_id = @0
          AND fp.fp_estado = 1
        ORDER BY fp.seccion_id, fp.fp_orden`,
       [formularioId],

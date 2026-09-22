@@ -10,7 +10,7 @@
 // fp_codigo esté protegido es que hay código en otro archivo
 // (ampliacion-cupo.service.ts, solicitudes-workflow.service.ts,
 // cliente-datos-normalizados.service.ts, etc.) que lo busca a mano — agregar
-// o quitar una fila de la tabla sin tocar ese código (o viceversa) deja la
+// o Eliminar una fila de la tabla sin tocar ese código (o viceversa) deja la
 // protección desincronizada de la realidad.
 //
 // Cache en memoria con TTL corto: evita pegarle a la BD en cada

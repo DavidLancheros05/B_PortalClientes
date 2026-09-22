@@ -50,19 +50,8 @@ export class SolicitudesController {
     private readonly documentosService: SolicitudesDocumentosService,
     private readonly formularioRenderizableService: FormularioRenderizableService,
     private readonly clienteArchivoService: ClienteArchivoService,
-  ) {
-    console.log('🟣 [SOLICITUDES-CONTROLLER] ✅ Controlador inicializado');
-  }
+  ) {}
 
-  // El payload del JWT reutiliza el campo `usr_id` para el id de quien
-  // sea que esté logueado (ver AuthService.loginCliente en auth.service.ts):
-  // para un usuario interno es un usuarios.usr_id real, pero para un
-  // cliente es en realidad su cli_id. Columnas como sol_usr_id_modifica
-  // tienen FK a Usuarios — pasarles el usr_id de un cliente tal cual
-  // revienta con "conflicted with the FOREIGN KEY constraint" (encontrado
-  // en vivo: PATCH :id/estado fallaba así para cualquier cliente enviando
-  // su solicitud). Solo un usuario interno puede quedar registrado como
-  // quien modificó una solicitud; para un cliente, null (columna nullable).
   private resolverUsuarioIdParaAuditoria(
     user: { usr_id?: number; id?: number; tipo?: string } | undefined,
   ): number | null {
@@ -84,14 +73,6 @@ export class SolicitudesController {
       };
     },
   ) {
-    // Un CLIENTE solo puede crear solicitudes para sí mismo — sin esto,
-    // cualquiera con JWT válido podía mandar el cliente_id de otro cliente
-    // en el body. Personal interno (rol != CLIENTE) no tiene esta
-    // restricción, igual que en getMisDocumentos (línea 430) y en
-    // cliente-archivo.controller.ts. El throw va FUERA del try/catch de
-    // abajo a propósito: ese catch atrapa todo y responde 200 con
-    // {ok:false}, lo que convertiría este 403 real en un error silencioso
-    // para el frontend.
     const propioClienteId = req.user?.cliente_id ?? req.user?.cli_id;
     if (
       req.user?.rol === 'CLIENTE' &&
@@ -102,10 +83,6 @@ export class SolicitudesController {
       );
     }
 
-    // Mismo criterio que el bloque de arriba, pero para EJECUTIVO: el
-    // frontend ya filtra el selector de cliente a los suyos (ver
-    // nueva/page.tsx), pero eso es solo UX — sin este chequeo, un EJECUTIVO
-    // podía mandar el cliente_id de otro ejecutivo directo al API.
     if (req.user?.rol === 'EJECUTIVO') {
       const esSuCliente = await this.solicitudesService.clienteEsDelEjecutivo(
         Number(dto?.cliente_id),
@@ -172,10 +149,9 @@ export class SolicitudesController {
 
   @Get('parametros/dias-respuesta')
   async getDiasRespuesta(): Promise<ParamDiasRespuestaResponseDto[]> {
-    console.log('✅ [getDiasRespuesta] Endpoint llamado');
     try {
       const dias = await this.solicitudesService.getDiasRespuesta();
-      console.log('✅ [getDiasRespuesta] Datos obtenidos:', dias);
+
       return dias;
     } catch (error) {
       console.error('❌ [getDiasRespuesta] Error:', error);
@@ -202,7 +178,7 @@ export class SolicitudesController {
       const solicitudes =
         await this.listadosService.obtenerSolicitudesPorCliente(clienteId);
       const resultado = solicitudes.slice(0, limitNum);
-      console.log(`Se encontraron ${resultado.length} solicitudes`);
+
       return resultado;
     } catch (error) {
       console.error('Error en ultimasSolicitudes:', error);
@@ -227,7 +203,7 @@ export class SolicitudesController {
     return {
       respuestas,
       sol_id: ultima.sol_id,
-      sol_numero_solicitud: ultima.sol_numero_solicitud,
+      sol_numero: ultima.sol_numero,
     };
   }
 
@@ -280,7 +256,7 @@ export class SolicitudesController {
         : [];
     return {
       sol_id: ultima.sol_id,
-      sol_numero_solicitud: ultima.sol_numero_solicitud,
+      sol_numero: ultima.sol_numero,
       sol_ses_id: Number(ultima.sol_ses_id),
       sol_fecha_creacion: ultima.sol_fecha_creacion,
       sol_fecha_envio: ultima.sol_fecha_envio,
@@ -304,7 +280,7 @@ export class SolicitudesController {
       );
     return {
       sol_id: ultima.sol_id,
-      sol_numero_solicitud: ultima.sol_numero_solicitud,
+      sol_numero: ultima.sol_numero,
       sol_ses_id: Number(ultima.sol_ses_id),
       sol_fecha_creacion: ultima.sol_fecha_creacion,
       sol_fecha_envio: ultima.sol_fecha_envio,
@@ -376,27 +352,15 @@ export class SolicitudesController {
     @Param('ejecutivoId', ParseIntPipe) ejecutivoId: number,
     @Query('verComoEjecutivo') verComoEjecutivo?: string,
   ) {
-    console.log('📥 Endpoint ejecutado');
-    console.log('👉 ejecutivoId recibido:', ejecutivoId);
-
-    // `verComoEjecutivo` es el ejng_id (no el usr_id) de OTRO ejecutivo a
-    // consultar — lo usa un usuario con permiso de editar sobre esta página
-    // que no es él mismo un Ejecutivo de Negocios (ver
-    // gestion-ejecutivo-negocios/page.tsx del frontend).
     const data =
       await this.listadosService.getSolicitudesPendientesPorEjecutivoId(
         ejecutivoId,
         verComoEjecutivo ? Number(verComoEjecutivo) : undefined,
       );
 
-    console.log('📤 Resultado:', data);
-
     return data;
   }
 
-  // Bandeja del ejecutivo: solicitudes rechazadas de forma definitiva por
-  // Oficial de Cumplimiento o Comité de Crédito 2, pendientes de que él
-  // gestione el seguimiento con el cliente por fuera del sistema.
   @Get('ejecutivo/:ejecutivoId/rechazadas')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('EJECUTIVO', 'ADMIN')
@@ -426,7 +390,6 @@ export class SolicitudesController {
     @Query('usr_id') usr_id?: string,
   ) {
     try {
-
       const usuarioId = usr_id ? Number(usr_id) : undefined;
       const result = await this.documentosService.getDocumentos(
         mode,
@@ -454,14 +417,6 @@ export class SolicitudesController {
     @Query('clienteId') clienteIdParam?: string,
   ) {
     try {
-      // Personal interno (rol != CLIENTE) puede pasar solicitudId para
-      // gestionar los documentos de un cliente en su nombre (ej. modo de
-      // solución "Auxiliar Actualiza" — ver corregir-formulario-asc), o
-      // clienteId cuando entra sin ese contexto (ej. desde el menú) y elige
-      // un cliente en el selector de la página — ver la última solicitud de
-      // ESE cliente, no la del usuario logueado. Un CLIENTE nunca puede
-      // usar ninguno de los dos para ver otra solicitud que no sea la
-      // propia.
       const esStaff = Boolean(req.user?.rol) && req.user.rol !== 'CLIENTE';
       const solicitud =
         esStaff && solicitudIdParam
@@ -490,30 +445,12 @@ export class SolicitudesController {
         };
       }
 
-      // Estas tres consultas son independientes entre sí (todas parten solo
-      // de `solicitud`, ya resuelta arriba) — antes se esperaban una por una
-      // en serie, sumando la latencia de red de cada ida y vuelta a la BD
-      // remota. Corriéndolas en paralelo, el tiempo total es el de la más
-      // lenta de las tres, no la suma de las tres.
-      const [documentos, todosLosDiferidos, enEsperaDiferidos] =
-        await Promise.all([
-          this.documentosService.obtenerDocumentosConVigencia(solicitud.sol_id),
-          // Documentos "diferidos" (plantillas que se generan después de
-          // guardar la solicitud): mientras la solicitud siga en
-          // CLI+PEND_DOCS sin pasar a Ejecutivo de Negocios (ver
-          // solicitudes-workflow.service.ts), se muestra la sección completa
-          // — incluso si ya se subieron todos — porque el cliente aún debe
-          // pulsar "Enviar e informar a Cartonera" para que el estado
-          // avance (los archivos se suben de inmediato al seleccionarlos,
-          // pero eso no avanza el estado por sí solo).
-          this.workflowService.obtenerDocumentosDiferidos(solicitud.sol_id),
-          this.workflowService.solicitudEnEsperaDocumentosDiferidos(solicitud),
-        ]);
-      // Rechazado en Auxiliar Servicio Cliente: Etapa ASC(3) + Resultado
-      // RECHAZADO(3), sin importar el estado (2=PENDIENTE si el modo de
-      // solución fue "Cliente Actualiza", 3=REVISIÓN si fue "Auxiliar
-      // Actualiza" — ver modo-solucion-rechazo-asc.md). Misma condición de
-      // etapa+resultado que usa aprobarRechazarSolicitud para llegar acá.
+      const [documentos, todosLosDiferidos] = await Promise.all([
+        this.documentosService.obtenerDocumentosConVigencia(solicitud.sol_id),
+
+        this.workflowService.obtenerDocumentosDiferidos(solicitud.sol_id),
+      ]);
+
       const enRechazoASC =
         Number(solicitud.sol_wet_id) === 3 &&
         Number(solicitud.sol_wee_id) === 3;
@@ -522,16 +459,15 @@ export class SolicitudesController {
         ? enRechazoASC
         : [1, 2].includes(Number(solicitud.sol_ses_id));
 
-      // Restringe la edición a solo los documentos marcados/vencidos (en
-      // vez de dejar todo editable) — aplica tanto si es el cliente
-      // corrigiendo (modo_solucion='cliente_actualiza', estado=2) como si es
-      // el auxiliar corrigiendo en su nombre (modo_solucion=
-      // 'auxiliar_actualiza', estado=3, solo alcanzable acá vía solicitudId).
       const rechazadoPorAuxiliar = esStaff
         ? enRechazoASC
         : Number(solicitud.sol_ses_id) === 2 && enRechazoASC;
 
-      const documentosDiferidos = enEsperaDiferidos ? todosLosDiferidos : [];
+      // La sección debe seguir mostrando los documentos generados ya
+      // guardados, incluso después de que la solicitud deje de estar en
+      // PEND_FIRMA. El estado de workflow decide si puede avanzar; no debe
+      // hacer desaparecer el historial visual de los archivos.
+      const documentosDiferidos = todosLosDiferidos;
 
       return {
         solicitud,
@@ -549,13 +485,6 @@ export class SolicitudesController {
     }
   }
 
-  // Nombre/cédula del representante legal principal, para rellenar la
-  // plantilla de cualquier documento con tdo_tiene_plantilla desde Mis
-  // Documentos (mismo dato que usa el formulario en vivo, tomado de la
-  // pregunta TABLA "Representante legal..."). Requiere reconstruir el
-  // formulario renderizable completo (costoso) — por eso vive en un
-  // endpoint aparte, pedido solo cuando el cliente pulsa "Descargar
-  // plantilla", en vez de bloquear la carga inicial de Mis Documentos.
   @Get(':id/representante-legal')
   @UseGuards(JwtAuthGuard)
   async getRepresentanteLegal(
@@ -795,11 +724,6 @@ export class SolicitudesController {
     }
   }
 
-  // Versión liviana de formulario-renderizable: resuelve solo las preguntas
-  // pedidas por fp_codigo (query param repetible ?codigo=A&codigo=B), en vez
-  // de las ~85-100 del formulario completo. Usado por el bloque "Solicita
-  // cupo de crédito" de las pantallas de gestión, que antes esperaba el
-  // render completo del formulario solo para leer 4 valores.
   @Get(':id/respuestas-por-codigo')
   async getRespuestasPorCodigo(
     @Param('id', ParseIntPipe) id: number,
@@ -1137,7 +1061,6 @@ export class SolicitudesController {
   @Post('respuestas')
   async guardarRespuesta(@Body() dto: any) {
     try {
-      console.log('POST /solicitudes/respuestas - Body:', dto);
       const resultado = await this.respuestasService.guardarRespuesta(dto);
       return {
         ok: true,
@@ -1171,20 +1094,6 @@ export class SolicitudesController {
     },
   ) {
     try {
-      console.log(
-        '🔴 POST /solicitudes/respuestas/archivo - DTO completo:',
-        JSON.stringify(dto),
-      );
-      console.log(
-        '🔴 POST /solicitudes/respuestas/archivo - fechaEmision en DTO:',
-        dto?.fechaEmision || 'NO ENCONTRADA',
-      );
-      console.log('🔴 POST /solicitudes/respuestas/archivo - File:', {
-        originalname: file?.originalname,
-        size: file?.size,
-        mimetype: file?.mimetype,
-      });
-
       if (!file) {
         throw new BadRequestException('No se proporcionó ningún archivo');
       }
@@ -1268,11 +1177,7 @@ export class SolicitudesController {
     },
   ) {
     try {
-      console.log('📅 PATCH /solicitudes/:id/respuestas/documento/fecha:', {
-        id,
-        fp_id: body.fp_id,
-        fechaEmision: body.fechaEmision,
-      });
+
       await this.documentosService.verificarAccesoSolicitud(id, req.user);
       return await this.respuestasService.actualizarFechaDocumento(
         id,
@@ -1291,10 +1196,6 @@ export class SolicitudesController {
     }
   }
 
-  // Sin @RequierePermiso a propósito, mismo caso que resultado-pendiente
-  // arriba: lo llama el propio CLIENTE al enviar su solicitud
-  // (FRONTEND/src/services/solicitudes.service.ts::guardarSolicitud, pasa
-  // a ESTADO_SOLICITUD.PENDIENTE) — autoservicio, no acción administrativa.
   @Patch(':id/estado')
   @UseGuards(JwtAuthGuard)
   @SoloAutenticado()
@@ -1313,6 +1214,32 @@ export class SolicitudesController {
   // (FRONTEND/src/services/solicitudes.service.ts::guardarSolicitud,
   // rama isCorrecionASC) — es autoservicio sobre su propia solicitud, no
   // una acción administrativa que deba restringirse por módulo/rol.
+  @Patch(':id/reiniciar-edicion')
+  @UseGuards(JwtAuthGuard)
+  @SoloAutenticado()
+  async reiniciarEdicionSolicitud(
+    @Param('id', ParseIntPipe) id: number,
+    @Req()
+    req: Request & { user: { usr_id?: number; id?: number; tipo?: string } },
+  ) {
+    try {
+      console.log(
+        `[reiniciarEdicionSolicitud] Reiniciando solicitud ${id} para re-firmar documentos`,
+      );
+      const usuarioId = this.resolverUsuarioIdParaAuditoria(req.user);
+      return await this.workflowService.reiniciarEdicionSolicitud(
+        id,
+        usuarioId,
+      );
+    } catch (error: any) {
+      console.error(
+        '[reiniciarEdicionSolicitud] Error:',
+        error.message || error,
+      );
+      throw new HttpException(error.message || 'Error interno', 500);
+    }
+  }
+
   @Patch(':id/resultado-pendiente')
   @UseGuards(JwtAuthGuard)
   @SoloAutenticado()
@@ -1388,18 +1315,12 @@ export class SolicitudesController {
         aprobado,
         motivo_rechazo_id,
         modo_solucion,
-        fecha_estimada_respuesta_comercial,
         documentos_faltantes,
       } = body;
 
       if (aprobado === undefined) {
         throw new Error('aprobado es requerido');
       }
-
-      // Convertir strings de fecha a Date
-      const fechaEstimada = fecha_estimada_respuesta_comercial
-        ? new Date(fecha_estimada_respuesta_comercial)
-        : undefined;
 
       const usuario_modifica = req.user.usr_id;
 
@@ -1408,7 +1329,6 @@ export class SolicitudesController {
         aprobado,
         motivo_rechazo_id,
         modo_solucion,
-        fechaEstimada,
         usuario_modifica,
         Array.isArray(documentos_faltantes) ? documentos_faltantes : undefined,
       );
@@ -1679,12 +1599,6 @@ export class SolicitudesController {
     }
   }
 
-  // Confirmado (2026-09-13) que ningún page/hook/componente del frontend
-  // llama esto hoy (solo existe como wrapper sin uso en
-  // workflow-solicitudes.service.ts) — permite forzar
-  // estado/etapa/resultado directamente por parámetro, saltándose el motor
-  // de transiciones. Sin un caller real que dicte el rol correcto, se
-  // restringe a ADMIN en vez de dejarlo abierto a cualquier autenticado.
   @Put(':id/estado-flujo')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN')
@@ -1745,11 +1659,7 @@ export class SolicitudesController {
   @Get(':id')
   async obtenerSolicitud(@Param('id', ParseIntPipe) id: number) {
     try {
-      console.log(`📋 [CONTROLLER] GET /solicitudes/${id}`);
       const result = await this.documentosService.obtenerSolicitud(id);
-      console.log(
-        `✅ [CONTROLLER] Resultado: ${result ? 'solicitud encontrada' : 'no encontrada'}`,
-      );
       return result;
     } catch (error) {
       console.error(`❌ [CONTROLLER] Error en GET :id (${id}):`, error);

@@ -1,7 +1,7 @@
 export class SolicitudListadoGestionDto {
   // Identificación
   sol_id: number;
-  sol_numero_solicitud: string;
+  sol_numero: string;
 
   // Cliente
   sol_cli_id: number;
@@ -37,9 +37,6 @@ export class SolicitudListadoGestionDto {
 
   // Versión
   sol_formulario_version?: number;
-
-  // Timeline: Respuesta Comercial
-  sol_fecha_estimada_respuesta_comercial?: Date;
 
   // Timeline: Oficial Cumplimiento
   sol_fecha_est_gest_oc?: Date;

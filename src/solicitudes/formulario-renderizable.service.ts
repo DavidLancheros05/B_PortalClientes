@@ -56,7 +56,7 @@ export interface TablaPersonaResuelta {
 
 export interface FormularioRenderable {
   sol_id: number;
-  sol_numero_solicitud: string;
+  sol_numero: string;
   cliente_nombre: string;
   formulario_nombre: string;
   formulario_version: number;
@@ -78,7 +78,7 @@ export class FormularioRenderizableService {
     const [solicitud, respuestas, archivosResult] = await Promise.all([
       this.dataSource.query(
         `SELECT
-        sol_id, sol_numero_solicitud, cli_razon_social, sol_fecha_envio,
+        sol_id, sol_numero, cli_razon_social, sol_fecha_envio,
         sol_formulario_version
       FROM solicitudes s
       LEFT JOIN Clientes c ON c.cli_id = s.sol_cli_id
@@ -141,7 +141,7 @@ export class FormularioRenderizableService {
     }
 
     const {
-      sol_numero_solicitud,
+      sol_numero,
       cli_razon_social,
       sol_fecha_envio,
       sol_formulario_version,
@@ -150,13 +150,13 @@ export class FormularioRenderizableService {
 
     // 3. Obtener formulario ID
     const formResult = await this.dataSource.query(
-      `SELECT fv_frm_id FROM Formulario_versiones
-       WHERE fv_numero = @0 AND fv_frm_id IN (
-         SELECT frm_id FROM formularios WHERE frm_activo = 1
+      `SELECT fv_frs_id FROM Formulario_versiones
+       WHERE fv_numero = @0 AND fv_frs_id IN (
+         SELECT frs_id FROM Formularios_solicitudes WHERE frs_activo = 1
        )`,
       [version],
     );
-    const formularioId = formResult[0]?.fv_frm_id;
+    const formularioId = formResult[0]?.fv_frs_id;
 
     // 4. Nombre del formulario y preguntas (ambas solo dependen de
     // formularioId/version, ya resueltos arriba — en paralelo).
@@ -165,7 +165,7 @@ export class FormularioRenderizableService {
     if (formularioId) {
       const [formNameResult, preguntasResult] = await Promise.all([
         this.dataSource.query(
-          `SELECT frm_nombre FROM formularios WHERE frm_id = @0`,
+          `SELECT frs_nombre FROM Formularios_solicitudes WHERE frs_id = @0`,
           [formularioId],
         ),
         this.dataSource.query(
@@ -186,7 +186,7 @@ export class FormularioRenderizableService {
             fp.fp_maximo,
             fp.fp_codigo
           FROM Formulario_pregunta fp
-          WHERE fp.frm_id = @0
+          WHERE fp.fp_frs_id = @0
             AND fp.fp_estado = 1
             AND fp.fp_version = @1
           ORDER BY fp.seccion_id, fp.fp_orden`,
@@ -194,7 +194,7 @@ export class FormularioRenderizableService {
         ),
       ]);
       // Limpiar: tomar solo la primera línea y remover espacios extras
-      const rawNombre = formNameResult[0]?.frm_nombre || 'Formulario';
+      const rawNombre = formNameResult[0]?.frs_nombre || 'Formulario';
       formularioNombre = rawNombre.split('\n')[0].trim();
       preguntas = preguntasResult;
     }
@@ -334,7 +334,7 @@ export class FormularioRenderizableService {
 
     return {
       sol_id: solicitudId,
-      sol_numero_solicitud,
+      sol_numero,
       cliente_nombre: cli_razon_social || 'N/A',
       formulario_nombre: formularioNombre,
       formulario_version: version,
@@ -342,16 +342,6 @@ export class FormularioRenderizableService {
     };
   }
 
-  // Resuelve solo un puñado de preguntas por fp_codigo — a diferencia de
-  // obtenerFormularioRenderizable, que resuelve las ~85-100 preguntas del
-  // formulario completo. Pensado para consumidores que solo necesitan 3-4
-  // respuestas puntuales (ej. el bloque "Solicita cupo de crédito" de las
-  // pantallas de gestión), donde esperar el render completo del formulario
-  // era la causa real de la demora. Reutiliza resolverValorRespuesta (misma
-  // lógica que ya usa el render completo) en vez de reimplementar el
-  // formateo — importante porque algunas preguntas tipo SELECT_TABLA (ej.
-  // FORMA_PAGO_SOLICITADA) resuelven su texto contra una tabla catálogo
-  // aparte, no contra Formulario_pregunta_opcion.
   async obtenerRespuestasPorCodigo(
     solicitudId: number,
     codigos: string[],
@@ -404,12 +394,6 @@ export class FormularioRenderizableService {
     });
   }
 
-  // Resuelve las 3 tablas KYC (persona por fila) que necesita la pantalla
-  // de Gestión Oficial de Cumplimiento — mismo espíritu liviano que
-  // obtenerRespuestasPorCodigo (no renderiza el formulario completo).
-  // representanteLegal/representantesSuplentes/accionistas se anclan por
-  // fp_codigo (estable en todas las versiones: REP_LEGAL_TABLA,
-  // REP_LEGAL_SUPLENTES, ACCIONISTAS_TABLA).
   async obtenerTablasCumplimiento(solicitudId: number): Promise<{
     representanteLegal: TablaPersonaResuelta | null;
     representantesSuplentes: TablaPersonaResuelta | null;
@@ -428,7 +412,7 @@ export class FormularioRenderizableService {
     const preguntas = await this.dataSource.query(
       `SELECT fp_id, fp_codigo, fp_tabla_columnas
        FROM Formulario_pregunta
-       WHERE frm_id = @0 AND fp_version = @1 AND fp_estado = 1
+       WHERE fp_frs_id = @0 AND fp_version = @1 AND fp_estado = 1
          AND fp_tipo = 'TABLA'
          AND fp_codigo IN ('REP_LEGAL_TABLA', 'REP_LEGAL_SUPLENTES', 'ACCIONISTAS_TABLA')`,
       [formularioId, version],
@@ -472,14 +456,14 @@ export class FormularioRenderizableService {
     const version = solicitud.sol_formulario_version || 1;
 
     const formResult = await this.dataSource.query(
-      `SELECT fv_frm_id FROM Formulario_versiones
-       WHERE fv_numero = @0 AND fv_frm_id IN (
-         SELECT frm_id FROM formularios WHERE frm_activo = 1
+      `SELECT fv_frs_id FROM Formulario_versiones
+       WHERE fv_numero = @0 AND fv_frs_id IN (
+         SELECT frs_id FROM Formularios_solicitudes WHERE frs_activo = 1
        )`,
       [version],
     );
 
-    return { formularioId: formResult[0]?.fv_frm_id ?? null, version };
+    return { formularioId: formResult[0]?.fv_frs_id ?? null, version };
   }
 
   private async resolverTablaPersona(

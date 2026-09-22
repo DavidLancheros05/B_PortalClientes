@@ -53,7 +53,7 @@ async function run() {
   const pendientes = await pool.request().query(`
     SELECT sa.sa_id, sa.sa_sol_id, sa.sa_nombre_original, sa.sa_nombre_guardado,
            sa.sa_tipo_mime, sa.sa_ruta_almacenamiento,
-           s.sol_numero_solicitud, co.cop_nombre,
+           s.sol_numero, co.cop_nombre,
            sa.sa_fp_id
     FROM Solicitud_archivo sa
     INNER JOIN solicitudes s ON sa.sa_sol_id = s.sol_id
@@ -77,12 +77,12 @@ async function run() {
       sa_nombre_guardado,
       sa_tipo_mime,
       sa_ruta_almacenamiento,
-      sol_numero_solicitud,
+      sol_numero,
       cop_nombre,
     } = fila;
 
     try {
-      const folder = `documentos-solicitudes/${cop_nombre}/formularios/${sol_numero_solicitud}`;
+      const folder = `documentos-solicitudes/${cop_nombre}/formularios/${sol_numero}`;
       const subida = await subirArchivo(
         sa_ruta_almacenamiento,
         folder,

@@ -117,7 +117,7 @@ export class SolicitudesService {
       // activas a la vez. Mismo criterio (estados 1/2/3) que ya usa
       // AmpliacionCupoService.create() para el mismo problema.
       const solicitudEnTramite = await queryRunner.query(
-        `SELECT TOP 1 sol_id, sol_numero_solicitud, sol_ses_id
+        `SELECT TOP 1 sol_id, sol_numero, sol_ses_id
          FROM solicitudes
          WHERE sol_cli_id = @0 AND sol_ses_id IN (1, 2, 3)
          ORDER BY sol_id DESC`,
@@ -133,7 +133,7 @@ export class SolicitudesService {
         const estadoTexto =
           nombresEstado[solicitudEnTramite[0].sol_ses_id] || 'en trámite';
         throw new Error(
-          `El cliente ya tiene una solicitud ${estadoTexto} (No. ${solicitudEnTramite[0].sol_numero_solicitud}). Complétala o resuélvela antes de crear una nueva.`,
+          `El cliente ya tiene una solicitud ${estadoTexto} (No. ${solicitudEnTramite[0].sol_numero}). Complétala o resuélvela antes de crear una nueva.`,
         );
       }
 
@@ -256,12 +256,12 @@ export class SolicitudesService {
 
       const formularioActivoResult = await queryRunner.query(`
         SELECT TOP 1 ISNULL(
-          f.frm_version_activa,
-          (SELECT MAX(fv.fv_numero) FROM Formulario_versiones fv WHERE fv.fv_frm_id = f.frm_id)
+          f.frs_version_activa,
+          (SELECT MAX(fv.fv_numero) FROM Formulario_versiones fv WHERE fv.fv_frs_id = f.frs_id)
         ) AS formulario_version
-        FROM formularios f
-        WHERE f.frm_activo = 1
-        ORDER BY f.frm_id
+        FROM Formularios_solicitudes f
+        WHERE f.frs_activo = 1
+        ORDER BY f.frs_id
       `);
       const formularioVersion = Number(
         formularioActivoResult?.[0]?.formulario_version ?? 1,
@@ -287,7 +287,7 @@ export class SolicitudesService {
           sol_cli_id, sol_ses_id,
           sol_fecha_creacion, sol_created_at,
           sol_updated_at, sol_version, sol_formulario_version, sol_usr_id_crea,
-          sol_numero_solicitud, sol_es_zona_franca,
+          sol_numero, sol_es_zona_franca,
           sol_ejng_id, sol_fecha_envio,
           sol_fecha_est_gest_ejn, sol_fecha_est_gest_asc,
           sol_fecha_est_gest_oc, sol_fecha_est_gest_cc1,
@@ -335,7 +335,7 @@ export class SolicitudesService {
       // DESPUÉS de guardar la solicitud, con el número de solicitud). Como
       // recién se está creando, ninguno puede estar subido todavía — si el
       // formulario de esta versión tiene alguno configurado, la solicitud
-      // se queda en CLI+PEND_DOCS en vez de pasar directo a EJN.
+      // se queda en CLI+PEND_FIRMA en vez de pasar directo a EJN.
       let documentosDiferidosFaltantes: {
         tdo_id: number;
         tdo_nombre: string;
@@ -349,7 +349,7 @@ export class SolicitudesService {
           `
           SELECT DISTINCT td.tdo_id, td.tdo_nombre
           FROM Formulario_pregunta fp
-          JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tipo_documento_id
+          JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tdo_id
           LEFT JOIN Formulario_secciones fs ON fs.fs_id = fp.seccion_id
           WHERE fp.fp_estado = 1
             AND td.tdo_tiene_plantilla = 1
@@ -367,7 +367,10 @@ export class SolicitudesService {
       let resultadoFinalId = resultadoPdId;
       if (hayDocumentosDiferidos) {
         const resultadoPendDocs = await queryRunner.query(
-          `SELECT wee_id FROM workflow_estado_etapa WHERE wee_codigo = 'PEND_DOCS'`,
+          `SELECT TOP 1 wee_id
+           FROM workflow_estado_etapa
+           WHERE wee_codigo IN ('PEND_FIRMA', 'PEND_FIRMA')
+           ORDER BY CASE wee_codigo WHEN 'PEND_FIRMA' THEN 0 ELSE 1 END`,
         );
         resultadoFinalId = resultadoPendDocs?.[0]?.wee_id ?? resultadoPdId;
       }
@@ -383,9 +386,7 @@ export class SolicitudesService {
         estadoId === 1
           ? 'Puedes terminar de modificar tu formulario cuando lo desees.'
           : hayDocumentosDiferidos
-            ? `Aún faltan generar y subir: ${documentosDiferidosFaltantes
-                .map((d) => d.tdo_nombre)
-                .join(', ')}.`
+            ? 'Faltan subir documentos firmados y enviar.'
             : 'Formulario y documentos cargados correctamente. Puedes editar hasta que Cartonera revise tu solicitud.';
 
       // 5.1 Parámetros en ARRAY en el ORDEN CORRECTO
@@ -424,7 +425,7 @@ export class SolicitudesService {
         null, // @17 motivo_rechazo_id
         null, // @18 usuario_modifica
         etapaActualId, // @19 sol_wet_id (CLI si BORRADOR, EJN si PENDIENTE)
-        resultadoFinalId, // @20 sol_wee_id (PENDIENTE, o PEND_DOCS si faltan documentos diferidos)
+        resultadoFinalId, // @20 sol_wee_id (PENDIENTE, o PEND_FIRMA si faltan documentos diferidos)
         observacionClienteInicial, // @21 sol_observacion_cliente
       ];
 
@@ -468,9 +469,7 @@ export class SolicitudesService {
       if (estadoId !== 1) {
         const etapaTransicion = estadoId === 2 ? etapaActualId : null;
         const mensajeTransicion = hayDocumentosDiferidos
-          ? `Solicitud registrada - faltan documentos por generar y subir: ${documentosDiferidosFaltantes
-              .map((d) => d.tdo_nombre)
-              .join(', ')}`
+          ? 'Solicitud registrada: faltan subir documentos firmados y enviar.'
           : 'Solicitud enviada a Ejecutivo de Negocios';
         if (etapaTransicion) {
           await this.historialWorkflowService.registrarTransicionConSLA(
@@ -1036,11 +1035,34 @@ export class SolicitudesService {
           9,
           helveticaBold,
         );
+
+        // La pregunta y su tabla forman una sola unidad visual. Reservar
+        // título + encabezado + primera fila antes de dibujar cualquiera de
+        // ellos evita dejar "Tabla de contactos" al final de una página y
+        // enviar la tabla real a la siguiente.
+        const filasConLineas = filas.map((fila) =>
+          columnas.map((columna) =>
+            wrapText(
+              String(fila[columna] ?? ''),
+              colWidth - cellPaddingX * 2,
+              fontSize,
+            ),
+          ),
+        );
+        const alturaPrimeraFila =
+          filasConLineas.length > 0
+            ? Math.max(...filasConLineas[0].map((lineas) => lineas.length), 1) *
+                9 +
+              6
+            : 0;
+        const alturaInicialTabla =
+          tituloLines.length * 11 + 3 + 14 + alturaPrimeraFila;
+        if (yPos - alturaInicialTabla < 100) {
+          currentPage = nuevaPagina();
+          yPos = bodyTopY;
+        }
+
         for (const line of tituloLines) {
-          if (yPos < 100) {
-            currentPage = nuevaPagina();
-            yPos = bodyTopY;
-          }
           currentPage.drawText(line, {
             x: marginLeft,
             y: yPos,
@@ -1051,17 +1073,6 @@ export class SolicitudesService {
           yPos -= 11;
         }
         yPos -= 3;
-
-        // Pre-calcular líneas envueltas por celda para saber la altura de cada fila
-        const filasConLineas = filas.map((fila) =>
-          columnas.map((columna) =>
-            wrapText(
-              String(fila[columna] ?? ''),
-              colWidth - cellPaddingX * 2,
-              fontSize,
-            ),
-          ),
-        );
 
         const dibujarEncabezado = () => {
           if (yPos < 100) {
@@ -1088,19 +1099,6 @@ export class SolicitudesService {
           });
           yPos -= headerHeight;
         };
-
-        // Si no cabe el encabezado junto con al menos la primera fila,
-        // saltar de una vez a la página nueva — evita que el encabezado
-        // quede solo al final de una hoja y se repita, sin filas debajo,
-        // al inicio de la siguiente.
-        const alturaPrimeraFila =
-          filasConLineas.length > 0
-            ? Math.max(...filasConLineas[0].map((l) => l.length), 1) * 9 + 6
-            : 0;
-        if (yPos - 14 - alturaPrimeraFila < 100) {
-          currentPage = nuevaPagina();
-          yPos = bodyTopY;
-        }
 
         dibujarEncabezado();
 

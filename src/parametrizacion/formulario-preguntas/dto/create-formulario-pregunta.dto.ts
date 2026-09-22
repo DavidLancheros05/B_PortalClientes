@@ -47,7 +47,7 @@ export class CreateFormularioPreguntaDto {
 
   @IsOptional()
   @IsInt()
-  frm_id?: number | null;
+  frs_id?: number | null;
 
   @IsOptional()
   @IsInt()
@@ -91,7 +91,7 @@ export class CreateFormularioPreguntaDto {
 
   @IsOptional()
   @IsInt()
-  fp_tipo_documento_id?: number | null;
+  fp_tdo_id?: number | null;
 
   @IsOptional()
   @IsInt()

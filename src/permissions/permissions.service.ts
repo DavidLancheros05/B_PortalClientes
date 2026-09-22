@@ -129,12 +129,9 @@ export class PermissionsService {
   }
 
   async getModulesByRole(rolId: number): Promise<MenuModulo[]> {
-    console.log(
-      `[PermissionsService] getModulesByRole called with rolId: ${rolId}`,
-    );
+
 
     if (!rolId || rolId <= 0) {
-      console.warn(`[PermissionsService] Invalid rolId: ${rolId}`);
       return [];
     }
 
@@ -250,12 +247,8 @@ export class PermissionsService {
   }
 
   async getModulesByUsuario(usuarioId: number): Promise<MenuModulo[]> {
-    console.log(
-      `[PermissionsService] getModulesByUsuario called with usuarioId: ${usuarioId}`,
-    );
 
     if (!usuarioId || usuarioId <= 0) {
-      console.warn(`[PermissionsService] Invalid usuarioId: ${usuarioId}`);
       return [];
     }
 
@@ -291,9 +284,7 @@ export class PermissionsService {
     );
 
     if (!rows || rows.length === 0) {
-      console.warn(
-        `[PermissionsService] No modules found for usuarioId: ${usuarioId}`,
-      );
+   
       return [];
     }
 
@@ -318,13 +309,6 @@ export class PermissionsService {
       }
     });
 
-    console.log(
-      `[PermissionsService] getModulesByUsuario DEBUG - rows: ${rows.length}, viewableIds: ${viewableIds.size}, visibleIds: ${visibleIds.size}, visibleIds: [${Array.from(
-        visibleIds,
-      )
-        .sort((a, b) => a - b)
-        .join(',')}]`,
-    );
 
     const modulesMap = new Map<number, MenuModulo>();
     rows.forEach((row: any) => {
@@ -363,10 +347,6 @@ export class PermissionsService {
       });
     });
 
-    console.log(
-      `[PermissionsService] getModulesByUsuario - modulesMap count: ${modulesMap.size}`,
-    );
-
     const roots: MenuModulo[] = [];
     let withoutParent = 0;
     let withParent = 0;
@@ -384,23 +364,9 @@ export class PermissionsService {
         parent.subModulos.push(moduleItem);
         withParent++;
       } else {
-        console.log(
-          `[PermissionsService] Parent not found for module ${moduleItem.mod_id} (${moduleItem.mod_nombre}) with parent id ${moduleItem.mod_padre_id}`,
-        );
         roots.push(moduleItem);
         parentNotFound++;
       }
-    });
-
-    console.log(
-      `[PermissionsService] getModulesByUsuario - withoutParent: ${withoutParent}, withParent: ${withParent}, parentNotFound: ${parentNotFound}, roots: ${roots.length}`,
-    );
-
-    // Log para verificar qué submódulos tiene cada raíz
-    roots.forEach((root) => {
-      console.log(
-        `[PermissionsService] Root "${root.mod_nombre}" has ${root.subModulos.length} subModulos`,
-      );
     });
 
     const sortModules = (items: MenuModulo[]) => {

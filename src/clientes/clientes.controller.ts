@@ -24,7 +24,9 @@ import { ClienteListResponseDto } from './dto/cliente-list.response.dto';
 import { ClienteDetailResponseDto } from './dto/cliente-detail.response.dto';
 import { CentroOperacionResponseDto } from './dto/centro-operacion.response.dto';
 
-type AuthRequest = Request & { user: { id: number; cliente_id: number | null; rol: string } };
+type AuthRequest = Request & {
+  user: { id: number; cliente_id: number | null; rol: string };
+};
 
 @UseGuards(JwtAuthGuard)
 @Controller('clientes')
@@ -77,17 +79,16 @@ export class ClientesController {
   }
 
   @Post()
-  @RequierePermiso('/parametrizacion/clientes', 'crear')
+  @RequierePermiso('/parametrizacion/clientes/listado', 'crear')
   async create(
     @Body() dto: CreateClienteDto,
   ): Promise<ClienteDetailResponseDto> {
-    console.log('🟢 [CONTROLLER] POST /clientes - Body recibido:', dto);
     try {
       const result = await this.clientesService.create(dto);
-      console.log('🟢 [CONTROLLER] POST /clientes - Resultado:', result);
+
       return result;
     } catch (error) {
-      console.error('🔴 [CONTROLLER] POST /clientes - Error:', error);
+      console.error('[CONTROLLER] POST /clientes - Error:', error);
       throw error;
     }
   }
@@ -120,7 +121,7 @@ export class ClientesController {
   }
 
   @Put(':id')
-  @RequierePermiso('/parametrizacion/clientes', 'editar')
+  @RequierePermiso('/parametrizacion/clientes/listado', 'editar')
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateClienteDto,
@@ -128,15 +129,22 @@ export class ClientesController {
     return this.clientesService.update(+id, dto);
   }
 
+  @Post(':id/desbloquear')
+  @RequierePermiso('/parametrizacion/clientes/listado', 'editar')
+  async desbloquear(@Param('id') id: string): Promise<{ message: string }> {
+    await this.clientesService.desbloquear(+id);
+    return { message: 'Cliente desbloqueado correctamente' };
+  }
+
   @Delete(':id')
-  @RequierePermiso('/parametrizacion/clientes', 'eliminar')
+  @RequierePermiso('/parametrizacion/clientes/listado', 'eliminar')
   async delete(@Param('id') id: string): Promise<{ success: boolean }> {
     await this.clientesService.delete(+id);
     return { success: true };
   }
 
   @Post(':id/reset-password')
-  @RequierePermiso('/parametrizacion/clientes', 'editar')
+  @RequierePermiso('/parametrizacion/clientes/listado', 'editar')
   async resetPassword(@Param('id') id: string): Promise<{ message: string }> {
     return this.clientesService.resetPasswordCliente(+id);
   }

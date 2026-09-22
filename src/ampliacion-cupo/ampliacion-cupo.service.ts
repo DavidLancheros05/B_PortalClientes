@@ -22,7 +22,7 @@ const CAMPOS_SOLICITUD_AMPLIACION = `
   sol_id, sol_cli_id, sol_cupo_solicitado, sol_cupo_actual_referencia,
   sol_justificacion_ampliacion, sol_consumo_mensual_proyectado, sol_toneladas_proyectadas,
   sol_ses_id, sol_wet_id, sol_wee_id,
-  sol_numero_solicitud, sol_created_at
+  sol_numero, sol_created_at
 `;
 
 // Estados "en trámite" (ver FRONTEND/src/constants/estado-solicitud.ts):
@@ -75,7 +75,7 @@ export class AmpliacionCupoService {
       // ampliaciones duplicadas para el mismo cliente mientras una ya
       // estaba pendiente/en revisión.
       const enTramite = await queryRunner.query(
-        `SELECT TOP 1 sol_id, sol_numero_solicitud
+        `SELECT TOP 1 sol_id, sol_numero
          FROM solicitudes
          WHERE sol_cli_id = @0 AND sol_ses_id IN (${ESTADOS_EN_TRAMITE.join(',')})
          ORDER BY sol_id DESC`,
@@ -84,7 +84,7 @@ export class AmpliacionCupoService {
 
       if (enTramite && enTramite.length > 0) {
         throw new ConflictException(
-          `El cliente ya tiene una solicitud en trámite (${enTramite[0].sol_numero_solicitud}). ` +
+          `El cliente ya tiene una solicitud en trámite (${enTramite[0].sol_numero}). ` +
             `Debe resolverse antes de crear una nueva ampliación de cupo.`,
         );
       }
@@ -129,11 +129,11 @@ export class AmpliacionCupoService {
       // activarVersion, o si nadie la fijó, la más reciente)
       const formularioResult = await queryRunner.query(`
         SELECT TOP 1 ISNULL(
-          f.frm_version_activa,
-          (SELECT MAX(fv.fv_numero) FROM Formulario_versiones fv WHERE fv.fv_frm_id = f.frm_id)
+          f.frs_version_activa,
+          (SELECT MAX(fv.fv_numero) FROM Formulario_versiones fv WHERE fv.fv_frs_id = f.frs_id)
         ) AS formulario_version
-        FROM formularios f
-        WHERE f.frm_activo = 1
+        FROM Formularios_solicitudes f
+        WHERE f.frs_activo = 1
       `);
       const formularioVersion = Number(
         formularioResult?.[0]?.formulario_version ?? 1,
@@ -172,7 +172,7 @@ export class AmpliacionCupoService {
         INSERT INTO solicitudes (
           sol_cli_id, sol_ses_id,
           sol_fecha_creacion, sol_created_at, sol_updated_at,
-          sol_version, sol_formulario_version, sol_numero_solicitud, sol_es_zona_franca,
+          sol_version, sol_formulario_version, sol_numero, sol_es_zona_franca,
           sol_ejng_id, sol_wet_id, sol_wee_id,
           sol_cupo_solicitado, sol_justificacion_ampliacion, sol_cupo_actual_referencia,
           sol_consumo_mensual_proyectado, sol_toneladas_proyectadas
@@ -431,7 +431,7 @@ export class AmpliacionCupoService {
   // Reutiliza fp_precarga_fuente ('ultima_solicitud'/'cliente_primero')
   // como criterio de qué copiar — es la misma bandera que ya excluye
   // documentos/firmas/notas (nunca se les activó) y, desde la migración
-  // 20260802_quitar_precarga_funcionario_y_cupo_solicitado.sql, también
+  // 20260802_Eliminar_precarga_funcionario_y_cupo_solicitado.sql, también
   // excluye Nombre/Cargo del Funcionario y Cupo Solicitado. Así el criterio
   // de "qué se puede heredar" queda en un solo lugar (la BD), no duplicado
   // en código.
@@ -456,7 +456,7 @@ export class AmpliacionCupoService {
       // fila de la versión NUEVA, no sobre la fila vieja de la solicitud
       // origen: fp_precarga_fuente es una columna por versión, y las
       // migraciones que la activaron (20260727_activar_precarga_...,
-      // 20260802_quitar_precarga_...) solo tocaron la versión activa — una
+      // 20260802_Eliminar_precarga_...) solo tocaron la versión activa — una
       // solicitud vieja diligenciada contra otra versión puede tener esa
       // bandera desactualizada o nunca configurada.
       const preguntasNuevas: {
@@ -607,15 +607,15 @@ export class AmpliacionCupoService {
 
       const preguntasDocumento: {
         fp_id: number;
-        fp_tipo_documento_id: number;
+        fp_tdo_id: number;
       }[] = await queryRunner.query(
-        `SELECT fp_id, fp_tipo_documento_id FROM Formulario_pregunta
+        `SELECT fp_id, fp_tdo_id FROM Formulario_pregunta
            WHERE fp_estado = 1 AND ISNULL(fp_version, 1) = @0
-             AND fp_tipo_documento_id IS NOT NULL`,
+             AND fp_tdo_id IS NOT NULL`,
         [formularioVersion],
       );
       const fpIdPorTdoId = new Map(
-        preguntasDocumento.map((p) => [p.fp_tipo_documento_id, p.fp_id]),
+        preguntasDocumento.map((p) => [p.fp_tdo_id, p.fp_id]),
       );
 
       const carpetaBase = await this.carpetaAlmacenamiento.obtenerBase(

@@ -61,7 +61,7 @@ export class FormularioPregunta {
   fp_precarga_campo_cliente: string | null;
 
   @Column({ type: 'int', nullable: true })
-  frm_id: number | null;
+  fp_frs_id: number | null;
 
   @Column({ type: 'int', nullable: true })
   seccion_id: number | null;
@@ -94,7 +94,7 @@ export class FormularioPregunta {
   fp_catalogo_pk_column: string | null;
 
   @Column({ type: 'int', nullable: true })
-  fp_tipo_documento_id: number | null;
+  fp_tdo_id: number | null;
 
   @Column({ type: 'int', nullable: true })
   fp_pregunta_padre_id: number | null;

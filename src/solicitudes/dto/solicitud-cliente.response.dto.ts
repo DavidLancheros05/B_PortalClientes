@@ -1,7 +1,7 @@
 export class SolicitudClienteDto {
   // Identificación
   sol_id: number;
-  sol_numero_solicitud: string;
+  sol_numero: string;
 
   // Estado del flujo
   sol_ses_id: number;

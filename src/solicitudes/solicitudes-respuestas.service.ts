@@ -12,6 +12,10 @@ import {
   CarpetaAlmacenamientoService,
   TIPO_ARCHIVO_URLS,
 } from '../common/storage/carpeta-almacenamiento.service';
+import {
+  nombreGuardadoArchivo,
+  nombreOriginalArchivo,
+} from '../common/utils/storage-file-name.util';
 
 @Injectable()
 export class SolicitudesRespuestasService {
@@ -21,18 +25,6 @@ export class SolicitudesRespuestasService {
     private readonly carpetaAlmacenamiento: CarpetaAlmacenamientoService,
   ) {}
 
-  /**
-   * Fecha de vencimiento de un documento según la regla de vigencia de su
-   * tipo. 'DIAS' (tdo_vigencia_dias) es fecha_emision + N días. 'ANIO'
-   * (tdo_anios_atras_permitidos, ej. RUT/Estados GYP) no tiene vigencia_dias
-   * — antes de este fix esto hacía que sa_fecha_vencimiento quedara NULL
-   * para siempre en esos documentos, que por eso nunca aparecían en la
-   * alerta semanal ni en el chequeo de "documentos vencidos" de Ampliación
-   * de Cupo. Mismo criterio que calcularEstadoAnioDocumento en el frontend
-   * (documentos-vigencia.util.ts): el documento es válido mientras
-   * anioActual - anioEmision <= aniosAtrasPermitidos, es decir, vence el 31
-   * de diciembre de (anioEmision + aniosAtrasPermitidos).
-   */
   private calcularFechaVencimiento(
     fechaEmision: string,
     tdoVigenciaDias?: number | null,
@@ -84,16 +76,6 @@ export class SolicitudesRespuestasService {
     return await this.dataSource.query(sql, [solicitudId]);
   }
 
-  // Igual que obtenerRespuestas pero suma fp_codigo (identidad estable de
-  // la pregunta entre versiones — ver
-  // migrations/20260727_backfill_fp_codigo_identidad_entre_versiones.sql)
-  // y fpo_codigo (misma idea para la opción seleccionada, cuando la
-  // respuesta es de una pregunta SELECT/MULTISELECT — ver
-  // migrations/20260727_backfill_fpo_codigo_identidad_opciones_entre_versiones.sql).
-  // Usado solo por la precarga de Ampliación de Cupo
-  // (obtenerUltimaSolicitudAprobada), que necesita reconocer una pregunta
-  // (y su opción respondida) aunque hayan cambiado de id entre la versión
-  // de la solicitud aprobada y la versión activa actual.
   async obtenerRespuestasConCodigoPregunta(solicitudId: number): Promise<
     Array<
       SolicitudRespuestaDto & {
@@ -133,8 +115,6 @@ export class SolicitudesRespuestasService {
   }
 
   async guardarRespuesta(dto: any) {
-    console.log('Guardando respuesta:', dto);
-
     const {
       sa_sol_id,
       fp_id,
@@ -156,7 +136,6 @@ export class SolicitudesRespuestasService {
       [fp_id],
     );
     const fpTipo = preguntaResult?.[0]?.fp_tipo;
-    console.log(`📋 Tipo de pregunta fp_id=${fp_id}: ${fpTipo}`);
 
     // Convertir undefined a null y validar tipos
     let valorTexto =
@@ -197,12 +176,10 @@ export class SolicitudesRespuestasService {
       }
     }
 
-    // Validar que no haya conflicto entre valor_texto y opciones (solo para opciones regulares)
     if (!esSelectTabla && valorTexto && opcionesIds.length > 0) {
       console.warn(
         '⚠️ Conflicto: se proporcionaron ambos valor_texto y valor_opcion_id',
       );
-      // Priorizar valor_opcion_id para opciones
       valorTexto = null;
     } else if (
       !esSelectTabla &&
@@ -217,12 +194,6 @@ export class SolicitudesRespuestasService {
       );
     }
 
-    // Este método siempre hace INSERT (nunca UPDATE), así que sin este borrado
-    // las respuestas se acumulan indefinidamente en cada guardado. Para MULTISELECT
-    // (una fila por opción marcada) eso mezcla selecciones viejas con las nuevas al
-    // recargar la solicitud, y para el resto deja historial contradictorio.
-    // El borrado y la inserción van en una transacción: si el insert falla por
-    // cualquier motivo, se revierte el borrado y no se pierde la respuesta anterior.
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -232,13 +203,7 @@ export class SolicitudesRespuestasService {
         `DELETE FROM Formulario_respuesta WHERE fr_sol_id = @0 AND fr_fp_id = @1`,
         [sa_sol_id, fp_id],
       );
-
-      // Para SELECT_TABLA, guardar el ID en valor_numero (no tiene opciones predefinidas)
       if (esSelectTabla && opcionesIds.length > 0) {
-        console.log(
-          `ℹ️ Pregunta tipo SELECT_TABLA detectada. Guardando ID en valor_numero`,
-        );
-        // SELECT_TABLA usa IDs de tablas catálogo (país, departamento, ciudad)
         const sql = `
           INSERT INTO Formulario_respuesta
           (fr_sol_id, fr_fp_id, fr_valor_numero, fr_es_multiselect, fr_created_at)
@@ -252,7 +217,6 @@ export class SolicitudesRespuestasService {
             opcionId,
             esMultiselectTipo ? 1 : 0,
           ];
-          console.log('🔹 SQL Params (SELECT_TABLA):', params);
           await queryRunner.query(sql, params);
         }
       } else if (opcionesIds.length > 0) {
@@ -268,13 +232,9 @@ export class SolicitudesRespuestasService {
             sa_sol_id,
             fp_id,
             opcionId,
-            // es_multiselect refleja el tipo de la pregunta, no cuantas
-            // opciones quedaron marcadas -- antes una sola opcion marcada en
-            // una pregunta MULTISELECT se guardaba con es_multiselect=0,
-            // indistinguible de un SELECT normal al recargar la solicitud.
             esMultiselectTipo ? 1 : 0,
           ];
-          console.log('🔹 SQL Params (opción):', params);
+
           await queryRunner.query(sql, params);
         }
       } else {
@@ -287,7 +247,6 @@ export class SolicitudesRespuestasService {
 
         const params = [sa_sol_id, fp_id, valorTexto, valorNumero, valorFecha];
 
-        console.log('🔹 SQL Params (valor):', params);
         await queryRunner.query(sql, params);
       }
 
@@ -308,12 +267,6 @@ export class SolicitudesRespuestasService {
   }
 
   async guardarRespuestaArchivo(dto: any, file?: any, usuarioId?: number) {
-    console.log('🔵 [guardarRespuestaArchivo] Iniciando guardado:', {
-      dto,
-      usuarioId,
-      archivo: file?.originalname,
-    });
-
     if (!file) {
       throw new Error('No se proporcionó ningún archivo');
     }
@@ -321,10 +274,6 @@ export class SolicitudesRespuestasService {
     const { sa_sol_id, fp_id, fechaEmision } = dto;
 
     if (!sa_sol_id || !fp_id) {
-      console.error('🔴 [guardarRespuestaArchivo] Parámetros faltantes:', {
-        sa_sol_id,
-        fp_id,
-      });
       throw new Error('sa_sol_id y fp_id son obligatorios');
     }
 
@@ -339,12 +288,6 @@ export class SolicitudesRespuestasService {
       );
     }
 
-    // fp_maximo en una pregunta ARCHIVO/IMAGEN es la cantidad máxima de
-    // archivos que admite (NULL o 1 = un solo archivo, comportamiento de
-    // siempre). En modo múltiple no se reemplaza nada, solo se valida el
-    // cupo; en modo simple, subir uno nuevo REEMPLAZA el anterior (antes no
-    // se desactivaba la fila vieja, y el botón "Cambiar" dejaba 2 filas
-    // 'activo' para el mismo fp_id).
     const maximoArchivos = Number(preguntaTipoResult?.[0]?.fp_maximo) || 1;
     const activosResult = await this.dataSource.query(
       `SELECT sa_id FROM Solicitud_archivo
@@ -359,9 +302,8 @@ export class SolicitudesRespuestasService {
       }
     }
 
+    const nombreOriginal = nombreOriginalArchivo(file.originalname);
     const checksum = createHash('sha256').update(file.buffer).digest('hex');
-
-    const nombreGuardado = `${Date.now()}_${checksum.substring(0, 8)}_${file.originalname}`;
 
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -370,7 +312,7 @@ export class SolicitudesRespuestasService {
     try {
       // Obtener número de solicitud (para la carpeta de almacenamiento)
       const solicitudSQL = `
-        SELECT sol_numero_solicitud
+        SELECT sol_numero
         FROM solicitudes
         WHERE sol_id = @0
       `;
@@ -381,21 +323,23 @@ export class SolicitudesRespuestasService {
         throw new Error(`Solicitud con id ${sa_sol_id} no encontrada`);
       }
 
-      const { sol_numero_solicitud } = solicitudResult[0];
+      const { sol_numero } = solicitudResult[0];
+      const nombreGuardado = nombreGuardadoArchivo(
+        new Date(),
+        sol_numero,
+        nombreOriginal,
+      );
 
-      // Carpeta base leída de Urls.url_nombre (url_tipo_archivo=5) en vez de
-      // escrita a mano — ver carpeta-almacenamiento.service.ts.
       const carpetaBase = await this.carpetaAlmacenamiento.obtenerBase(
         TIPO_ARCHIVO_URLS.SOLICITUDES,
       );
-      const carpetaAlmacenamiento = `${carpetaBase}formularios/${sol_numero_solicitud}`;
+      const carpetaAlmacenamiento = `${carpetaBase}formularios/${sol_numero}`;
       const subida = await this.storageService.upload(file.buffer, {
         folder: carpetaAlmacenamiento,
         filename: nombreGuardado,
         mimetype: file.mimetype,
       });
       const rutaAlmacenamiento = subida.url;
-      console.log(`☁️ Archivo subido al almacenamiento: ${rutaAlmacenamiento}`);
 
       // Si hay fechaEmision, calcular la fecha de vencimiento según el tipo
       // de documento antes de insertar, para guardarla en la misma fila.
@@ -404,12 +348,12 @@ export class SolicitudesRespuestasService {
 
       if (fechaEmision) {
         const getPreguntaSQL = `
-          SELECT fp_tipo_documento_id
+          SELECT fp_tdo_id
           FROM Formulario_pregunta
           WHERE fp_id = @0
         `;
         const preguntaResult = await queryRunner.query(getPreguntaSQL, [fp_id]);
-        const tdo_tipo_documento_id = preguntaResult?.[0]?.fp_tipo_documento_id;
+        const tdo_tipo_documento_id = preguntaResult?.[0]?.fp_tdo_id;
 
         if (tdo_tipo_documento_id) {
           const getDocumentoSQL = `
@@ -432,11 +376,6 @@ export class SolicitudesRespuestasService {
           fechaVencimientoValue = fechaVencimiento
             ? fechaVencimiento.toISOString().split('T')[0]
             : null;
-        } else {
-          console.warn(
-            '⚠️  [guardarRespuestaArchivo] No se encontró fp_tipo_documento_id para fp_id:',
-            fp_id,
-          );
         }
       }
 
@@ -457,7 +396,7 @@ export class SolicitudesRespuestasService {
       const paramsArchivo = [
         sa_sol_id,
         fp_id,
-        file.originalname,
+        nombreOriginal,
         nombreGuardado,
         file.size || file.buffer?.length || 0,
         file.mimetype || 'application/octet-stream',
@@ -471,19 +410,8 @@ export class SolicitudesRespuestasService {
         fechaVencimientoValue,
       ];
 
-      console.log('🔹 SQL Params (archivo):', paramsArchivo);
-      console.log('🔹 Ejecutando INSERT en Solicitud_archivo...');
-      const resultInsert = await queryRunner.query(sqlArchivo, paramsArchivo);
-      console.log(
-        '✅ [guardarRespuestaArchivo] INSERT completado:',
-        resultInsert,
-      );
-
+      await queryRunner.query(sqlArchivo, paramsArchivo);
       await queryRunner.commitTransaction();
-
-      console.log(
-        `✅ Archivo ${file.originalname} guardado para solicitud ${sa_sol_id}, pregunta ${fp_id}`,
-      );
 
       return {
         ok: true,
@@ -491,7 +419,7 @@ export class SolicitudesRespuestasService {
         data: {
           sa_sol_id,
           fp_id,
-          sa_nombre_original: file.originalname,
+          sa_nombre_original: nombreOriginal,
           sa_nombre_guardado: nombreGuardado,
           sa_tamaño_bytes: file.size || file.buffer?.length || 0,
         },
@@ -513,12 +441,6 @@ export class SolicitudesRespuestasService {
     fechaEmision: string,
     usuarioId?: number,
   ) {
-    console.log('📅 [actualizarFechaDocumento] Iniciando actualización:', {
-      solicitudId,
-      fpId,
-      fechaEmision,
-    });
-
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -526,12 +448,12 @@ export class SolicitudesRespuestasService {
     try {
       // 1. Obtener tdo_tipo_documento_id de la pregunta
       const getPreguntaSQL = `
-        SELECT fp_tipo_documento_id
+        SELECT fp_tdo_id
         FROM Formulario_pregunta
         WHERE fp_id = @0
       `;
       const preguntaResult = await queryRunner.query(getPreguntaSQL, [fpId]);
-      const tdo_tipo_documento_id = preguntaResult?.[0]?.fp_tipo_documento_id;
+      const tdo_tipo_documento_id = preguntaResult?.[0]?.fp_tdo_id;
 
       if (!tdo_tipo_documento_id) {
         throw new Error(`No se encontró tipo de documento para fp_id ${fpId}`);
@@ -562,14 +484,6 @@ export class SolicitudesRespuestasService {
         SET sa_fecha_emision = @0, sa_fecha_vencimiento = @1, sa_requiere_cambio = 0
         WHERE sa_sol_id = @2 AND sa_fp_id = @3 AND sa_estado = 'activo'
       `;
-
-      console.log('✅ [actualizarFechaDocumento] Actualizando fecha:', {
-        sa_fecha_emision: fechaEmision,
-        sa_fecha_vencimiento: fechaVencimiento
-          ? fechaVencimiento.toISOString().split('T')[0]
-          : null,
-      });
-
       await queryRunner.query(updateSQL, [
         fechaEmision,
         fechaVencimiento ? fechaVencimiento.toISOString().split('T')[0] : null,
@@ -603,8 +517,6 @@ export class SolicitudesRespuestasService {
   }
 
   async obtenerRespuestaArchivo(solicitudId: number, saId: number) {
-    console.log(`Obteniendo archivo: sa_sol_id=${solicitudId}, sa_id=${saId}`);
-
     const sql = `
       SELECT sa_id, sa_sol_id, sa_fp_id, sa_nombre_original, sa_nombre_guardado,
              sa_tamaño_bytes, sa_tipo_mime, sa_ruta_almacenamiento, sa_cargado_por,
@@ -636,8 +548,6 @@ export class SolicitudesRespuestasService {
   }
 
   async eliminarRespuestaArchivo(solicitudId: number, saId: number) {
-    console.log(`Eliminando archivo: sa_sol_id=${solicitudId}, sa_id=${saId}`);
-
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -676,8 +586,6 @@ export class SolicitudesRespuestasService {
           archivo.sa_resource_type,
         );
       }
-
-      console.log(`✅ Archivo ${saId} marcado como inactivo`);
 
       return {
         ok: true,

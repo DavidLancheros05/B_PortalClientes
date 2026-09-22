@@ -49,6 +49,8 @@ export class ClientesService {
         c.cli_estado AS [cli_estado],
         c.cli_acceso_pc AS [cli_acceso_pc],
         c.cli_siesa AS [cli_siesa],
+        c.cli_intentos_login AS [cli_intentos_login],
+        c.cli_bloqueado AS [cli_bloqueado],
         c.ejng_id AS [ejng_id],
         e.ejng_nombre AS [ejng_nombre]
       FROM dbo.Clientes c
@@ -65,6 +67,8 @@ export class ClientesService {
       cli_estado: item.cli_estado,
       cli_acceso_pc: item.cli_acceso_pc,
       cli_siesa: item.cli_siesa,
+      cli_intentos_login: Number(item.cli_intentos_login ?? 0),
+      cli_bloqueado: Boolean(item.cli_bloqueado),
       ejng_id: item.ejng_id,
       ejecutivo: item.ejng_nombre ? { nombre: item.ejng_nombre } : null,
     }));
@@ -255,10 +259,35 @@ export class ClientesService {
     await this.clienteRepo.update(cli_id, { cli_estado: 'I' });
   }
 
+  async desbloquear(cli_id: number): Promise<void> {
+    const result = await this.clienteRepo.query(
+      `UPDATE dbo.Clientes
+       SET cli_bloqueado = 0, cli_intentos_login = 0
+       OUTPUT INSERTED.cli_id
+       WHERE cli_id = @0`,
+      [cli_id],
+    );
+
+    if (!result?.length) {
+      throw new NotFoundException('Cliente no existe');
+    }
+  }
+
   // ========================
   // CREAR
   // ========================
   async create(dto: CreateClienteDto): Promise<ClienteDetailResponseDto> {
+    const identificacion = dto.cli_nro_identificacion.trim();
+    const clienteExistente = await this.clienteRepo.findOne({
+      where: { cli_nro_identificacion: identificacion, cli_estado: 'A' },
+    });
+
+    if (clienteExistente) {
+      throw new BadRequestException(
+        `Ya existe un cliente con el número de identificación ${identificacion}`,
+      );
+    }
+
     const habilitaAcceso = dto.cli_acceso_pc ?? false;
     const passwordGenerada = habilitaAcceso
       ? Math.random().toString(36).slice(-8)
@@ -272,7 +301,7 @@ export class ClientesService {
 
     const entity = plainToInstance(ClienteEntity, {
       cli_razon_social: dto.cli_razon_social,
-      cli_nro_identificacion: dto.cli_nro_identificacion,
+      cli_nro_identificacion: identificacion,
       cli_tipo_identificacion: dto.cli_tipo_identificacion,
       cli_direccion: dto.cli_direccion,
       cli_correo: dto.cli_correo,
@@ -338,6 +367,25 @@ export class ClientesService {
     const { centro_operacion_ids, ...updateData } = dto;
 
     const actual = await this.clienteRepo.findOne({ where: { cli_id } });
+    if (!actual) {
+      throw new NotFoundException('Cliente no existe');
+    }
+
+    const identificacion = dto.cli_nro_identificacion?.trim();
+    if (identificacion && identificacion !== actual.cli_nro_identificacion) {
+      const clienteExistente = await this.clienteRepo.findOne({
+        where: { cli_nro_identificacion: identificacion, cli_estado: 'A' },
+      });
+
+      if (clienteExistente && clienteExistente.cli_id !== cli_id) {
+        throw new BadRequestException(
+          `Ya existe un cliente con el número de identificación ${identificacion}`,
+        );
+      }
+
+      updateData.cli_nro_identificacion = identificacion;
+    }
+
     const habilitandoAccesoAhora =
       dto.cli_acceso_pc === true && !actual?.cli_acceso_pc;
     const correoDestino = dto.cli_correo ?? actual?.cli_correo ?? undefined;

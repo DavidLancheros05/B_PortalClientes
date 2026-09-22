@@ -1,7 +1,7 @@
 export class SolicitudPendienteDto {
   // Identificación - lo mínimo para saber qué solicitud es
   sol_id: number;
-  sol_numero_solicitud: string;
+  sol_numero: string;
 
   // Contexto - de quién
   sol_cli_id: number;

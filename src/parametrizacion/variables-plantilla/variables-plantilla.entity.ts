@@ -8,7 +8,7 @@ import {
 // Catálogo de variables ({{placeholder}}) que se pueden insertar en el
 // contenido de una plantilla de Tipos_documentos. Antes vivían hardcodeadas
 // en el frontend (VARIABLES_FIJAS / VARIABLES_CARTA_VINCULACION en
-// plantilla-variables.util.ts) — se movieron acá para que agregar/quitar una
+// plantilla-variables.util.ts) — se movieron acá para que agregar/Eliminar una
 // variable sea una acción administrable (con guardrail de borrado) y no un
 // cambio de código sin trazabilidad. Ver Documentos Cartonera/documentacion/
 // Portal Clientes/Funcionalidades/plantillas/variables-plantilla.md.

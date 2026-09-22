@@ -10,15 +10,16 @@ import { LogExceptionsFilter } from './common/filters/log-exceptions.filter';
 
 async function bootstrap() {
   const expressApp = express();
+
   expressApp.use(cookieParser());
   expressApp.use(express.json({ limit: '25mb' }));
   expressApp.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
   const adapter = new ExpressAdapter(expressApp);
   const app = await NestFactory.create(AppModule, adapter);
+
   app.setGlobalPrefix('api');
 
-  // Global validation pipe
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -32,7 +33,10 @@ async function bootstrap() {
 
   const port = process.env.PORT || 3001;
 
-  const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:3000')
+  const allowedOrigins = (
+    process.env.CORS_ORIGINS ||
+    'http://localhost,http://localhost:4002'
+  )
     .split(',')
     .map((o) => o.trim());
 
@@ -48,6 +52,8 @@ async function bootstrap() {
   });
 
   await app.listen(port);
+
   Logger.log(`Server running on http://localhost:${port}`, 'Bootstrap');
 }
+
 bootstrap();

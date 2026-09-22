@@ -10,6 +10,8 @@ export class ClienteListResponseDto {
   cli_nit_dig_vf?: string;
   cli_es_extranjero?: boolean;
   cli_siesa?: boolean;
+  cli_intentos_login: number;
+  cli_bloqueado: boolean;
   ejng_id?: number;
   ejecutivo?: { nombre: string } | null;
 }

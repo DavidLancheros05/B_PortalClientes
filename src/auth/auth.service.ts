@@ -21,10 +21,6 @@ export class AuthService {
     private readonly notificacionesService: NotificacionesService,
   ) {}
 
-  // Enmascara el correo para mostrarlo en la confirmación sin revelarlo
-  // completo: "da***05@gmail.com" (2 primeros y 2 últimos del usuario,
-  // dominio completo). Si el usuario tiene 4 caracteres o menos, se
-  // enmascara todo menos el primero para no terminar mostrándolo completo.
   private enmascararCorreo(email: string): string {
     const [usuario, dominio] = email.split('@');
     if (!usuario || !dominio) return email;
@@ -36,17 +32,7 @@ export class AuthService {
     return `${inicio}***${fin}@${dominio}`;
   }
 
-  // "Olvidé mi contraseña" — respuesta siempre genérica exista o no la
-  // cuenta, para no dejar enumerar identificaciones/usuarios válidos vía
-  // este endpoint (salvo el correo enmascarado, que solo se agrega cuando
-  // la cuenta sí existe — a pedido explícito del usuario para que pueda
-  // reconocer a qué correo se envió). El token real solo viaja una vez,
-  // por correo; en BD se guarda su hash SHA-256 (mismo criterio que las
-  // contraseñas: nunca un secreto en texto plano en la tabla).
-  async forgotPassword(
-    identifier: string,
-    accessType: 'cliente' | 'usuario',
-  ) {
+  async forgotPassword(identifier: string, accessType: 'cliente' | 'usuario') {
     const RESPUESTA_GENERICA = {
       ok: true,
       mensaje:
@@ -63,7 +49,11 @@ export class AuthService {
       );
       const row = rows?.[0];
       if (row?.cli_correo) {
-        cuenta = { id: row.cli_id, email: row.cli_correo, nombre: row.cli_razon_social };
+        cuenta = {
+          id: row.cli_id,
+          email: row.cli_correo,
+          nombre: row.cli_razon_social,
+        };
       }
     } else {
       const rows = await this.sistemaComercialDb.query(
@@ -73,14 +63,21 @@ export class AuthService {
       );
       const row = rows?.[0];
       if (row?.usr_correo) {
-        cuenta = { id: row.usr_id, email: row.usr_correo, nombre: row.usr_nombre };
+        cuenta = {
+          id: row.usr_id,
+          email: row.usr_correo,
+          nombre: row.usr_nombre,
+        };
       }
     }
 
     if (!cuenta) return RESPUESTA_GENERICA;
 
     const tokenCrudo = crypto.randomBytes(32).toString('hex');
-    const tokenHash = crypto.createHash('sha256').update(tokenCrudo).digest('hex');
+    const tokenHash = crypto
+      .createHash('sha256')
+      .update(tokenCrudo)
+      .digest('hex');
     const expiraEn = new Date(Date.now() + 60 * 60 * 1000); // 1 hora
 
     await this.sistemaComercialDb.query(
@@ -122,7 +119,8 @@ export class AuthService {
       );
     }
 
-    const tipo: 'cliente' | 'usuario' = row.rpt_tipo === 'cliente' ? 'cliente' : 'usuario';
+    const tipo: 'cliente' | 'usuario' =
+      row.rpt_tipo === 'cliente' ? 'cliente' : 'usuario';
     const tabla = tipo === 'cliente' ? 'Clientes' : 'usuarios';
     const idColumna = tipo === 'cliente' ? 'cli_id' : 'usr_id';
     const passColumna = tipo === 'cliente' ? 'cli_password' : 'usr_password';
@@ -139,17 +137,11 @@ export class AuthService {
       [row.rpt_id],
     );
 
-    // Por si el token viejo (o una sesión ya abierta con la contraseña
-    // anterior) sigue circulando, cierra cualquier sesión activa.
     await this.invalidarSesiones(row.rpt_usr_id, tipo);
 
     return { ok: true, mensaje: 'Contraseña actualizada correctamente' };
   }
 
-  // Invalida todas las sesiones activas de un usuario/cliente (logout,
-  // cambio de contraseña) incrementando su `token_version`: cualquier JWT
-  // ya emitido con la versión anterior deja de pasar JwtAuthGuard aunque
-  // no haya expirado todavía.
   async invalidarSesiones(usrId: number, tipo: 'cliente' | 'usuario') {
     const tabla = tipo === 'cliente' ? 'Clientes' : 'usuarios';
     const idColumna = tipo === 'cliente' ? 'cli_id' : 'usr_id';
@@ -163,9 +155,14 @@ export class AuthService {
   }
 
   private async loginCliente(identificacion: string, password: string) {
+    const maxIntentos = Math.max(
+      1,
+      Number.parseInt(process.env.LOGIN_MAX_ATTEMPTS || '5', 10) || 5,
+    );
     const cliente = await this.sistemaComercialDb.query(
       `
-      SELECT cli_id, cli_razon_social, cli_nro_identificacion, cli_password, cli_acceso_pc, cli_token_version
+      SELECT cli_id, cli_razon_social, cli_nro_identificacion, cli_password,
+             cli_acceso_pc, cli_bloqueado, cli_intentos_login, cli_token_version
       FROM clientes
       WHERE cli_nro_identificacion = @0
       `,
@@ -184,8 +181,41 @@ export class AuthService {
       );
     }
 
+    if (cli.cli_bloqueado) {
+      throw new UnauthorizedException(
+        'Cliente bloqueado por demasiados intentos fallidos. Solicita el desbloqueo al administrador.',
+      );
+    }
+
     if (!(await passwordCoincide(password, cli.cli_password))) {
+      await this.sistemaComercialDb.query(
+        `UPDATE dbo.Clientes
+         SET cli_intentos_login = cli_intentos_login + 1,
+             cli_bloqueado = CASE
+               WHEN cli_intentos_login + 1 >= @1 THEN 1
+               ELSE cli_bloqueado
+             END
+         WHERE cli_id = @0`,
+        [cli.cli_id, maxIntentos],
+      );
+
+      const intentos = Number(cli.cli_intentos_login ?? 0) + 1;
+      if (intentos >= maxIntentos) {
+        throw new UnauthorizedException(
+          'Cliente bloqueado por demasiados intentos fallidos. Solicita el desbloqueo al administrador.',
+        );
+      }
+
       throw new UnauthorizedException('La contraseña es incorrecta');
+    }
+
+    if (Number(cli.cli_intentos_login ?? 0) > 0) {
+      await this.sistemaComercialDb.query(
+        `UPDATE dbo.Clientes
+         SET cli_intentos_login = 0, cli_bloqueado = 0
+         WHERE cli_id = @0`,
+        [cli.cli_id],
+      );
     }
 
     // Obtener módulos del rol CLIENTE
@@ -235,9 +265,6 @@ export class AuthService {
   }
 
   private async loginUsuarioInterno(usuario: string, password: string) {
-    console.log(
-      `[AuthService] loginUsuarioInterno called with usuario: ${usuario}`,
-    );
 
     const usuarioData = await this.sistemaComercialDb.query(
       `
@@ -283,10 +310,6 @@ export class AuthService {
       tipo: 'usuario',
       tv: usr.usr_token_version ?? 0,
     };
-    console.log(
-      `[AuthService] Usuario ${usuario} autenticado exitosamente. Payload para JWT:`,
-      payload,
-    );
 
     return {
       token: this.jwtService.sign(payload),
@@ -308,11 +331,6 @@ export class AuthService {
     };
   }
 
-  // Verifica el token del widget "No soy un robot" contra la API de Google.
-  // Se desactiva sola (no bloquea el login) mientras RECAPTCHA_SECRET_KEY no
-  // esté configurada en .env — así el código queda listo desde ya, pero solo
-  // empieza a exigir el captcha cuando se cree el sitio en
-  // https://www.google.com/recaptcha/admin y se agregue la key.
   private async verificarCaptcha(token: string | undefined) {
     const secret = String(process.env.RECAPTCHA_SECRET_KEY || '').trim();
     if (!secret) return;
@@ -340,9 +358,6 @@ export class AuthService {
     accessType: 'cliente' | 'usuario',
     captchaToken?: string,
   ) {
-    console.log(
-      `[AuthService] loginWithAccessType called with identifier: ${identifier}, accessType: ${accessType}`,
-    );
     await this.verificarCaptcha(captchaToken);
     if (accessType === 'cliente') {
       return this.loginCliente(identifier, password);
@@ -354,7 +369,6 @@ export class AuthService {
   }
 
   async login(email: string, password: string) {
-    console.log(`[AuthService] login called with email: ${email}`);
 
     const user = await this.usersService.getUserByEmail(email);
 
@@ -388,10 +402,6 @@ export class AuthService {
         user.usr_id,
       );
     }
-
-    console.log(
-      `[AuthService] Usuario ${email} autenticado exitosamente. Cliente ID asignado: ${cliente_id}, Rol: ${user.rol_codigo}`,
-    );
 
     const modulos = await this.permissionsService.getModulesByRole(user.rol_id);
     const centrosOperacion = await this.usersService.getUserCentrosOperacion(

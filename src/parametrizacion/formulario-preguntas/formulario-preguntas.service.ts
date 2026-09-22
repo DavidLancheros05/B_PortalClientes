@@ -21,8 +21,10 @@ export class FormularioPreguntasService {
   ) {}
 
   async create(dto: CreateFormularioPreguntaDto) {
+    const { frs_id, ...dtoSinFormularioId } = dto;
     const normalizedDto = {
-      ...dto,
+      ...dtoSinFormularioId,
+      fp_frs_id: frs_id,
       fp_descripcion: dto.fp_descripcion
         ? normalizeMojibake(dto.fp_descripcion)
         : dto.fp_descripcion,
@@ -60,16 +62,16 @@ export class FormularioPreguntasService {
   async findPreguntasFormularioActivo() {
     const result = await this.formularioPreguntaRepository.manager.query(`
       SELECT TOP 1
-        f.frm_id AS frm_id,
+        f.frs_id AS frs_id,
         ISNULL(
-          f.frm_version_activa,
-          (SELECT MAX(fv.fv_numero) FROM Formulario_versiones fv WHERE fv.fv_frm_id = f.frm_id)
+          f.frs_version_activa,
+          (SELECT MAX(fv.fv_numero) FROM Formulario_versiones fv WHERE fv.fv_frs_id = f.frs_id)
         ) AS version
-      FROM formularios f
-      WHERE f.frm_activo = 1
-      ORDER BY f.frm_id
+      FROM Formularios_solicitudes f
+      WHERE f.frs_activo = 1
+      ORDER BY f.frs_id
     `);
-    const formularioId = result?.[0]?.frm_id;
+    const formularioId = result?.[0]?.frs_id;
     const version = result?.[0]?.version || 1;
     if (!formularioId) return [];
 
@@ -94,7 +96,7 @@ export class FormularioPreguntasService {
     const where: Record<string, unknown> = {};
 
     if (formularioId) {
-      where.frm_id = formularioId;
+      where.fp_frs_id = formularioId;
     }
 
     if (version) {
@@ -154,6 +156,8 @@ export class FormularioPreguntasService {
 
       return {
         ...p,
+        // Keep the legacy API field while the database uses fp_frs_id.
+        frs_id: p.fp_frs_id,
         fp_protegida: motivoProteccion !== null,
         fp_protegida_motivo: motivoProteccion,
         seccion_nombre: seccion?.fs_nombre ?? null,
