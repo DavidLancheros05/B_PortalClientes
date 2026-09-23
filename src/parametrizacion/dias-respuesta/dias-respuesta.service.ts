@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { DiaRespuesta } from './dias-respuesta.entity';
@@ -16,17 +16,38 @@ export class DiasRespuestaService {
     return this.repo.find({ order: { pdr_id: 'ASC' } });
   }
 
-  create(dto: CreateDiaRespuestaDto) {
+  // pdr_area llega como el nombre de una etapa (ver obtenerAreas); el
+  // wet_id es lo que se usa para buscar los días, así que tiene que existir.
+  private async resolverEtapa(area: string): Promise<number> {
+    const [etapa] = await this.dataSource.query(
+      `SELECT wet_id FROM workflow_etapas WHERE UPPER(LTRIM(RTRIM(wet_nombre))) = UPPER(LTRIM(RTRIM(@0)))`,
+      [area],
+    );
+    if (!etapa) {
+      throw new BadRequestException(
+        `El área "${area}" no corresponde a ninguna etapa del workflow.`,
+      );
+    }
+    return etapa.wet_id;
+  }
+
+  async create(dto: CreateDiaRespuestaDto) {
     const nuevo = this.repo.create({
       ...dto,
+      wet_id: await this.resolverEtapa(dto.pdr_area),
       pdr_estado: true,
     });
 
     return this.repo.save(nuevo);
   }
 
-  update(id: number, data: Partial<DiaRespuesta>) {
-    return this.repo.update(id, data);
+  async update(id: number, data: Partial<DiaRespuesta>) {
+    const cambios = { ...data };
+    delete cambios.wet_id;
+    if (cambios.pdr_area !== undefined) {
+      cambios.wet_id = await this.resolverEtapa(cambios.pdr_area);
+    }
+    return this.repo.update(id, cambios);
   }
 
   async cambiarEstado(id: number, estado: boolean) {

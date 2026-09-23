@@ -59,9 +59,6 @@ export class SolicitudEntity {
   @Column({ name: 'sol_fecha_creacion', type: 'datetime2' })
   sol_fecha_creacion: Date;
 
-  @Column({ name: 'sol_es_zona_franca', type: 'bit', default: false })
-  sol_es_zona_franca: boolean;
-
   @Column({
     name: 'sol_consumo_mensual_proyectado',
     type: 'decimal',

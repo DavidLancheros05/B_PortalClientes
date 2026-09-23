@@ -213,7 +213,6 @@ export class SolicitudesListadosService {
       s.sol_created_at AS [sol_created_at],
       s.sol_updated_at AS [sol_updated_at],
       s.sol_consumo_mensual_proyectado AS [sol_consumo_mensual_proyectado],
-      s.sol_es_zona_franca AS [sol_es_zona_franca],
       s.sol_version AS [sol_version],
       s.sol_formulario_version AS [sol_formulario_version],
       s.sol_cupo_aprobado AS [sol_cupo_aprobado],
@@ -335,7 +334,6 @@ export class SolicitudesListadosService {
       s.sol_created_at AS [sol_created_at],
       s.sol_updated_at AS [sol_updated_at],
       s.sol_consumo_mensual_proyectado AS [sol_consumo_mensual_proyectado],
-      s.sol_es_zona_franca AS [sol_es_zona_franca],
       s.sol_version AS [sol_version],
       s.sol_formulario_version AS [sol_formulario_version],
       s.sol_cupo_solicitado AS [sol_cupo_solicitado],
@@ -541,8 +539,7 @@ export class SolicitudesListadosService {
         sol_numero AS [sol_numero],
         sol_cli_id AS [sol_cli_id],
         sol_ses_id AS [sol_ses_id],
-        sol_fecha_creacion AS [sol_fecha_creacion],
-        sol_es_zona_franca AS [sol_es_zona_franca]
+        sol_fecha_creacion AS [sol_fecha_creacion]
       FROM solicitudes
       ORDER BY sol_fecha_creacion DESC
     `;

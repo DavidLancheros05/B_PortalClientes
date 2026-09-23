@@ -3,9 +3,81 @@ import { DataSource, QueryRunner } from 'typeorm';
 import { SolicitudWorkflowHistorialEntity } from './entities/solicitud-workflow-historial.entity';
 import { addBusinessDays } from '../../common/utils/business-days.util';
 
+// El cliente no tiene plazo de respuesta: es la única etapa sin fila en
+// param_dias_respuesta_solicitudes, a propósito. Todas las demás la exigen.
+export const ETAPA_SIN_SLA = 'CLI';
+
 @Injectable()
 export class HistorialWorkflowService {
   constructor(private readonly dataSource: DataSource) {}
+
+  /**
+   * Festivos y días no hábiles de la semana, tal como están en BD. Sin
+   * valores por defecto: si falta la configuración, revienta.
+   */
+  async cargarCalendarioHabil(
+    queryRunner: QueryRunner,
+  ): Promise<{ festivos: Date[]; diasNoHabilesSemana: number[] }> {
+    const festivosResult = await queryRunner.query(
+      `SELECT fes_fecha AS fecha FROM Festivos WHERE fes_co_id IS NULL`,
+    );
+    const festivos: Date[] = festivosResult.map((row: any) => row.fecha);
+    if (festivos.length === 0) {
+      throw new Error('No hay festivos configurados (tabla Festivos).');
+    }
+
+    const diasNoHabilesResult = await queryRunner.query(
+      `SELECT dsh_dia_semana AS dia FROM param_dias_no_habiles_semana WHERE dsh_co_id IS NULL AND dsh_activo = 1`,
+    );
+    const diasNoHabilesSemana: number[] = diasNoHabilesResult.map(
+      (row: any) => Number(row.dia),
+    );
+    if (diasNoHabilesSemana.length === 0) {
+      throw new Error(
+        'No hay días no hábiles de la semana configurados (param_dias_no_habiles_semana).',
+      );
+    }
+
+    return { festivos, diasNoHabilesSemana };
+  }
+
+  /**
+   * Días de respuesta por etapa (clave = wet_codigo), unidos por wet_id —
+   * no por el nombre del área, que se puede editar en parametrización.
+   * Revienta si alguna de las etapas pedidas no tiene fila activa.
+   */
+  async obtenerDiasRespuestaPorEtapa(
+    queryRunner: QueryRunner,
+    codigosEtapa: string[],
+  ): Promise<Record<string, number>> {
+    const placeholders = codigosEtapa.map((_, i) => `@${i}`).join(', ');
+    const filas = await queryRunner.query(
+      `
+      SELECT w.wet_codigo, p.pdr_dias
+      FROM workflow_etapas w
+      CROSS APPLY (
+        SELECT TOP 1 pdr_dias
+        FROM param_dias_respuesta_solicitudes
+        WHERE wet_id = w.wet_id AND pdr_estado = 1
+        ORDER BY pdr_id DESC
+      ) p
+      WHERE w.wet_codigo IN (${placeholders})
+    `,
+      codigosEtapa,
+    );
+
+    const dias: Record<string, number> = {};
+    for (const fila of filas) {
+      dias[fila.wet_codigo] = Number(fila.pdr_dias);
+    }
+    const faltantes = codigosEtapa.filter((codigo) => !(codigo in dias));
+    if (faltantes.length > 0) {
+      throw new Error(
+        `No hay días de respuesta activos configurados para la(s) etapa(s): ${faltantes.join(', ')} (param_dias_respuesta_solicitudes).`,
+      );
+    }
+    return dias;
+  }
 
   /**
    * Registra una transición de etapa y calcula, en el mismo momento en que
@@ -31,55 +103,23 @@ export class HistorialWorkflowService {
     const { solicitudId, etapaId, resultadoId, usuarioId, comentario } = params;
 
     const [etapa] = await queryRunner.query(
-      `SELECT wet_nombre FROM workflow_etapas WHERE wet_id = @0`,
+      `SELECT wet_codigo FROM workflow_etapas WHERE wet_id = @0`,
       [etapaId],
     );
-    const areaEtapa = etapa?.wet_nombre;
-
-    let dias: number | null = null;
-    if (areaEtapa) {
-      const [diasResult] = await queryRunner.query(
-        `
-        SELECT TOP 1 pdr_dias
-        FROM param_dias_respuesta_solicitudes
-        WHERE pdr_estado = 1
-          AND UPPER(LTRIM(RTRIM(pdr_area))) = UPPER(LTRIM(RTRIM(@0)))
-        ORDER BY pdr_id DESC
-      `,
-        [areaEtapa],
-      );
-      dias = diasResult?.pdr_dias != null ? Number(diasResult.pdr_dias) : null;
+    if (!etapa) {
+      throw new Error(`La etapa ${etapaId} no existe en workflow_etapas.`);
     }
 
     let fechaEstimada: Date | null = null;
-    if (dias != null) {
-      let festivos: any[] = [];
-      try {
-        const festivosResult = await queryRunner.query(
-          `SELECT fes_fecha AS fecha FROM Festivos WHERE fes_co_id IS NULL`,
-        );
-        festivos = (festivosResult || [])
-          .map((row: any) => row?.fecha)
-          .filter((value: any) => Boolean(value));
-      } catch {
-        festivos = [];
-      }
-
-      let diasNoHabilesSemana: number[] | undefined;
-      try {
-        const diasNoHabilesResult = await queryRunner.query(
-          `SELECT dsh_dia_semana AS dia FROM param_dias_no_habiles_semana WHERE dsh_co_id IS NULL AND dsh_activo = 1`,
-        );
-        diasNoHabilesSemana = (diasNoHabilesResult || [])
-          .map((row: any) => Number(row?.dia))
-          .filter((value: number) => !Number.isNaN(value));
-      } catch {
-        diasNoHabilesSemana = undefined;
-      }
-
+    if (etapa.wet_codigo !== ETAPA_SIN_SLA) {
+      const dias = await this.obtenerDiasRespuestaPorEtapa(queryRunner, [
+        etapa.wet_codigo,
+      ]);
+      const { festivos, diasNoHabilesSemana } =
+        await this.cargarCalendarioHabil(queryRunner);
       fechaEstimada = addBusinessDays(
         new Date(),
-        dias,
+        dias[etapa.wet_codigo],
         festivos,
         diasNoHabilesSemana,
       );

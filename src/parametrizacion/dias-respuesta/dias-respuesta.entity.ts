@@ -17,6 +17,12 @@ export class DiaRespuesta {
   @Column({ type: 'varchar', length: 50 })
   pdr_area: string;
 
+  // Llave real hacia la etapa: es lo que usan crearSolicitud y
+  // registrarTransicionConSLA para encontrar los días (pdr_area es solo el
+  // nombre para mostrar). Se resuelve desde pdr_area al crear/editar.
+  @Column({ type: 'int' })
+  wet_id: number;
+
   @Column({ type: 'int' })
   pdr_dias: number;
 

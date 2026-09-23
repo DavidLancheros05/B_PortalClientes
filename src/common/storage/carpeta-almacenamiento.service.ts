@@ -15,7 +15,7 @@ const CARPETA_BASE_DEFAULT: Record<number, string> = {
 };
 
 /**
- * Resuelve la carpeta base de Cloudinary para cada tipo de archivo desde
+ * Resuelve la carpeta base del almacenamiento para cada tipo de archivo desde
  * Urls.url_nombre en vez de tenerla escrita a mano en cada servicio que
  * sube documentos (ver "Mejora sugerida" en
  * documentacion/almacenamiento-de-archivos.md). Si la fila no existe o la

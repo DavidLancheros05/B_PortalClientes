@@ -97,8 +97,7 @@ async function main() {
   );
   console.log(`   ✅ ${rowResult.recordset.length} tablas → ${rowsPath}`);
 
-  // ── db_usage.csv ─────────────────────────────────────────────────────────────
-  console.log("📦 Generando db_usage.csv...");
+
   const usageResult = await pool.request().query(`
     SELECT
       t.TABLE_NAME AS table_name,

@@ -445,7 +445,7 @@ export class SolicitudesDocumentosService {
   async descargarArchivoRespuesta(sa_id: number) {
     const sql = `
       SELECT sa_nombre_original, sa_tipo_mime, sa_ruta_almacenamiento,
-             sa_cloudinary_public_id, sa_resource_type
+             sa_id_almacenamiento, sa_resource_type
       FROM Solicitud_archivo
       WHERE sa_id = @0
     `;
@@ -459,13 +459,13 @@ export class SolicitudesDocumentosService {
     const {
       sa_ruta_almacenamiento,
       sa_nombre_original,
-      sa_cloudinary_public_id,
+      sa_id_almacenamiento,
       sa_resource_type,
     } = archivo[0];
 
-    const downloadUrl = sa_cloudinary_public_id
+    const downloadUrl = sa_id_almacenamiento
       ? this.storageService.buildDownloadUrl(
-          sa_cloudinary_public_id,
+          sa_id_almacenamiento,
           sa_resource_type,
           sa_nombre_original,
         )

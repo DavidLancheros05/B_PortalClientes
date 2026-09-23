@@ -1939,7 +1939,7 @@ export class SolicitudesWorkflowService {
       // guardar las nuevas respuestas: se conservan los soportes normales
       // del formulario, pero se vacían las plantillas y firmas del paso 2.
       const archivosDiferidos = await queryRunner.query(
-        `SELECT sa.sa_id, sa.sa_cloudinary_public_id, sa.sa_resource_type
+        `SELECT sa.sa_id, sa.sa_id_almacenamiento, sa.sa_resource_type
          FROM Solicitud_archivo sa
          JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
          JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tdo_id
@@ -2023,10 +2023,10 @@ export class SolicitudesWorkflowService {
       // física es secundaria y no debe deshacer el reinicio si el proveedor
       // de almacenamiento ya no encuentra algún archivo.
       for (const archivo of archivosDiferidos) {
-        if (!archivo.sa_cloudinary_public_id) continue;
+        if (!archivo.sa_id_almacenamiento) continue;
         try {
           await this.storageService.destroy(
-            archivo.sa_cloudinary_public_id,
+            archivo.sa_id_almacenamiento,
             archivo.sa_resource_type,
           );
         } catch (storageError) {

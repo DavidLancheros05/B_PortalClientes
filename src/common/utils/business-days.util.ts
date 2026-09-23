@@ -22,9 +22,7 @@ function normalizeToDate(value: string | Date): Date {
   );
 }
 
-export function buildHolidaySet(
-  holidays: Array<string | Date> = [],
-): Set<string> {
+export function buildHolidaySet(holidays: Array<string | Date>): Set<string> {
   const holidayKeys = new Set<string>();
 
   for (const holiday of holidays) {
@@ -38,40 +36,41 @@ export function buildHolidaySet(
 }
 
 // 0=domingo, 1=lunes, ..., 6=sábado (misma convención que Date.getUTCDay()).
-// Default preserva el comportamiento histórico (sábado y domingo).
-const DEFAULT_NON_BUSINESS_WEEKDAYS = new Set([0, 6]);
-
+// Sin default: los días no hábiles salen siempre de
+// param_dias_no_habiles_semana (ver HistorialWorkflowService
+// .cargarCalendarioHabil) — si llegan vacíos es un error de configuración,
+// no se asume sábado/domingo.
 export function buildNonBusinessWeekdaySet(
-  weekdays?: Array<number> | Set<number> | null,
+  weekdays: Array<number> | Set<number>,
 ): Set<number> {
-  if (!weekdays) return DEFAULT_NON_BUSINESS_WEEKDAYS;
   const set = weekdays instanceof Set ? weekdays : new Set(weekdays);
-  return set.size > 0 ? set : DEFAULT_NON_BUSINESS_WEEKDAYS;
+  if (set.size === 0) {
+    throw new Error(
+      'No hay días no hábiles de la semana configurados (param_dias_no_habiles_semana).',
+    );
+  }
+  return set;
 }
 
 export function isBusinessDay(
   date: Date,
-  holidayKeys?: Set<string>,
-  nonBusinessWeekdays: Set<number> = DEFAULT_NON_BUSINESS_WEEKDAYS,
+  holidayKeys: Set<string>,
+  nonBusinessWeekdays: Set<number>,
 ): boolean {
   if (nonBusinessWeekdays.has(date.getUTCDay())) {
     return false;
   }
 
-  if (!holidayKeys || holidayKeys.size === 0) {
-    return true;
-  }
-
   return !holidayKeys.has(toDateKey(date));
 }
 
-// Suma días hábiles, saltando los días de la semana configurados como no
-// hábiles (sábado/domingo por defecto) y festivos opcionales.
+// Suma días hábiles, saltando los días de la semana no hábiles y los
+// festivos configurados en BD.
 export function addBusinessDays(
   startDate: Date,
   days: number,
-  holidays: Array<string | Date> = [],
-  nonBusinessWeekdays?: Array<number> | Set<number> | null,
+  holidays: Array<string | Date>,
+  nonBusinessWeekdays: Array<number> | Set<number>,
 ): Date {
   const result = new Date(startDate.getTime());
   const holidayKeys = buildHolidaySet(holidays);

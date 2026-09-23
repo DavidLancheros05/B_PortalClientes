@@ -54,7 +54,7 @@ export class ClienteArchivoService {
     );
 
     let promovidos = 0;
-    // Fallas de duplicado (ej. blip transitorio de Cloudinary) no deben
+    // Fallas de duplicado (ej. falla transitoria del almacenamiento) no deben
     // tumbar la aprobación ni el resto de la promoción — pero antes se
     // perdían en un log que nadie revisaba, dejando al cliente con un
     // documento "vigente" que en realidad nunca quedó disponible para
@@ -66,7 +66,7 @@ export class ClienteArchivoService {
       [];
 
     for (const doc of documentos) {
-      // Duplicado real en Cloudinary (no solo copiar la URL): el archivo
+      // Duplicado real en el almacenamiento (no solo copiar la URL): el archivo
       // "definitivo" del cliente debe ser un asset propio e independiente,
       // para que reemplazar/eliminar el original en la solicitud aprobada
       // (storageService.destroy()) no rompa el archivo consolidado del
@@ -115,7 +115,7 @@ export class ClienteArchivoService {
           `UPDATE Cliente_archivo SET
              ca_sa_id = @0, ca_nombre_original = @1, ca_ruta_almacenamiento = @2,
              ca_tipo_mime = @3, ca_fecha_emision = @4, ca_fecha_vencimiento = @5,
-             ca_cloudinary_public_id = @6, ca_resource_type = @7,
+             ca_id_almacenamiento = @6, ca_resource_type = @7,
              ca_created_at = GETDATE()
            WHERE ca_cli_id = @8 AND ca_tdo_id = @9`,
           [...params, clienteId, doc.tdo_id],
@@ -125,7 +125,7 @@ export class ClienteArchivoService {
           `INSERT INTO Cliente_archivo
              (ca_cli_id, ca_tdo_id, ca_sa_id, ca_nombre_original, ca_ruta_almacenamiento,
               ca_tipo_mime, ca_fecha_emision, ca_fecha_vencimiento,
-              ca_cloudinary_public_id, ca_resource_type)
+              ca_id_almacenamiento, ca_resource_type)
            VALUES (@8, @9, @0, @1, @2, @3, @4, @5, @6, @7)`,
           [...params, clienteId, doc.tdo_id],
         );
@@ -213,7 +213,7 @@ export class ClienteArchivoService {
     const [inserted] = await this.dataSource.query(
       `INSERT INTO Solicitud_archivo
          (sa_sol_id, sa_fp_id, sa_nombre_original, sa_nombre_guardado, sa_tipo_mime,
-          sa_ruta_almacenamiento, sa_cargado_por, sa_estado, sa_cloudinary_public_id,
+          sa_ruta_almacenamiento, sa_cargado_por, sa_estado, sa_id_almacenamiento,
           sa_resource_type, sa_created_at, sa_fecha_emision, sa_fecha_vencimiento)
        OUTPUT INSERTED.sa_id
        VALUES (@0, @1, @2, @3, @4, @5, @6, 'activo', @7, @8, GETDATE(), @9, @10)`,
@@ -263,12 +263,21 @@ export class ClienteArchivoService {
 
     if (!filas || filas.length === 0) return true;
 
-    const hoy = new Date();
-    hoy.setHours(0, 0, 0, 0);
+    // ca_fecha_vencimiento es `date`: llega como medianoche UTC. Se compara
+    // contra el día de hoy también en UTC; con setHours (hora local) un
+    // proceso en UTC-5 corría el corte un día (ver business-days.util.ts).
+    // Sin fecha de vencimiento = documento que no vence.
+    const ahora = new Date();
+    const hoyUtc = Date.UTC(
+      ahora.getUTCFullYear(),
+      ahora.getUTCMonth(),
+      ahora.getUTCDate(),
+    );
 
     return filas.some(
       (f: any) =>
-        f.ca_fecha_vencimiento && new Date(f.ca_fecha_vencimiento) < hoy,
+        f.ca_fecha_vencimiento &&
+        new Date(f.ca_fecha_vencimiento).getTime() < hoyUtc,
     );
   }
 }

@@ -23,7 +23,6 @@ export class SolicitudClienteDto {
 
   // Datos del negocio
   sol_consumo_mensual_proyectado?: number;
-  sol_es_zona_franca?: boolean;
 
   // Aprobación financiera
   sol_cupo_aprobado?: number;

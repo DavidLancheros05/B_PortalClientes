@@ -389,7 +389,7 @@ export class SolicitudesRespuestasService {
 
       const sqlArchivo = `
         INSERT INTO Solicitud_archivo
-        (sa_sol_id, sa_fp_id, sa_nombre_original, sa_nombre_guardado, sa_tamaño_bytes, sa_tipo_mime, sa_ruta_almacenamiento, sa_cargado_por, sa_estado, sa_checksum_archivo, sa_cloudinary_public_id, sa_resource_type, sa_created_at, sa_fecha_emision, sa_fecha_vencimiento)
+        (sa_sol_id, sa_fp_id, sa_nombre_original, sa_nombre_guardado, sa_tamaño_bytes, sa_tipo_mime, sa_ruta_almacenamiento, sa_cargado_por, sa_estado, sa_checksum_archivo, sa_id_almacenamiento, sa_resource_type, sa_created_at, sa_fecha_emision, sa_fecha_vencimiento)
         VALUES (@0, @1, @2, @3, @4, @5, @6, @7, @8, @9, @10, @11, GETDATE(), @12, @13)
       `;
 
@@ -520,7 +520,7 @@ export class SolicitudesRespuestasService {
     const sql = `
       SELECT sa_id, sa_sol_id, sa_fp_id, sa_nombre_original, sa_nombre_guardado,
              sa_tamaño_bytes, sa_tipo_mime, sa_ruta_almacenamiento, sa_cargado_por,
-             sa_estado, sa_created_at as fecha_carga, sa_cloudinary_public_id,
+             sa_estado, sa_created_at as fecha_carga, sa_id_almacenamiento,
              sa_resource_type
       FROM Solicitud_archivo
       WHERE sa_id = @0 AND sa_sol_id = @1 AND sa_estado = 'activo'
@@ -535,9 +535,9 @@ export class SolicitudesRespuestasService {
     }
 
     const archivo = result[0];
-    const downloadUrl = archivo.sa_cloudinary_public_id
+    const downloadUrl = archivo.sa_id_almacenamiento
       ? this.storageService.buildDownloadUrl(
-          archivo.sa_cloudinary_public_id,
+          archivo.sa_id_almacenamiento,
           archivo.sa_resource_type,
           archivo.sa_nombre_original,
           true, // inline: se abre en el navegador, no fuerza descarga
@@ -555,7 +555,7 @@ export class SolicitudesRespuestasService {
     try {
       // Verificar que el archivo existe y pertenece a la solicitud
       const archivoResult = await queryRunner.query(
-        `SELECT sa_id, sa_nombre_guardado, sa_ruta_almacenamiento, sa_cloudinary_public_id, sa_resource_type
+        `SELECT sa_id, sa_nombre_guardado, sa_ruta_almacenamiento, sa_id_almacenamiento, sa_resource_type
          FROM Solicitud_archivo
          WHERE sa_id = @0 AND sa_sol_id = @1`,
         [saId, solicitudId],
@@ -580,9 +580,9 @@ export class SolicitudesRespuestasService {
       await queryRunner.commitTransaction();
 
       // Intentar eliminar el archivo del almacenamiento (no fallar si no existe)
-      if (archivo.sa_cloudinary_public_id) {
+      if (archivo.sa_id_almacenamiento) {
         await this.storageService.destroy(
-          archivo.sa_cloudinary_public_id,
+          archivo.sa_id_almacenamiento,
           archivo.sa_resource_type,
         );
       }

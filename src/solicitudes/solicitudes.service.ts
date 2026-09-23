@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import axios from 'axios';
 import { addBusinessDays } from '../common/utils/business-days.util';
+import { obtenerVersionFormularioActivo } from '../common/utils/formulario-activo.util';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { HistorialWorkflowService } from '../workflow/historial/historial-workflow.service';
 import { FormularioRenderizableService } from './formulario-renderizable.service';
@@ -89,10 +90,7 @@ export class SolicitudesService {
   }
 
   async crearSolicitud(body: any) {
-    console.log(
-      '📦 Body recibido (SQL directo):',
-      JSON.stringify(body, null, 2),
-    );
+
 
     const queryRunner = this.dataSource.createQueryRunner();
 
@@ -100,172 +98,86 @@ export class SolicitudesService {
     await queryRunner.startTransaction();
 
     try {
-      // 1. Validar
+
       const clienteId = body.cliente_id || body.solicitud?.cliente_id;
 
       if (!clienteId) {
         throw new Error('Falta cliente_id');
       }
 
-      // 1.5. Validar que no exista ya una solicitud en trámite (BORRADOR,
-      // PENDIENTE o REVISIÓN) para este cliente. Antes solo bloqueaba
-      // BORRADOR — el bloqueo de PENDIENTE/REVISIÓN vivía nada más en el
-      // frontend (SolicitudFormContent.tsx::useUltimaSolicitud), que es
-      // saltable por cualquier camino que no pase por ese formulario
-      // puntual (llamada directa a la API, otra herramienta interna,
-      // etc.) — confirmado en vivo: un cliente terminó con dos solicitudes
-      // activas a la vez. Mismo criterio (estados 1/2/3) que ya usa
-      // AmpliacionCupoService.create() para el mismo problema.
-      const solicitudEnTramite = await queryRunner.query(
-        `SELECT TOP 1 sol_id, sol_numero, sol_ses_id
-         FROM solicitudes
-         WHERE sol_cli_id = @0 AND sol_ses_id IN (1, 2, 3)
-         ORDER BY sol_id DESC`,
+      // Estados "en trámite" por código (llave estable del flujo); el nombre
+      // que ve el usuario sale de solicitud_estados.
+      const [solicitudEnTramite] = await queryRunner.query(
+        `SELECT TOP 1 s.sol_numero, se.ses_nombre
+         FROM solicitudes s
+         JOIN solicitud_estados se ON se.ses_id = s.sol_ses_id
+         WHERE s.sol_cli_id = @0
+           AND se.ses_codigo IN ('BORRADOR', 'PENDIENTE', 'REVISION')
+         ORDER BY s.sol_id DESC`,
         [clienteId],
       );
 
-      if (solicitudEnTramite && solicitudEnTramite.length > 0) {
-        const nombresEstado: Record<number, string> = {
-          1: 'en borrador',
-          2: 'pendiente',
-          3: 'en revisión',
-        };
-        const estadoTexto =
-          nombresEstado[solicitudEnTramite[0].sol_ses_id] || 'en trámite';
+      if (solicitudEnTramite) {
         throw new Error(
-          `El cliente ya tiene una solicitud ${estadoTexto} (No. ${solicitudEnTramite[0].sol_numero}). Complétala o resuélvela antes de crear una nueva.`,
+          `El cliente ya tiene una solicitud en estado ${solicitudEnTramite.ses_nombre} (No. ${solicitudEnTramite.sol_numero}). Complétala o resuélvela antes de crear una nueva.`,
         );
       }
 
-      // 2. Asegurar esZonaFranca
-      const esZonaFranca =
-        body.esZonaFranca ?? body.solicitud?.esZonaFranca ?? false;
-      console.log('⚠️  Usando esZonaFranca:', esZonaFranca);
-
-      // 3. Generar número único del consecutivo
+      // Generar número único del consecutivo
       const numeroSolicitud =
         await this.obtenerSiguienteNumeroSolicitud(queryRunner);
       const now = new Date();
 
-      // Obtener días configurados para cada etapa del workflow — una sola
-      // query para las 5 áreas en vez de 5 round-trips secuenciales
-      // (mismo criterio de antes: por área, la fila con mayor pdr_id).
-      const diasRespuestaResult = await queryRunner.query(`
-        SELECT pdr_area, pdr_dias, pdr_id
-        FROM param_dias_respuesta_solicitudes
-        WHERE pdr_estado = 1
-          AND UPPER(LTRIM(RTRIM(pdr_area))) IN (
-            'EJECUTIVO NEGOCIOS',
-            'AUXILIAR SERVICIO CLIENTE',
-            'OFICIAL CUMPLIMIENTO',
-            'COMITÉ CRÉDITO 1',
-            'COMITÉ CRÉDITO 2'
-          )
-        ORDER BY pdr_id DESC
-      `);
-      const obtenerDiasRespuesta = (area: string, fallback: number) => {
-        const fila = (diasRespuestaResult || []).find(
-          (r: any) => String(r.pdr_area).toUpperCase().trim() === area,
-        );
-        return fila ? Number(fila.pdr_dias) : fallback;
-      };
-      const diasRespuestaEjecutivo = obtenerDiasRespuesta(
-        'EJECUTIVO NEGOCIOS',
-        1,
+      // Días por etapa unidos por wet_id (no por el nombre del área, que se
+      // edita en parametrización) y calendario hábil desde BD. Sin
+      // defaults: si falta cualquier dato, revienta.
+      const dias = await this.historialWorkflowService.obtenerDiasRespuestaPorEtapa(
+        queryRunner,
+        ['EJN', 'ASC', 'OFC', 'CC1', 'CC2'],
       );
-      const diasRespuestaAuxiliar = obtenerDiasRespuesta(
-        'AUXILIAR SERVICIO CLIENTE',
-        3,
-      );
-      const diasRespuestaOficial = obtenerDiasRespuesta(
-        'OFICIAL CUMPLIMIENTO',
-        3,
-      );
-      const diasRespuestaCC1 = obtenerDiasRespuesta('COMITÉ CRÉDITO 1', 3);
-      const diasRespuestaCC2 = obtenerDiasRespuesta('COMITÉ CRÉDITO 2', 3);
-
-      let festivos: any[] = [];
-      try {
-        const festivosResult = await queryRunner.query(`
-          SELECT fes_fecha AS fecha
-          FROM Festivos
-          WHERE fes_co_id IS NULL
-        `);
-        festivos = (festivosResult || [])
-          .map((row: any) => row?.fecha)
-          .filter((value: any) => Boolean(value));
-      } catch (error) {
-        console.warn('⚠️ Tabla festivos no encontrada, usando array vacío');
-        festivos = [];
-      }
-
-      let diasNoHabilesSemana: number[] | undefined;
-      try {
-        const diasNoHabilesResult = await queryRunner.query(`
-          SELECT dsh_dia_semana AS dia
-          FROM param_dias_no_habiles_semana
-          WHERE dsh_co_id IS NULL AND dsh_activo = 1
-        `);
-        diasNoHabilesSemana = (diasNoHabilesResult || [])
-          .map((row: any) => Number(row?.dia))
-          .filter((value: number) => !Number.isNaN(value));
-      } catch (error) {
-        console.warn(
-          '⚠️ Tabla param_dias_no_habiles_semana no encontrada, usando sábado/domingo por defecto',
-        );
-        diasNoHabilesSemana = undefined;
-      }
+      const { festivos, diasNoHabilesSemana } =
+        await this.historialWorkflowService.cargarCalendarioHabil(queryRunner);
 
       // Encadenadas: cada etapa asume que la anterior se resolvió justo a
       // tiempo, no que todas arrancan el mismo día de creación (si no, dos
       // etapas con el mismo plazo configurado caen en la misma fecha).
       const fechaEstimadaEjecutivo = addBusinessDays(
         now,
-        diasRespuestaEjecutivo,
+        dias.EJN,
         festivos,
         diasNoHabilesSemana,
       );
 
       const fechaEstimadaAuxiliar = addBusinessDays(
         fechaEstimadaEjecutivo,
-        diasRespuestaAuxiliar,
+        dias.ASC,
         festivos,
         diasNoHabilesSemana,
       );
 
       const fechaEstimadaOficial = addBusinessDays(
         fechaEstimadaAuxiliar,
-        diasRespuestaOficial,
+        dias.OFC,
         festivos,
         diasNoHabilesSemana,
       );
 
       const fechaEstimadaCC1 = addBusinessDays(
         fechaEstimadaOficial,
-        diasRespuestaCC1,
+        dias.CC1,
         festivos,
         diasNoHabilesSemana,
       );
 
       const fechaEstimadaCC2 = addBusinessDays(
         fechaEstimadaCC1,
-        diasRespuestaCC2,
+        dias.CC2,
         festivos,
         diasNoHabilesSemana,
       );
 
-      const formularioActivoResult = await queryRunner.query(`
-        SELECT TOP 1 ISNULL(
-          f.frs_version_activa,
-          (SELECT MAX(fv.fv_numero) FROM Formulario_versiones fv WHERE fv.fv_frs_id = f.frs_id)
-        ) AS formulario_version
-        FROM Formularios_solicitudes f
-        WHERE f.frs_activo = 1
-        ORDER BY f.frs_id
-      `);
-      const formularioVersion = Number(
-        formularioActivoResult?.[0]?.formulario_version ?? 1,
-      );
+      const formularioVersion =
+        await obtenerVersionFormularioActivo(queryRunner);
 
       // 3.5 Obtener datos del cliente (ejecutivo)
       const clienteResult = await queryRunner.query(
@@ -287,7 +199,7 @@ export class SolicitudesService {
           sol_cli_id, sol_ses_id,
           sol_fecha_creacion, sol_created_at,
           sol_updated_at, sol_version, sol_formulario_version, sol_usr_id_crea,
-          sol_numero, sol_es_zona_franca,
+          sol_numero,
           sol_ejng_id, sol_fecha_envio,
           sol_fecha_est_gest_ejn, sol_fecha_est_gest_asc,
           sol_fecha_est_gest_oc, sol_fecha_est_gest_cc1,
@@ -296,9 +208,9 @@ export class SolicitudesService {
           sol_wet_id, sol_wee_id, sol_observacion_cliente
         ) VALUES (
           @0, @1, @2, @3,
-          @4, @5, @6, @7, @8, @9,
-          @10, @11, @12, @13, @14, @15,
-          @16, @17, @18, @19, @20, @21
+          @4, @5, @6, @7, @8,
+          @9, @10, @11, @12, @13, @14,
+          @15, @16, @17, @18, @19, @20
         );
 
         SELECT SCOPE_IDENTITY() AS sol_id;
@@ -327,7 +239,14 @@ export class SolicitudesService {
       }
 
       // 5. Determinar estado inicial y fecha envío
-      const estadoId = body.estado_id || 1; // Default a BORRADOR si no se especifica
+      // 1=BORRADOR o 2=PENDIENTE; sin default. Number() para que "2" (texto)
+      // no rompa las comparaciones === de abajo.
+      const estadoId = Number(body.estado_id);
+      if (estadoId !== 1 && estadoId !== 2) {
+        throw new Error(
+          `estado_id inválido para crear una solicitud: ${body.estado_id} (debe ser 1=BORRADOR o 2=PENDIENTE).`,
+        );
+      }
       const fechaEnvio = estadoId === 2 ? now : null; // Si es PENDIENTE, establecer fecha de envío
 
       // 5.0 "Documentos diferidos": preguntas ocultas del formulario en vivo
@@ -359,20 +278,22 @@ export class SolicitudesService {
               SELECT 1 FROM Clientes c WHERE c.cli_id = @1 AND c.cli_es_distribuidor = 1
             ))
           `,
-          [formularioVersion || 1, clienteId],
+          [formularioVersion, clienteId],
         );
       }
       const hayDocumentosDiferidos = documentosDiferidosFaltantes.length > 0;
 
       let resultadoFinalId = resultadoPdId;
       if (hayDocumentosDiferidos) {
-        const resultadoPendDocs = await queryRunner.query(
-          `SELECT TOP 1 wee_id
-           FROM workflow_estado_etapa
-           WHERE wee_codigo IN ('PEND_FIRMA', 'PEND_FIRMA')
-           ORDER BY CASE wee_codigo WHEN 'PEND_FIRMA' THEN 0 ELSE 1 END`,
+        const [resultadoPendDocs] = await queryRunner.query(
+          `SELECT wee_id FROM workflow_estado_etapa WHERE wee_codigo = 'PEND_FIRMA'`,
         );
-        resultadoFinalId = resultadoPendDocs?.[0]?.wee_id ?? resultadoPdId;
+        if (!resultadoPendDocs) {
+          throw new Error(
+            "No existe el resultado 'PEND_FIRMA' en workflow_estado_etapa.",
+          );
+        }
+        resultadoFinalId = resultadoPendDocs.wee_id;
       }
 
       // 5.1 Determinar etapa inicial según el estado
@@ -407,35 +328,27 @@ export class SolicitudesService {
         // Usuario (puede ser NULL si es un cliente)
         body.usuario_crea || null, // @7 usuario_crea
 
-        // Número de solicitud y zona franca
+        // Número de solicitud (zona franca ya no se guarda aquí: vive en la
+        // respuesta USUARIO_ZONA_FRANCA del formulario)
         numeroSolicitud, // @8 numero_solicitud
-        esZonaFranca ? 1 : 0, // @9 es_zona_franca
 
         // ejecutivo_id heredado del cliente
-        ejecutivoId, // @10 ejecutivo_id
-        fechaEnvio, // @11 fecha_envio (now si estado_id=2, null si estado_id=1)
+        ejecutivoId, // @9 ejecutivo_id
+        fechaEnvio, // @10 fecha_envio (now si estado_id=2, null si estado_id=1)
 
         // Fechas estimadas para cada etapa del workflow
-        fechaEstimadaEjecutivo, // @12 sol_fecha_est_gest_ejn
-        fechaEstimadaAuxiliar, // @13 sol_fecha_est_gest_asc
-        fechaEstimadaOficial, // @14 sol_fecha_est_gest_oc
-        fechaEstimadaCC1, // @15 sol_fecha_est_gest_cc1
-        fechaEstimadaCC2, // @16 sol_fecha_est_gest_cc2
+        fechaEstimadaEjecutivo, // @11 sol_fecha_est_gest_ejn
+        fechaEstimadaAuxiliar, // @12 sol_fecha_est_gest_asc
+        fechaEstimadaOficial, // @13 sol_fecha_est_gest_oc
+        fechaEstimadaCC1, // @14 sol_fecha_est_gest_cc1
+        fechaEstimadaCC2, // @15 sol_fecha_est_gest_cc2
 
-        null, // @17 motivo_rechazo_id
-        null, // @18 usuario_modifica
-        etapaActualId, // @19 sol_wet_id (CLI si BORRADOR, EJN si PENDIENTE)
-        resultadoFinalId, // @20 sol_wee_id (PENDIENTE, o PEND_FIRMA si faltan documentos diferidos)
-        observacionClienteInicial, // @21 sol_observacion_cliente
+        null, // @16 motivo_rechazo_id
+        null, // @17 usuario_modifica
+        etapaActualId, // @18 sol_wet_id (CLI si BORRADOR, EJN si PENDIENTE)
+        resultadoFinalId, // @19 sol_wee_id (PENDIENTE, o PEND_FIRMA si faltan documentos diferidos)
+        observacionClienteInicial, // @20 sol_observacion_cliente
       ];
-
-      console.log('🚀 Ejecutando SQL directo para solicitud...');
-      console.log('📊 SQL:', insertSolicitudSQL);
-      console.log('📊 Parámetros:', solicitudParams);
-      console.log('📊 Parámetros detallado:');
-      solicitudParams.forEach((p, i) => {
-        console.log(`  @${i}: ${typeof p} = ${JSON.stringify(p)}`);
-      });
 
       const solicitudResult = await queryRunner.query(
         insertSolicitudSQL,
@@ -447,8 +360,7 @@ export class SolicitudesService {
         throw new Error('No se obtuvo ID de la solicitud');
       }
 
-      console.log('✅ Solicitud creada con ID:', solicitudId);
-
+ 
       // 6. Registrar en historial de estados
       const histCols = await this.resolveHistorialColumns();
       const historialSQL = `
@@ -462,10 +374,7 @@ export class SolicitudesService {
         estadoId,
         usuarioHistorial,
       ]);
-      console.log(`✅ Historial de estado registrado (estado_id=${estadoId})`);
 
-      // 6.5 Registrar transición inicial en workflow historial SOLO si no es BORRADOR
-      // BORRADOR es solo un estado local de edición, no forma parte del workflow
       if (estadoId !== 1) {
         const etapaTransicion = estadoId === 2 ? etapaActualId : null;
         const mensajeTransicion = hayDocumentosDiferidos
@@ -482,17 +391,15 @@ export class SolicitudesService {
               comentario: mensajeTransicion,
             },
           );
-          console.log('✅ Transición inicial de workflow registrada');
         }
       } else {
         console.log(
-          '✅ Estado BORRADOR: No se registra en workflow_historial (solo en estados_hist)',
+          'Estado BORRADOR: No se registra en workflow_historial (solo en estados_hist)',
         );
       }
 
       // 7. Insertar respuestas (también con parámetros nombrados)
       if (body.respuestas?.length > 0) {
-        console.log(`📝 Insertando ${body.respuestas.length} respuestas...`);
 
         for (const respuesta of body.respuestas) {
           const insertRespuestaSQL = `
@@ -513,16 +420,11 @@ export class SolicitudesService {
 
           await queryRunner.query(insertRespuestaSQL, respuestaParams);
         }
-
-        console.log('✅ Respuestas insertadas');
       }
 
       // 8. Commit
       await queryRunner.commitTransaction();
 
-      // Solo notificar cuando la solicitud realmente se envía (estado
-      // PENDIENTE, etapa EJN) — un guardado en BORRADOR no debe generar el
-      // correo de "solicitud registrada" al cliente ni al ejecutivo.
       if (estadoId === 2 && !hayDocumentosDiferidos) {
         try {
           await this.notificacionesService.notificarRegistroSolicitud(
