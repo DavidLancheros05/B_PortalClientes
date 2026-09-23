@@ -3,7 +3,6 @@ import {
   Get,
   Query,
   ParseIntPipe,
-  BadRequestException,
   UseGuards,
   ForbiddenException,
 } from '@nestjs/common';
@@ -20,16 +19,16 @@ export class MaestrosController {
     return this.maestrosService.getPaises();
   }
 
+  // ParseIntPipe: un valor no numérico ("abc") llegaba como NaN al SQL y
+  // terminaba en 500; ahora es un 400 claro (y también si falta).
   @Get('departamentos')
-  getDepartamentos(@Query('pais_id') pais_id: string) {
-    if (!pais_id) throw new BadRequestException('pais_id es requerido');
-    return this.maestrosService.getDepartamentos(parseInt(pais_id, 10));
+  getDepartamentos(@Query('pais_id', ParseIntPipe) pais_id: number) {
+    return this.maestrosService.getDepartamentos(pais_id);
   }
 
   @Get('ciudades')
-  getCiudades(@Query('depto_id') depto_id: string) {
-    if (!depto_id) throw new BadRequestException('depto_id es requerido');
-    return this.maestrosService.getCiudades(parseInt(depto_id, 10));
+  getCiudades(@Query('depto_id', ParseIntPipe) depto_id: number) {
+    return this.maestrosService.getCiudades(depto_id);
   }
 
   @Get('catalogo')

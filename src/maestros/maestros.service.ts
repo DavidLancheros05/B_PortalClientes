@@ -1,4 +1,8 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { TABLAS, COLUMNAS } from '../common/constants/tablas.constants';
 
@@ -7,12 +11,141 @@ interface ColumnInfo {
   dataType: string;
 }
 
+// Una combinación tabla/columnas que el formulario tiene configurada como
+// catálogo — única forma legítima de consultar /maestros/catalogo.
+interface CatalogoPermitido {
+  baseDatos: string;
+  tabla: string;
+  columna: string;
+  pk: string;
+  filtro: string;
+  condicion: string;
+}
+
+// Límite de filas por catálogo: evita que una tabla grande tumbe el proceso.
+const MAX_FILAS_CATALOGO = 5000;
+
+// Defensa extra por si alguien configura mal un catálogo: nunca devolver
+// columnas de credenciales aunque estén en la lista permitida.
+const COLUMNA_SENSIBLE = /pass|token|hash|secret|clave/i;
+
 @Injectable()
 export class MaestrosService {
   constructor(private readonly dataSource: DataSource) {}
 
+  private catalogosPermitidosCache:
+    | { expira: number; items: CatalogoPermitido[] }
+    | undefined;
+
   private isSafeIdentifier(value: string): boolean {
     return /^[A-Za-z0-9_]+$/.test(value);
+  }
+
+  // Lista permitida = lo configurado en Formulario_pregunta (fp_catalogo_*)
+  // + las columnas tipo CATALOGO dentro de preguntas TABLA
+  // (fp_tabla_columnas). Antes /maestros/catalogo aceptaba CUALQUIER tabla
+  // y columna de CUALQUIER base del servidor: un cliente logueado podía
+  // leer usuarios.usr_password. Cache corto (60s) para que un catálogo
+  // recién configurado en el editor quede disponible casi de inmediato.
+  private async getCatalogosPermitidos(): Promise<CatalogoPermitido[]> {
+    const ahora = Date.now();
+    if (this.catalogosPermitidosCache && this.catalogosPermitidosCache.expira > ahora) {
+      return this.catalogosPermitidosCache.items;
+    }
+
+    const norm = (v: unknown) =>
+      (typeof v === 'string' ? v : '').trim().toLowerCase();
+    const items: CatalogoPermitido[] = [];
+
+    const preguntas = await this.dataSource.query(`
+      SELECT fp_catalogo_base_datos, fp_catalogo_tabla, fp_catalogo_columna,
+             fp_catalogo_pk_column, fp_catalogo_filtro_columna,
+             fp_catalogo_columna_condicion
+      FROM Formulario_pregunta
+      WHERE fp_catalogo_tabla IS NOT NULL AND LTRIM(RTRIM(fp_catalogo_tabla)) <> ''
+    `);
+    for (const p of preguntas) {
+      items.push({
+        baseDatos: norm(p.fp_catalogo_base_datos),
+        tabla: norm(p.fp_catalogo_tabla),
+        columna: norm(p.fp_catalogo_columna),
+        pk: norm(p.fp_catalogo_pk_column),
+        filtro: norm(p.fp_catalogo_filtro_columna),
+        condicion: norm(p.fp_catalogo_columna_condicion),
+      });
+    }
+
+    const tablas = await this.dataSource.query(`
+      SELECT fp_tabla_columnas
+      FROM Formulario_pregunta
+      WHERE fp_tabla_columnas LIKE '%catalogo_tabla%'
+    `);
+    for (const t of tablas) {
+      let columnas: any[] = [];
+      try {
+        columnas = JSON.parse(t.fp_tabla_columnas);
+      } catch {
+        continue;
+      }
+      if (!Array.isArray(columnas)) continue;
+      for (const c of columnas) {
+        if (!c?.catalogo_tabla) continue;
+        items.push({
+          baseDatos: norm(c.catalogo_base_datos),
+          tabla: norm(c.catalogo_tabla),
+          columna: norm(c.catalogo_columna),
+          pk: norm(c.catalogo_pk_column),
+          filtro: norm(c.catalogo_columna_filtro),
+          condicion: norm(c.catalogo_columna_condicion),
+        });
+      }
+    }
+
+    this.catalogosPermitidosCache = { expira: ahora + 60_000, items };
+    return items;
+  }
+
+  // Cada parámetro pedido debe coincidir con lo configurado (o venir vacío
+  // y dejar que se adivine, igual que antes, pero siempre dentro de una
+  // tabla permitida).
+  private async verificarCatalogoPermitido(pedido: {
+    baseDatos?: string;
+    tabla: string;
+    columna?: string;
+    pk?: string;
+    filtro?: string;
+    condicion?: string;
+  }) {
+    for (const col of [pedido.columna, pedido.pk, pedido.filtro, pedido.condicion]) {
+      if (col && COLUMNA_SENSIBLE.test(col)) {
+        throw new ForbiddenException('Catálogo no permitido');
+      }
+    }
+
+    const norm = (v?: string) => String(v ?? '').trim().toLowerCase();
+    const coincide = (pedidoValor: string | undefined, configurado: string) =>
+      !norm(pedidoValor) || norm(pedidoValor) === configurado;
+
+    const permitidos = await this.getCatalogosPermitidos();
+    const ok = permitidos.some(
+      (p) =>
+        p.tabla === norm(pedido.tabla) &&
+        p.baseDatos === norm(pedido.baseDatos) &&
+        coincide(pedido.columna, p.columna) &&
+        coincide(pedido.pk, p.pk) &&
+        coincide(pedido.filtro, p.filtro) &&
+        coincide(pedido.condicion, p.condicion),
+    );
+    if (!ok) {
+      throw new ForbiddenException('Catálogo no permitido');
+    }
+  }
+
+  // Condición "fila activa" tolerante al tipo de columna (BIT, 1/0, 'A',
+  // 'ACTIVO', 'S'...). El camino general usaba `= 1` a secas y reventaba
+  // con 500 si la columna de estado era texto.
+  private condicionActivo(columna: string): string {
+    return `(TRY_CONVERT(BIT, [${columna}]) = 1 OR UPPER(LTRIM(RTRIM(CAST([${columna}] AS NVARCHAR(20))))) IN ('TRUE', 'ACTIVO', 'A', 'SI', 'S'))`;
   }
 
   private normalize(value: string): string {
@@ -32,8 +165,12 @@ export class MaestrosService {
       SELECT COLUMN_NAME
       FROM [${targetDb}].INFORMATION_SCHEMA.COLUMNS
       WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = @0
-        AND (LOWER(COLUMN_NAME) LIKE '%estado%' OR LOWER(COLUMN_NAME) LIKE '%activo%')
-      ORDER BY CASE WHEN LOWER(COLUMN_NAME) LIKE '%estado%' THEN 0 ELSE 1 END
+        -- Solo "estado"/"activo" o terminadas en "_estado"/"_activo": antes
+        -- '%estado%' podía tomar p.ej. "estado_civil" y filtrar mal.
+        AND (LOWER(COLUMN_NAME) IN ('estado', 'activo')
+             OR LOWER(COLUMN_NAME) LIKE '%[_]estado'
+             OR LOWER(COLUMN_NAME) LIKE '%[_]activo')
+      ORDER BY CASE WHEN LOWER(COLUMN_NAME) LIKE '%estado' THEN 0 ELSE 1 END
       `,
       [tabla],
     );
@@ -239,6 +376,15 @@ export class MaestrosService {
       );
     }
 
+    await this.verificarCatalogoPermitido({
+      baseDatos,
+      tabla,
+      columna: columnaDescripcion,
+      pk: columnaId,
+      filtro: columnaFiltro,
+      condicion: columnaCondicion,
+    });
+
     const currentDbResult = await this.dataSource.query(
       `SELECT DB_NAME() AS db_name`,
     );
@@ -271,9 +417,7 @@ export class MaestrosService {
       } else {
         const estadoCol = await this.detectarColumnaEstado(targetDb, tabla);
         if (estadoCol) {
-          condicionesDirecto.push(
-            `(TRY_CONVERT(BIT, [${estadoCol}]) = 1 OR UPPER(LTRIM(RTRIM(CAST([${estadoCol}] AS NVARCHAR(20))))) IN ('TRUE', 'ACTIVO', 'A', 'SI', 'S'))`,
-          );
+          condicionesDirecto.push(this.condicionActivo(estadoCol));
         }
       }
       if (columnaFiltro) {
@@ -286,7 +430,7 @@ export class MaestrosService {
           : '';
 
       const dataQueryDirecta = `
-        SELECT
+        SELECT TOP ${MAX_FILAS_CATALOGO}
           TRY_CONVERT(INT, [${columnaId}]) AS op_id,
           CAST([${columnaDescripcion}] AS NVARCHAR(255)) AS op_descripcion
         FROM [${targetDb}].[dbo].[${tabla}]
@@ -377,7 +521,7 @@ export class MaestrosService {
       );
       paramsGeneral.push(valorCondicion);
     } else if (activeColumn) {
-      condiciones.push(`[${activeColumn}] = 1`);
+      condiciones.push(this.condicionActivo(activeColumn));
     }
     if (columnaFiltro) {
       condiciones.push(`[${columnaFiltro}] = @${paramsGeneral.length}`);
@@ -387,7 +531,7 @@ export class MaestrosService {
       condiciones.length > 0 ? `WHERE ${condiciones.join(' AND ')}` : '';
 
     const dataQuery = `
-      SELECT
+      SELECT TOP ${MAX_FILAS_CATALOGO}
         TRY_CONVERT(INT, [${effectiveIdColumn}]) AS op_id,
         CAST([${effectiveLabelColumn}] AS NVARCHAR(255)) AS op_descripcion
       FROM [${targetDb}].[dbo].[${tabla}]
