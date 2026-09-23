@@ -6,7 +6,6 @@ import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
 import { UsuarioModule } from '../usuarios/usuario.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { UsersModule } from '../users/users.module';
 import { PermissionsModule } from '../permissions/permissions.module';
 import { NotificacionesModule } from '../notificaciones/notificaciones.module';
 
@@ -14,7 +13,6 @@ import { NotificacionesModule } from '../notificaciones/notificaciones.module';
   imports: [
     forwardRef(() => UsuarioModule),
     TypeOrmModule,
-    UsersModule,
     PermissionsModule,
     forwardRef(() => NotificacionesModule),
 

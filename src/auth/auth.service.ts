@@ -1,11 +1,9 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { DataSource } from 'typeorm';
-import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import axios from 'axios';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { UsersService } from '../users/users.service';
 import { PermissionsService } from '../permissions/permissions.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { passwordCoincide, hashPassword } from '../common/utils/password.util';
@@ -16,7 +14,6 @@ export class AuthService {
     @InjectDataSource()
     private readonly sistemaComercialDb: DataSource,
     private readonly jwtService: JwtService,
-    private readonly usersService: UsersService,
     private readonly permissionsService: PermissionsService,
     private readonly notificacionesService: NotificacionesService,
   ) {}
@@ -87,9 +84,15 @@ export class AuthService {
       [accessType, cuenta.id, tokenHash, expiraEn],
     );
 
-    const base = (process.env.PORTAL_CLIENTES_URL || '')
-      .replace(/\/login\/?$/, '')
-      .replace(/\/$/, '');
+    // Sin default: sin esta variable el correo saldría con un link relativo
+    // ("/reset-password?...") que no abre desde el cliente de correo.
+    const portalUrl = String(process.env.PORTAL_CLIENTES_URL || '').trim();
+    if (!portalUrl) {
+      throw new Error(
+        'Falta PORTAL_CLIENTES_URL en el entorno: no se puede armar el link de recuperación.',
+      );
+    }
+    const base = portalUrl.replace(/\/login\/?$/, '').replace(/\/$/, '');
     const resetUrl = `${base}/reset-password?token=${tokenCrudo}`;
 
     await this.notificacionesService.notificarResetPassword({
@@ -107,8 +110,13 @@ export class AuthService {
   async resetPassword(token: string, newPassword: string) {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
 
+    // Marcar como usado y leerlo en UNA sola sentencia: antes era SELECT y
+    // después UPDATE, y dos peticiones simultáneas con el mismo link pasaban
+    // las dos. Ahora solo una logra el UPDATE (rpt_usado = 0 en el WHERE).
     const rows = await this.sistemaComercialDb.query(
-      `SELECT rpt_id, rpt_tipo, rpt_usr_id FROM dbo.param_reset_password_tokens
+      `UPDATE dbo.param_reset_password_tokens
+       SET rpt_usado = 1
+       OUTPUT INSERTED.rpt_id, INSERTED.rpt_tipo, INSERTED.rpt_usr_id
        WHERE rpt_token_hash = @0 AND rpt_usado = 0 AND rpt_expira_en > SYSDATETIME()`,
       [tokenHash],
     );
@@ -130,11 +138,6 @@ export class AuthService {
     await this.sistemaComercialDb.query(
       `UPDATE dbo.${tabla} SET ${passColumna} = @0 WHERE ${idColumna} = @1`,
       [nuevaHash, row.rpt_usr_id],
-    );
-
-    await this.sistemaComercialDb.query(
-      `UPDATE dbo.param_reset_password_tokens SET rpt_usado = 1 WHERE rpt_id = @0`,
-      [row.rpt_id],
     );
 
     await this.invalidarSesiones(row.rpt_usr_id, tipo);
@@ -302,9 +305,15 @@ export class AuthService {
              ur.ur_activo, ur.ur_rol_id,
              r.rol_id, r.rol_nombre, r.rol_codigo
       FROM usuarios u
-      LEFT JOIN pc_usuario_rol ur ON u.usr_id = ur.ur_usuario_id
+      -- Solo roles activos (antes un rol desactivado podía quedar en el
+      -- JWT) y con ORDER BY para que con varios roles se elija siempre el
+      -- mismo (antes usuarioData[0] dependía del orden físico de SQL
+      -- Server). Los permisos reales salen de TODOS los roles activos vía
+      -- getModulesByUsuario / PermissionsService.resolverRolIds.
+      LEFT JOIN pc_usuario_rol ur ON u.usr_id = ur.ur_usuario_id AND ur.ur_activo = 1
       LEFT JOIN pc_roles r ON ur.ur_rol_id = r.rol_id
       WHERE u.usr_usuario = @0
+      ORDER BY r.rol_id
       `,
       [usuario],
     );
@@ -411,7 +420,7 @@ export class AuthService {
     const { data } = await axios.post(
       'https://www.google.com/recaptcha/api/siteverify',
       null,
-      { params: { secret, response: token } },
+      { params: { secret, response: token }, timeout: 10000 },
     );
 
     if (!data?.success) {
@@ -435,76 +444,5 @@ export class AuthService {
     } else {
       throw new UnauthorizedException('Tipo de acceso inválido');
     }
-  }
-
-  async login(email: string, password: string) {
-
-    const user = await this.usersService.getUserByEmail(email);
-
-    if (!user)
-      throw new UnauthorizedException('Usuario o contraseña incorrectos');
-
-    if (!user.usuario_activo)
-      throw new UnauthorizedException('Usuario inactivo');
-
-    const match = await bcrypt.compare(password, user.usuario_password_hash);
-    if (!match)
-      throw new UnauthorizedException('Usuario o contraseña incorrectos');
-
-    let cliente_id: number | null = user.cliente_id ?? null;
-    const rolCodigo = String(user.rol_codigo || '')
-      .toUpperCase()
-      .trim();
-    const isAdminRole =
-      rolCodigo === 'ADMIN' ||
-      rolCodigo === 'ADMINISTRACION' ||
-      rolCodigo === 'ADMINISTRACIÓN';
-
-    if (rolCodigo === 'CLIENTE') {
-      if (!user.cliente_habilita_acceso)
-        throw new UnauthorizedException('Cliente sin acceso habilitado');
-      cliente_id = user.cliente_id;
-    }
-
-    if (isAdminRole && !cliente_id) {
-      cliente_id = await this.usersService.assignOrCreateClientForAdmin(
-        user.usr_id,
-      );
-    }
-
-    const modulos = await this.permissionsService.getModulesByRole(user.rol_id);
-    const centrosOperacion = await this.usersService.getUserCentrosOperacion(
-      user.usr_id,
-    );
-    const centroDefault = centrosOperacion.find((c: any) => c.es_default);
-
-    const payload = {
-      usr_id: user.usr_id,
-      email: user.usuario_email,
-      rol: user.rol_codigo,
-      usuario_email: user.usuario_email,
-      rol_codigo: user.rol_codigo,
-      cliente_id,
-      co_id: centroDefault?.co_id ?? null,
-    };
-
-    return {
-      token: this.jwtService.sign(payload),
-      user: {
-        usr_id: user.usr_id,
-        nombre: user.nombre,
-        usuario_email: user.usuario_email,
-        usuario_activo: user.usuario_activo,
-        cliente_id,
-        co_id: centroDefault?.co_id ?? null,
-        centros_operacion: centrosOperacion,
-        rol: {
-          rol_id: user.rol_id,
-          nombre: user.rol_nombre,
-          codigo: user.rol_codigo,
-        },
-      },
-      modulos,
-    };
   }
 }
