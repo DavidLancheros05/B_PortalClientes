@@ -1,6 +1,6 @@
 ﻿import { Entity, Column, PrimaryColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { UsuarioEntity } from '../../usuarios/entities/usuario.entity';
-import { RoleEntity } from '../../modules/seguridad/roles/entities/role.entity';
+import { RoleEntity } from '../../seguridad/entities/role.entity';
 
 @Entity('pc_usuario_rol')
 export class UsuarioRolEntity {

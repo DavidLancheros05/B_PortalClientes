@@ -2,12 +2,11 @@ import { Module } from '@nestjs/common';
 import { SeguridadService } from './seguridad.service';
 import { SeguridadController } from './seguridad.controller';
 import { AuthModule } from '../auth/auth.module';
-import { RolesModule } from '../modules/seguridad/roles/roles.module';
 
 @Module({
-  imports: [AuthModule, RolesModule],
+  imports: [AuthModule],
   controllers: [SeguridadController],
   providers: [SeguridadService],
-  exports: [SeguridadService, RolesModule],
+  exports: [SeguridadService],
 })
 export class SeguridadModule {}

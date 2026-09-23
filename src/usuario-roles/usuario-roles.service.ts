@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { UsuarioRolEntity } from './entities/usuario-rol.entity';
 import { UsuarioEntity } from '../usuarios/entities/usuario.entity';
-import { RoleEntity } from '../modules/seguridad/roles/entities/role.entity';
+import { RoleEntity } from '../seguridad/entities/role.entity';
 
 @Injectable()
 export class UsuarioRolesService {
