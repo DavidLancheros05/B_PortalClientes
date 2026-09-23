@@ -1,10 +1,11 @@
 // backend/src/auth/auth.controller.ts
-import { Controller, Post, Body, Logger, Req, Res, UseGuards } from '@nestjs/common';
+import { Controller, Post, Patch, Body, Logger, Req, Res, UseGuards } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { MenuPositionDto } from './dto/menu-position.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { Public } from './public.decorator';
 
@@ -141,5 +142,21 @@ export class AuthController {
       path: '/',
     });
     return { ok: true };
+  }
+
+  // Preferencia "posición del menú" (arriba/izquierda) — por cuenta, no por
+  // dispositivo (antes vivía solo en localStorage, ver
+  // FRONTEND/src/hooks/useMenuPosition.ts).
+  @UseGuards(JwtAuthGuard)
+  @Patch('menu-position')
+  async actualizarPosicionMenu(
+    @Req() req: AuthRequest,
+    @Body() body: MenuPositionDto,
+  ) {
+    return this.authService.actualizarPosicionMenu(
+      req.user.usr_id,
+      req.user.tipo === 'cliente' ? 'cliente' : 'usuario',
+      body.position,
+    );
   }
 }

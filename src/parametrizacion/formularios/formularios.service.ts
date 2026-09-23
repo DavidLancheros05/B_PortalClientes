@@ -134,17 +134,13 @@ export class FormulariosService {
       INSERT INTO Formulario_versiones (
         fv_frs_id,
         fv_numero,
-        fv_cambios,
         fv_descripcion,
-        fv_fecha_cambio,
         fv_created_at
       )
       VALUES (
         @0,
         1,
         'Versión inicial',
-        'Versión inicial',
-        SYSDATETIME(),
         SYSDATETIME()
       )
     `,
@@ -256,9 +252,9 @@ export class FormulariosService {
       SELECT
         fv_id,
         fv_numero,
-        ISNULL(fv_descripcion, fv_cambios) AS version_descripcion,
-        ISNULL(fv_created_at, fv_fecha_cambio) AS created_at,
-        ISNULL(fv_created_by, fv_usr_id_cambio) AS created_by,
+        fv_descripcion AS version_descripcion,
+        fv_created_at AS created_at,
+        fv_created_by AS created_by,
         (SELECT COUNT(*) FROM Formulario_pregunta WHERE fp_frs_id = @0 AND ISNULL(fp_version, 1) = fv_numero) AS total_preguntas,
         -- Necesita este conteo por CADA versión a la vez, así que va inline
         -- como subquery correlacionada en vez de llamar a
@@ -408,41 +404,6 @@ export class FormulariosService {
     }
   }
 
-  private async resolveVersionColumns() {
-    const result = await this.dataSource.query(`
-      SELECT
-        CASE WHEN COL_LENGTH('Formulario_versiones','fv_descripcion') IS NOT NULL THEN 1 ELSE 0 END AS has_fv_descripcion,
-        CASE WHEN COL_LENGTH('Formulario_versiones','fv_cambios') IS NOT NULL THEN 1 ELSE 0 END AS has_fv_cambios,
-        CASE WHEN COL_LENGTH('Formulario_versiones','fv_created_at') IS NOT NULL THEN 1 ELSE 0 END AS has_fv_created_at,
-        CASE WHEN COL_LENGTH('Formulario_versiones','fv_fecha_cambio') IS NOT NULL THEN 1 ELSE 0 END AS has_fv_fecha_cambio,
-        CASE WHEN COL_LENGTH('Formulario_versiones','fv_created_by') IS NOT NULL THEN 1 ELSE 0 END AS has_fv_created_by,
-        CASE WHEN COL_LENGTH('Formulario_versiones','fv_usr_id_cambio') IS NOT NULL THEN 1 ELSE 0 END AS has_fv_usr_id_cambio
-    `);
-
-    const row = result[0] || {};
-
-    return {
-      descripcion:
-        Number(row.has_fv_descripcion) === 1
-          ? 'fv_descripcion'
-          : Number(row.has_fv_cambios) === 1
-            ? 'fv_cambios'
-            : null,
-      fecha:
-        Number(row.has_fv_created_at) === 1
-          ? 'fv_created_at'
-          : Number(row.has_fv_fecha_cambio) === 1
-            ? 'fv_fecha_cambio'
-            : null,
-      usuario:
-        Number(row.has_fv_created_by) === 1
-          ? 'fv_created_by'
-          : Number(row.has_fv_usr_id_cambio) === 1
-            ? 'fv_usr_id_cambio'
-            : null,
-    };
-  }
-
   async crearNuevaVersion(
     formularioId: number,
     data: {
@@ -455,8 +416,6 @@ export class FormulariosService {
       throw new Error('formularioId inválido');
     }
 
-    const versionColumns = await this.resolveVersionColumns();
-
     const maxVersionResult = await this.dataSource.query(
       `
         SELECT ISNULL(MAX(fv_numero), 0) as max_version
@@ -468,39 +427,30 @@ export class FormulariosService {
 
     const nuevoNumeroVersion = maxVersionResult[0].max_version + 1;
 
-    const insertColumns = ['fv_frs_id', 'fv_numero'];
-    const insertValues = ['@0', '@1'];
-    const params: any[] = [formularioId, nuevoNumeroVersion];
-
-    if (versionColumns.descripcion) {
-      insertColumns.push(versionColumns.descripcion);
-      insertValues.push('@2');
-      params.push(String(data.descripcion || '').trim() || null);
-    }
-
-    if (versionColumns.fecha) {
-      insertColumns.push(versionColumns.fecha);
-      insertValues.push('SYSDATETIME()');
-    }
-
-    if (versionColumns.usuario) {
-      insertColumns.push(versionColumns.usuario);
-      const paramIndex = params.length;
-      insertValues.push(`@${paramIndex}`);
-      params.push(Number(data.usuarioId) || 1);
-    }
-
     const insertSql = `
       INSERT INTO Formulario_versiones (
-        ${insertColumns.join(', ')}
+        fv_frs_id,
+        fv_numero,
+        fv_descripcion,
+        fv_created_at,
+        fv_created_by
       )
       OUTPUT INSERTED.fv_id
       VALUES (
-        ${insertValues.join(', ')}
+        @0,
+        @1,
+        @2,
+        SYSDATETIME(),
+        @3
       )
     `;
 
-    const insertResult = await this.dataSource.query(insertSql, params);
+    const insertResult = await this.dataSource.query(insertSql, [
+      formularioId,
+      nuevoNumeroVersion,
+      String(data.descripcion || '').trim() || null,
+      Number(data.usuarioId) || 1,
+    ]);
     const versionId = insertResult[0]?.fv_id;
 
     if (data.copiarDeVersion) {

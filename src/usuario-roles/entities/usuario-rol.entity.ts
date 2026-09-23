@@ -1,6 +1,6 @@
 ﻿import { Entity, Column, PrimaryColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { UsuarioEntity } from '../../usuarios/entities/usuario.entity';
-import { RolEntity } from '../../roles/entities/rol.entity';
+import { RoleEntity } from '../../modules/seguridad/roles/entities/role.entity';
 
 @Entity('pc_usuario_rol')
 export class UsuarioRolEntity {
@@ -23,8 +23,8 @@ export class UsuarioRolEntity {
   @JoinColumn({ name: 'ur_usuario_id' })
   usuario: UsuarioEntity;
 
-  @ManyToOne(() => RolEntity)
+  @ManyToOne(() => RoleEntity)
   @JoinColumn({ name: 'ur_rol_id' })
-  rol: RolEntity;
+  rol: RoleEntity;
 }
 

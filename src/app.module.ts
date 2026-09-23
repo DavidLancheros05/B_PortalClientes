@@ -31,7 +31,6 @@ import { FormularioModule } from './formulario/formulario.module';
 import { CentrosOperacionModule } from './centros-operacion/centros-operacion.module';
 import { ModulosModule } from './modulos/modulos.module';
 import { SeguridadModule } from './seguridad/seguridad.module';
-import { RolesModule } from './roles/roles.module';
 import { UsuarioRolesModule } from './usuario-roles/usuario-roles.module';
 import { ConsecutivosModule } from './consecutivos/consecutivos.module';
 import { CartaPdfVinculacionModule } from './parametrizacion/carta-pdf-vinculacion/carta-pdf-vinculacion.module';
@@ -138,7 +137,6 @@ const resolveDbConfig = () => {
     CentrosOperacionModule,
     ModulosModule,
     SeguridadModule,
-    RolesModule,
     UsuarioRolesModule,
     ConsecutivosModule,
     CartaPdfVinculacionModule,

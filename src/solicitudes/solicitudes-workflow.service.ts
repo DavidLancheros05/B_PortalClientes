@@ -2266,20 +2266,26 @@ export class SolicitudesWorkflowService {
           mimetype: 'application/pdf',
         });
 
+        // Desde la consolidación en Solicitud_archivo (ver
+        // plan-consolidacion-tablas-archivos.md), la carta vive como una
+        // fila más con sa_origen='CARTA_VINCULACION' en vez de en su propia
+        // tabla — el UQ_solicitud_archivo_carta filtrado garantiza que solo
+        // exista una por solicitud.
         const [existente] = await this.dataSource.query(
-          `SELECT scv_id FROM Solicitud_carta_vinculacion WHERE scv_sol_id = @0`,
+          `SELECT sa_id FROM Solicitud_archivo WHERE sa_sol_id = @0 AND sa_origen = 'CARTA_VINCULACION'`,
           [sa_sol_id],
         );
 
         if (existente) {
           await this.dataSource.query(
-            `UPDATE Solicitud_carta_vinculacion SET
-              scv_nombre_original = @0,
-              scv_ruta_almacenamiento = @1,
-              scv_tipo_mime = @2,
-              scv_tamano_bytes = @3,
-              scv_created_at = GETDATE()
-            WHERE scv_sol_id = @4`,
+            `UPDATE Solicitud_archivo SET
+              sa_nombre_original = @0,
+              sa_nombre_guardado = @0,
+              sa_ruta_almacenamiento = @1,
+              sa_tipo_mime = @2,
+              sa_tamaño_bytes = @3,
+              sa_created_at = GETDATE()
+            WHERE sa_sol_id = @4 AND sa_origen = 'CARTA_VINCULACION'`,
             [
               nombreOriginal,
               subida.url,
@@ -2290,9 +2296,9 @@ export class SolicitudesWorkflowService {
           );
         } else {
           await this.dataSource.query(
-            `INSERT INTO Solicitud_carta_vinculacion
-             (scv_sol_id, scv_nombre_original, scv_ruta_almacenamiento, scv_tipo_mime, scv_tamano_bytes)
-             VALUES (@0, @1, @2, @3, @4)`,
+            `INSERT INTO Solicitud_archivo
+             (sa_sol_id, sa_nombre_original, sa_nombre_guardado, sa_ruta_almacenamiento, sa_tipo_mime, sa_tamaño_bytes, sa_origen)
+             VALUES (@0, @1, @1, @2, @3, @4, 'CARTA_VINCULACION')`,
             [
               sa_sol_id,
               nombreOriginal,

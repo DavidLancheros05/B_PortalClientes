@@ -154,6 +154,27 @@ export class AuthService {
     );
   }
 
+  async actualizarPosicionMenu(
+    usrId: number,
+    tipo: 'cliente' | 'usuario',
+    position: 'top' | 'left',
+  ) {
+    // Columna BIT en BD: 0 = top (default), 1 = left.
+    const valorBit = position === 'left' ? 1 : 0;
+    if (tipo === 'cliente') {
+      await this.sistemaComercialDb.query(
+        `UPDATE dbo.Clientes SET cli_menu_posicion = @1 WHERE cli_id = @0`,
+        [usrId, valorBit],
+      );
+    } else {
+      await this.sistemaComercialDb.query(
+        `UPDATE dbo.usuarios SET usr_menu_posicion = @1 WHERE usr_id = @0`,
+        [usrId, valorBit],
+      );
+    }
+    return { menu_position: position };
+  }
+
   private async loginCliente(identificacion: string, password: string) {
     const maxIntentos = Math.max(
       1,
@@ -162,7 +183,8 @@ export class AuthService {
     const cliente = await this.sistemaComercialDb.query(
       `
       SELECT cli_id, cli_razon_social, cli_nro_identificacion, cli_password,
-             cli_acceso_pc, cli_bloqueado, cli_intentos_login, cli_token_version
+             cli_acceso_pc, cli_bloqueado, cli_intentos_login, cli_token_version,
+             cli_menu_posicion
       FROM clientes
       WHERE cli_nro_identificacion = @0
       `,
@@ -254,6 +276,7 @@ export class AuthService {
         usuario_activo: cli.cli_acceso_pc,
         tipo: 'cliente',
         cliente_id: cli.cli_id,
+        menu_position: cli.cli_menu_posicion ? 'left' : 'top',
         rol: {
           rol_id: rolInfo.rol_id,
           nombre: rolInfo.rol_nombre,
@@ -265,11 +288,17 @@ export class AuthService {
   }
 
   private async loginUsuarioInterno(usuario: string, password: string) {
+    const maxIntentos = Math.max(
+      1,
+      Number.parseInt(process.env.LOGIN_MAX_ATTEMPTS || '5', 10) || 5,
+    );
 
     const usuarioData = await this.sistemaComercialDb.query(
       `
       SELECT u.usr_id, u.usr_usuario, u.usr_password, u.usr_acceso_pc,
-             u.usr_nombre, u.usr_correo, u.ejng_id, u.usr_token_version,
+             u.usr_inactivar, u.usr_nombre, u.usr_correo, u.ejng_id,
+             u.usr_token_version, u.usr_bloqueado, u.usr_intentos_login,
+             u.usr_menu_posicion,
              ur.ur_activo, ur.ur_rol_id,
              r.rol_id, r.rol_nombre, r.rol_codigo
       FROM usuarios u
@@ -292,8 +321,47 @@ export class AuthService {
       );
     }
 
+    if (usr.usr_inactivar) {
+      throw new UnauthorizedException(
+        'Usuario inactivo. Solicita la activación al administrador.',
+      );
+    }
+
+    if (usr.usr_bloqueado) {
+      throw new UnauthorizedException(
+        'Usuario bloqueado por demasiados intentos fallidos. Solicita el desbloqueo al administrador.',
+      );
+    }
+
     if (!(await passwordCoincide(password, usr.usr_password))) {
+      await this.sistemaComercialDb.query(
+        `UPDATE dbo.usuarios
+         SET usr_intentos_login = usr_intentos_login + 1,
+             usr_bloqueado = CASE
+               WHEN usr_intentos_login + 1 >= @1 THEN 1
+               ELSE usr_bloqueado
+             END
+         WHERE usr_id = @0`,
+        [usr.usr_id, maxIntentos],
+      );
+
+      const intentos = Number(usr.usr_intentos_login ?? 0) + 1;
+      if (intentos >= maxIntentos) {
+        throw new UnauthorizedException(
+          'Usuario bloqueado por demasiados intentos fallidos. Solicita el desbloqueo al administrador.',
+        );
+      }
+
       throw new UnauthorizedException('La contraseña es incorrecta');
+    }
+
+    if (Number(usr.usr_intentos_login ?? 0) > 0) {
+      await this.sistemaComercialDb.query(
+        `UPDATE dbo.usuarios
+         SET usr_intentos_login = 0, usr_bloqueado = 0
+         WHERE usr_id = @0`,
+        [usr.usr_id],
+      );
     }
 
     const modulos = await this.permissionsService.getModulesByUsuario(
@@ -321,6 +389,7 @@ export class AuthService {
         tipo: 'usuario',
         cliente_id: null,
         ejng_id: usr.ejng_id || null,
+        menu_position: usr.usr_menu_posicion ? 'left' : 'top',
         rol: {
           rol_id: usr.rol_id || null,
           nombre: usr.rol_nombre || 'Usuario',

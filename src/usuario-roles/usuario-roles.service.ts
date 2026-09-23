@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { UsuarioRolEntity } from './entities/usuario-rol.entity';
 import { UsuarioEntity } from '../usuarios/entities/usuario.entity';
-import { RolEntity } from '../roles/entities/rol.entity';
+import { RoleEntity } from '../modules/seguridad/roles/entities/role.entity';
 
 @Injectable()
 export class UsuarioRolesService {
@@ -12,8 +12,8 @@ export class UsuarioRolesService {
     private usuarioRolRepository: Repository<UsuarioRolEntity>,
     @InjectRepository(UsuarioEntity)
     private usuarioRepository: Repository<UsuarioEntity>,
-    @InjectRepository(RolEntity)
-    private rolRepository: Repository<RolEntity>,
+    @InjectRepository(RoleEntity)
+    private rolRepository: Repository<RoleEntity>,
   ) {}
 
   async getAllUsuarios() {
@@ -39,8 +39,8 @@ export class UsuarioRolesService {
     return usuarioRoles.map((ur) => ({
       usuarioId: ur.ur_usuario_id,
       rolId: ur.ur_rol_id,
-      rolNombre: ur.rol.rol_nombre,
-      rolCodigo: ur.rol.rol_codigo,
+      rolNombre: ur.rol.rolNombre,
+      rolCodigo: ur.rol.rolCodigo,
     }));
   }
 
@@ -59,8 +59,8 @@ export class UsuarioRolesService {
       usuarioCorreo: ur.usuario?.usr_correo,
       usuarioLogin: ur.usuario?.usr_usuario,
       rolId: ur.ur_rol_id,
-      rolNombre: ur.rol?.rol_nombre,
-      rolCodigo: ur.rol?.rol_codigo,
+      rolNombre: ur.rol?.rolNombre,
+      rolCodigo: ur.rol?.rolCodigo,
     }));
   }
 
@@ -71,7 +71,7 @@ export class UsuarioRolesService {
     if (!usuario) throw new BadRequestException('Usuario no encontrado');
 
     const rol = await this.rolRepository.findOne({
-      where: { rol_id: rolId },
+      where: { rolId },
     });
     if (!rol) throw new BadRequestException('Rol no encontrado');
 

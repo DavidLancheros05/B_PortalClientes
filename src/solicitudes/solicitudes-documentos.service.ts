@@ -95,7 +95,7 @@ export class SolicitudesDocumentosService {
              fp.fp_maximo
       FROM Solicitud_archivo sa
       LEFT JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
-      WHERE sa.sa_sol_id = @0 AND sa.sa_estado = 'activo'
+      WHERE sa.sa_sol_id = @0 AND sa.sa_estado = 'activo' AND sa.sa_origen = 'CLIENTE'
       ORDER BY sa.sa_created_at DESC
     `;
 
@@ -109,41 +109,38 @@ export class SolicitudesDocumentosService {
   }
 
   async obtenerDocumentosConVigencia(solicitudId: number) {
+    // Antes esto era un UNION ALL entre Solicitud_archivo y
+    // Solicitud_carta_vinculacion (tabla aparte, con su propia secuencia de
+    // ids) armado a mano con CAST columna por columna para que los tipos
+    // coincidieran — frágil ante cualquier columna nueva que el frontend
+    // empiece a consumir, y el "sa_id" de la carta era en realidad un
+    // scv_id que no servía para pedir GET /respuestas/archivo/:saId (podía
+    // dar 404 o, peor, traer un archivo real de otra pregunta que
+    // coincidiera por casualidad de id). Desde la consolidación en
+    // Solicitud_archivo (ver plan-consolidacion-tablas-archivos.md), la
+    // carta es una fila más con sa_origen='CARTA_VINCULACION' y un sa_id
+    // real — ya no hace falta el UNION ALL ni el caso especial de id.
     const sql = `
       SELECT sa.sa_id, sa.sa_sol_id, sa.sa_fp_id AS fp_id, sa.sa_nombre_original, sa.sa_nombre_guardado,
              sa.sa_tamaño_bytes, sa.sa_tipo_mime, sa.sa_ruta_almacenamiento, sa.sa_cargado_por,
              sa.sa_estado, sa.sa_created_at as fecha_carga,
              sa.sa_fecha_emision AS sd_fecha_emision, sa.sa_fecha_vencimiento AS sd_fecha_vencimiento,
              sa.sa_requiere_cambio AS sd_requiere_cambio,
-             td.tdo_id, td.tdo_nombre, td.tdo_vigencia_dias,
+             td.tdo_id,
+             CASE WHEN sa.sa_origen = 'CARTA_VINCULACION' THEN 'Carta de Vinculación Comercial' ELSE td.tdo_nombre END AS tdo_nombre,
+             td.tdo_vigencia_dias,
              td.tdo_regla_vigencia, td.tdo_anios_atras_permitidos,
              td.tdo_tiene_plantilla, td.tdo_plantilla_contenido, td.tdo_tipo_plantilla,
              td.tdo_formato_codigo, td.tdo_formato_codigo_secundario,
              td.tdo_revision, td.tdo_paginas_total, td.tdo_permite_vencimiento,
              td.tdo_encabezado_tipo, td.tdo_encabezado_imagen_url,
-             td.tdo_pie_pagina_tipo, td.tdo_pie_pagina_texto, td.tdo_pie_pagina_imagen_url
+             td.tdo_pie_pagina_tipo, td.tdo_pie_pagina_texto, td.tdo_pie_pagina_imagen_url,
+             LOWER(sa.sa_origen) AS sa_origen
       FROM Solicitud_archivo sa
       LEFT JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
       LEFT JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tdo_id
       WHERE sa.sa_sol_id = @0 AND sa.sa_estado = 'activo'
-
-      UNION ALL
-
-      SELECT CAST(scv.scv_id AS BIGINT), scv.scv_sol_id, CAST(NULL AS INT), scv.scv_nombre_original, CAST(NULL AS NVARCHAR(255)),
-             scv.scv_tamano_bytes, scv.scv_tipo_mime, scv.scv_ruta_almacenamiento, CAST(NULL AS INT),
-             CAST('activo' AS VARCHAR(20)), scv.scv_created_at,
-             CAST(NULL AS DATE), CAST(NULL AS DATE),
-             CAST(0 AS BIT),
-             CAST(NULL AS INT), CAST('Carta de Vinculación Comercial' AS VARCHAR(150)), CAST(NULL AS INT),
-             CAST(NULL AS VARCHAR(20)), CAST(NULL AS INT),
-             CAST(0 AS BIT), CAST(NULL AS NVARCHAR(MAX)), CAST(NULL AS VARCHAR(20)),
-             CAST(NULL AS NVARCHAR(30)), CAST(NULL AS NVARCHAR(30)),
-             CAST(NULL AS NVARCHAR(10)), CAST(NULL AS INT), CAST(0 AS BIT),
-             CAST('NINGUNO' AS VARCHAR(20)), CAST(NULL AS NVARCHAR(500)),
-             CAST('NINGUNO' AS VARCHAR(20)), CAST(NULL AS NVARCHAR(300)), CAST(NULL AS NVARCHAR(500))
-      FROM Solicitud_carta_vinculacion scv
-      WHERE scv.scv_sol_id = @0
-
+        AND sa.sa_origen IN ('CLIENTE', 'CARTA_VINCULACION')
       ORDER BY fecha_carga DESC
     `;
 
@@ -219,10 +216,10 @@ export class SolicitudesDocumentosService {
     });
 
     const [fila] = await this.dataSource.query(
-      `INSERT INTO Solicitud_soporte_analisis
-        (ssa_sol_id, ssa_wet_id, ssa_nombre_original, ssa_ruta_almacenamiento, ssa_tipo_mime, ssa_tamano_bytes, ssa_usuario_id)
+      `INSERT INTO Solicitud_archivo
+        (sa_sol_id, sa_wet_id, sa_nombre_original, sa_nombre_guardado, sa_ruta_almacenamiento, sa_tipo_mime, sa_tamaño_bytes, sa_cargado_por, sa_origen)
        OUTPUT INSERTED.*
-       VALUES (@0, @1, @2, @3, @4, @5, @6)`,
+       VALUES (@0, @1, @2, @2, @3, @4, @5, @6, 'SOPORTE_ANALISIS')`,
       [
         solicitudId,
         wetId,
@@ -237,24 +234,24 @@ export class SolicitudesDocumentosService {
   }
 
   async obtenerSoportesAnalisis(solicitudId: number, wetId?: number) {
-    const condicionEtapa = wetId ? 'AND ssa.ssa_wet_id = @1' : '';
+    const condicionEtapa = wetId ? 'AND sa.sa_wet_id = @1' : '';
     const params = wetId ? [solicitudId, wetId] : [solicitudId];
     return this.dataSource.query(
-      `SELECT ssa.ssa_id, ssa.ssa_sol_id, ssa.ssa_wet_id, ssa.ssa_nombre_original,
-              ssa.ssa_ruta_almacenamiento, ssa.ssa_tipo_mime, ssa.ssa_tamano_bytes,
-              ssa.ssa_usuario_id, ssa.ssa_created_at
-       FROM Solicitud_soporte_analisis ssa
-       WHERE ssa.ssa_sol_id = @0 AND ssa.ssa_estado = 'activo' ${condicionEtapa}
-       ORDER BY ssa.ssa_created_at DESC`,
+      `SELECT sa.sa_id AS ssa_id, sa.sa_sol_id AS ssa_sol_id, sa.sa_wet_id AS ssa_wet_id, sa.sa_nombre_original AS ssa_nombre_original,
+              sa.sa_ruta_almacenamiento AS ssa_ruta_almacenamiento, sa.sa_tipo_mime AS ssa_tipo_mime, sa.sa_tamaño_bytes AS ssa_tamano_bytes,
+              sa.sa_cargado_por AS ssa_usuario_id, sa.sa_created_at AS ssa_created_at
+       FROM Solicitud_archivo sa
+       WHERE sa.sa_sol_id = @0 AND sa.sa_estado = 'activo' AND sa.sa_origen = 'SOPORTE_ANALISIS' ${condicionEtapa}
+       ORDER BY sa.sa_created_at DESC`,
       params,
     );
   }
 
   async eliminarSoporteAnalisis(solicitudId: number, ssaId: number) {
     await this.dataSource.query(
-      `UPDATE Solicitud_soporte_analisis
-       SET ssa_estado = 'inactivo'
-       WHERE ssa_id = @0 AND ssa_sol_id = @1`,
+      `UPDATE Solicitud_archivo
+       SET sa_estado = 'inactivo'
+       WHERE sa_id = @0 AND sa_sol_id = @1 AND sa_origen = 'SOPORTE_ANALISIS'`,
       [ssaId, solicitudId],
     );
   }
@@ -277,9 +274,10 @@ export class SolicitudesDocumentosService {
     }
 
     await this.dataSource.query(
-      `UPDATE Solicitud_evidencia_persona
-       SET sep_estado = 'inactivo'
-       WHERE sep_sol_id = @0 AND sep_fp_id = @1 AND sep_fila_index = @2 AND sep_estado = 'activo'`,
+      `UPDATE Solicitud_archivo
+       SET sa_estado = 'inactivo'
+       WHERE sa_sol_id = @0 AND sa_fp_id = @1 AND sa_fila_index = @2
+         AND sa_estado = 'activo' AND sa_origen = 'EVIDENCIA_PERSONA'`,
       [solicitudId, fpId, filaIndex],
     );
 
@@ -300,10 +298,10 @@ export class SolicitudesDocumentosService {
     });
 
     const [fila] = await this.dataSource.query(
-      `INSERT INTO Solicitud_evidencia_persona
-        (sep_sol_id, sep_fp_id, sep_fila_index, sep_nombre_original, sep_ruta_almacenamiento, sep_tipo_mime, sep_tamano_bytes, sep_usuario_id)
+      `INSERT INTO Solicitud_archivo
+        (sa_sol_id, sa_fp_id, sa_fila_index, sa_nombre_original, sa_nombre_guardado, sa_ruta_almacenamiento, sa_tipo_mime, sa_tamaño_bytes, sa_cargado_por, sa_origen)
        OUTPUT INSERTED.*
-       VALUES (@0, @1, @2, @3, @4, @5, @6, @7)`,
+       VALUES (@0, @1, @2, @3, @3, @4, @5, @6, @7, 'EVIDENCIA_PERSONA')`,
       [
         solicitudId,
         fpId,
@@ -320,22 +318,22 @@ export class SolicitudesDocumentosService {
 
   async obtenerEvidenciasPersona(solicitudId: number, fpId: number) {
     return this.dataSource.query(
-      `SELECT sep.sep_id, sep.sep_sol_id, sep.sep_fp_id, sep.sep_fila_index,
-              sep.sep_nombre_original, sep.sep_ruta_almacenamiento,
-              sep.sep_tipo_mime, sep.sep_tamano_bytes, sep.sep_usuario_id,
-              sep.sep_created_at
-       FROM Solicitud_evidencia_persona sep
-       WHERE sep.sep_sol_id = @0 AND sep.sep_fp_id = @1 AND sep.sep_estado = 'activo'
-       ORDER BY sep.sep_fila_index`,
+      `SELECT sa.sa_id AS sep_id, sa.sa_sol_id AS sep_sol_id, sa.sa_fp_id AS sep_fp_id, sa.sa_fila_index AS sep_fila_index,
+              sa.sa_nombre_original AS sep_nombre_original, sa.sa_ruta_almacenamiento AS sep_ruta_almacenamiento,
+              sa.sa_tipo_mime AS sep_tipo_mime, sa.sa_tamaño_bytes AS sep_tamano_bytes, sa.sa_cargado_por AS sep_usuario_id,
+              sa.sa_created_at AS sep_created_at
+       FROM Solicitud_archivo sa
+       WHERE sa.sa_sol_id = @0 AND sa.sa_fp_id = @1 AND sa.sa_estado = 'activo' AND sa.sa_origen = 'EVIDENCIA_PERSONA'
+       ORDER BY sa.sa_fila_index`,
       [solicitudId, fpId],
     );
   }
 
   async eliminarEvidenciaPersona(solicitudId: number, sepId: number) {
     await this.dataSource.query(
-      `UPDATE Solicitud_evidencia_persona
-       SET sep_estado = 'inactivo'
-       WHERE sep_id = @0 AND sep_sol_id = @1`,
+      `UPDATE Solicitud_archivo
+       SET sa_estado = 'inactivo'
+       WHERE sa_id = @0 AND sa_sol_id = @1 AND sa_origen = 'EVIDENCIA_PERSONA'`,
       [sepId, solicitudId],
     );
   }
@@ -406,7 +404,7 @@ export class SolicitudesDocumentosService {
       INNER JOIN Clientes c ON s.sol_cli_id = c.cli_id
       LEFT JOIN Ejecutivo_negocio e ON e.ejng_id = s.sol_ejng_id
       LEFT JOIN usuarios u ON u.usr_id = s.sol_ejng_id
-      WHERE sa.sa_estado = 'activo'
+      WHERE sa.sa_estado = 'activo' AND sa.sa_origen = 'CLIENTE'
       ORDER BY sa.sa_created_at DESC
     `;
 

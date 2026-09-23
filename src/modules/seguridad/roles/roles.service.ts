@@ -24,8 +24,10 @@ export class RolesService {
   }
 
   async findAll(): Promise<any[]> {
-    console.log('[RolesService] findAll called');
-    return [];
+    const roles = await this.roleRepository.find({
+      order: { rolNombre: 'ASC' },
+    });
+    return Promise.all(roles.map((role) => this.enrichRoleWithModules(role)));
   }
 
   async findOne(id: number): Promise<any> {

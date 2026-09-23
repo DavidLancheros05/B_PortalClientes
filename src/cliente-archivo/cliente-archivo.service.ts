@@ -47,6 +47,7 @@ export class ClienteArchivoService {
        JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tdo_id
        WHERE sa.sa_sol_id = @0
          AND sa.sa_estado = 'activo'
+         AND sa.sa_origen = 'CLIENTE'
          AND ISNULL(sa.sa_requiere_cambio, 0) = 0
          AND fp.fp_tdo_id IS NOT NULL`,
       [solicitudId],

@@ -249,7 +249,9 @@ export class UsuarioService {
         u.usr_usuario AS usuario_login,
         u.usr_correo AS usuario_email,
         u.usr_inactivar AS usr_inactivar,
-        u.usr_fecha_usr AS usuario_created_at
+        u.usr_fecha_usr AS usuario_created_at,
+        u.usr_intentos_login AS usr_intentos_login,
+        u.usr_bloqueado AS usr_bloqueado
       FROM usuarios u
       ORDER BY u.usr_nombre ASC
     `);
@@ -261,7 +263,23 @@ export class UsuarioService {
       usuario_email: row.usuario_email,
       usuario_activo: !row.usr_inactivar,
       usuario_created_at: row.usuario_created_at,
+      usr_intentos_login: Number(row.usr_intentos_login ?? 0),
+      usr_bloqueado: Boolean(row.usr_bloqueado),
     }));
+  }
+
+  async desbloquear(usrId: number) {
+    const result = await this.usuarioRepository.query(
+      `UPDATE dbo.usuarios
+       SET usr_bloqueado = 0, usr_intentos_login = 0
+       OUTPUT INSERTED.usr_id
+       WHERE usr_id = @0`,
+      [usrId],
+    );
+
+    if (!result || result.length === 0) {
+      throw new Error('Usuario no encontrado');
+    }
   }
 
   async createUser(dto: {
@@ -338,6 +356,7 @@ export class UsuarioService {
       usr_nombre?: string;
       usr_correo?: string;
       usuario_password?: string;
+      usuario_activo?: boolean;
     },
   ) {
     const usuario = await this.usuarioRepository.findOne({
@@ -358,12 +377,12 @@ export class UsuarioService {
       usuario.usr_password = await hashPassword(dto.usuario_password);
     }
 
+    if (dto.usuario_activo !== undefined) {
+      usuario.usr_inactivar = !dto.usuario_activo;
+    }
+
     await this.usuarioRepository.save(usuario);
     return { message: 'Usuario actualizado exitosamente' };
-  }
-
-  async deactivateUser(usrId: number) {
-    return { message: 'Usuario desactivado exitosamente' };
   }
 
   async deleteUser(usrId: number) {

@@ -28,6 +28,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       email: payload.email,
       rol: payload.rol,
       cliente_id: payload.cliente_id,
+      // Antes no se propagaba: auth.controller.ts::logout() lee
+      // req.user.tipo para decidir qué tabla invalidar (Clientes vs
+      // usuarios) y siempre caía al fallback 'usuario' — un cliente que
+      // cerraba sesión terminaba incrementando usr_token_version de la fila
+      // de `usuarios` que coincidiera por id con su cli_id, en vez de
+      // cli_token_version en Clientes.
+      tipo: payload.tipo,
     };
   }
 }

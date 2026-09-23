@@ -8,8 +8,9 @@
  *   node scripts/db-query.mjs migrations/20260712_algo.sql
  *
  * Si el argumento es una ruta a un archivo .sql existente, ejecuta su
- * contenido; si no, lo trata como SQL literal. Imprime el resultado como
- * JSON (o "OK" si el statement no devuelve filas, ej. INSERT/UPDATE/DDL).
+ * contenido; si no, lo trata como SQL literal. Soporta separadores "GO"
+ * (una línea sola) igual que SSMS. Imprime el resultado como JSON (o "OK"
+ * si el statement no devuelve filas, ej. INSERT/UPDATE/DDL).
  */
 
 import sql from "mssql";
@@ -39,12 +40,20 @@ function loadEnv(envPath) {
 
 loadEnv(resolve(BACKEND_ROOT, ".env"));
 
+// Mismo criterio que resolveDbConfig en src/app.module.ts: primero la
+// variable con sufijo del entorno (DB_HOST_DEV, ...), si no, la sin sufijo.
+const appEnv = (process.env.APP_ENV || "development").toLowerCase();
+const envKey =
+  { development: "DEV", test: "TEST", production: "PROD" }[appEnv] ?? "DEV";
+const dbEnv = (name) =>
+  process.env[`${name}_${envKey}`] ?? process.env[name];
+
 const dbConfig = {
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  server: process.env.DB_HOST,
-  port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 1433,
-  database: process.env.DB_NAME,
+  user: dbEnv("DB_USER"),
+  password: dbEnv("DB_PASSWORD"),
+  server: dbEnv("DB_HOST"),
+  port: dbEnv("DB_PORT") ? Number(dbEnv("DB_PORT")) : 1433,
+  database: dbEnv("DB_NAME"),
   options: { encrypt: true, trustServerCertificate: true },
 };
 
@@ -57,13 +66,31 @@ async function main() {
 
   const query = existsSync(arg) ? readFileSync(arg, "utf-8") : arg;
 
+  // "GO" no es SQL: es el separador de batches de SSMS/sqlcmd. Se parte acá
+  // y se manda cada batch por separado, en orden; si uno falla, no se
+  // ejecutan los siguientes.
+  const batches = query
+    .split(/^\s*GO\s*;?\s*$/im)
+    .filter((batch) => batch.trim().length > 0);
+
   await sql.connect(dbConfig);
   try {
-    const result = await sql.query(query);
-    const recordset = Array.isArray(result.recordset)
-      ? result.recordset
-      : result.recordsets?.[0];
-    console.log(JSON.stringify(recordset ?? { ok: true }, null, 2));
+    for (const [i, batch] of batches.entries()) {
+      let result;
+      try {
+        result = await sql.query(batch);
+      } catch (err) {
+        if (batches.length > 1) {
+          err.message = `Batch ${i + 1}/${batches.length}: ${err.message}`;
+        }
+        throw err;
+      }
+      const recordset = Array.isArray(result.recordset)
+        ? result.recordset
+        : result.recordsets?.[0];
+      if (batches.length > 1) console.log(`-- Batch ${i + 1}/${batches.length}`);
+      console.log(JSON.stringify(recordset ?? { ok: true }, null, 2));
+    }
   } finally {
     await sql.close();
   }
