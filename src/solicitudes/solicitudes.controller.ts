@@ -40,6 +40,17 @@ import { SolicitudListadoGestionDto } from './dto/solicitud-listado-gestion.resp
 import { SolicitudClienteDto } from './dto/solicitud-cliente.response.dto';
 import { SolicitudPendienteDto } from './dto/solicitud-pendiente.response.dto';
 
+type ReqUsuario = Request & {
+  user: {
+    rol?: string;
+    cliente_id?: number;
+    cli_id?: number;
+    usr_id?: number;
+    id?: number;
+    tipo?: string;
+  };
+};
+
 @Controller('solicitudes')
 export class SolicitudesController {
   constructor(
@@ -59,6 +70,36 @@ export class SolicitudesController {
     return user?.usr_id || user?.id || null;
   }
 
+  // Autorización por objeto (IDOR), distinta de @RequierePermiso (por rol):
+  // un CLIENTE solo puede operar sobre SUS solicitudes; el personal interno
+  // no tiene esta restricción. Se llama ANTES del try de cada handler para
+  // que el 403 no termine convertido en 500 por el catch.
+  private async verificarDuenoSolicitud(solicitudId: number, req: ReqUsuario) {
+    await this.documentosService.verificarAccesoSolicitud(solicitudId, req.user);
+  }
+
+  // Rutas /cliente/:clienteId/...: un CLIENTE solo sobre su propio cli_id.
+  private verificarDuenoCliente(clienteId: number, req: ReqUsuario) {
+    if (!req.user?.rol || req.user.rol === 'CLIENTE') {
+      const propio = req.user?.cliente_id ?? req.user?.cli_id;
+      if (Number(propio) !== Number(clienteId)) {
+        throw new ForbiddenException('No tienes acceso a este cliente');
+      }
+    }
+  }
+
+  // Endpoints de trabajo interno (soportes de análisis, evidencias por
+  // persona, tablas de cumplimiento): solo los usan las pantallas de gestión
+  // (OFC/CC1/CC2) y el detalle interno; un CLIENTE no los ve ni en su propia
+  // solicitud.
+  private soloPersonalInterno(req: ReqUsuario) {
+    if (!req.user?.rol || req.user.rol === 'CLIENTE') {
+      throw new ForbiddenException(
+        'Solo el personal interno puede acceder a esta información',
+      );
+    }
+  }
+
   @UseGuards(JwtAuthGuard)
   @Post()
   async crearSolicitud(
@@ -70,6 +111,9 @@ export class SolicitudesController {
         cliente_id?: number;
         cli_id?: number;
         ejng_id?: number;
+        usr_id?: number;
+        id?: number;
+        tipo?: string;
       };
     },
   ) {
@@ -108,9 +152,12 @@ export class SolicitudesController {
         throw new Error('cliente_id es obligatorio');
       }
 
+      // usuario_crea sale del JWT, nunca del body: si no, cualquiera podía
+      // registrar la solicitud (y su historial) a nombre de otro usuario.
       const resultado = await this.solicitudesService.crearSolicitud({
         ...dto,
         cliente_id,
+        usuario_crea: this.resolverUsuarioIdParaAuditoria(req.user),
       });
 
       return {
@@ -129,13 +176,15 @@ export class SolicitudesController {
   }
 
   @Get('test')
-  async testConnection() {
+  async testConnection(@Req() req: ReqUsuario) {
+    this.soloPersonalInterno(req);
     return this.solicitudesService.testConnection();
   }
 
   @UseGuards(JwtAuthGuard)
   @Get('pendientes')
-  async getPendientes(): Promise<SolicitudPendienteDto[]> {
+  async getPendientes(@Req() req: ReqUsuario): Promise<SolicitudPendienteDto[]> {
+    this.soloPersonalInterno(req);
     try {
       return await this.listadosService.getSolicitudesPendientes();
     } catch (error) {
@@ -161,7 +210,8 @@ export class SolicitudesController {
 
   @UseGuards(JwtAuthGuard)
   @Get()
-  async listarSolicitudes(@Query('limit') limit: string) {
+  async listarSolicitudes(@Req() req: ReqUsuario, @Query('limit') limit: string) {
+    this.soloPersonalInterno(req);
     const limitNum = limit ? Number(limit) : 50;
     return this.listadosService.listarSolicitudes(limitNum);
   }
@@ -169,9 +219,11 @@ export class SolicitudesController {
   @UseGuards(JwtAuthGuard)
   @Get('cliente/:clienteId/ultimas')
   async ultimasSolicitudes(
+    @Req() req: ReqUsuario,
     @Param('clienteId', ParseIntPipe) clienteId: number,
     @Query('limit') limit?: string,
   ) {
+    this.verificarDuenoCliente(clienteId, req);
     try {
       console.log(`Buscando últimas solicitudes para cliente ${clienteId}`);
       const limitNum = limit ? Number(limit) : 5;
@@ -189,8 +241,10 @@ export class SolicitudesController {
   @UseGuards(JwtAuthGuard)
   @Get('cliente/:clienteId/ultima-respuestas')
   async getUltimaRespuestasCliente(
+    @Req() req: ReqUsuario,
     @Param('clienteId', ParseIntPipe) clienteId: number,
   ) {
+    this.verificarDuenoCliente(clienteId, req);
     const solicitudes =
       await this.listadosService.obtenerSolicitudesPorCliente(clienteId);
     if (!solicitudes || solicitudes.length === 0) {
@@ -209,8 +263,10 @@ export class SolicitudesController {
 
   @Get('cliente/:clienteId/ultima-pendiente')
   async getUltimaSolicitudPendiente(
+    @Req() req: ReqUsuario,
     @Param('clienteId', ParseIntPipe) clienteId: number,
   ) {
+    this.verificarDuenoCliente(clienteId, req);
     const ultima =
       await this.listadosService.obtenerUltimaSolicitudPendiente(clienteId);
     if (!ultima) {
@@ -224,8 +280,10 @@ export class SolicitudesController {
 
   @Get('cliente/:clienteId/ultima-completada')
   async getUltimaSolicitudCompletada(
+    @Req() req: ReqUsuario,
     @Param('clienteId', ParseIntPipe) clienteId: number,
   ) {
+    this.verificarDuenoCliente(clienteId, req);
     const ultima =
       await this.listadosService.obtenerUltimaSolicitudCompletada(clienteId);
     if (!ultima) {
@@ -240,8 +298,10 @@ export class SolicitudesController {
   @UseGuards(JwtAuthGuard)
   @Get('cliente/:clienteId/ultima')
   async getUltimaSolicitud(
+    @Req() req: ReqUsuario,
     @Param('clienteId', ParseIntPipe) clienteId: number,
   ) {
+    this.verificarDuenoCliente(clienteId, req);
     const ultima = await this.listadosService.obtenerUltimaSolicitud(clienteId);
     if (!ultima) {
       return null;
@@ -267,8 +327,10 @@ export class SolicitudesController {
   @UseGuards(JwtAuthGuard)
   @Get('cliente/:clienteId/ultima-aprobada')
   async getUltimaSolicitudAprobada(
+    @Req() req: ReqUsuario,
     @Param('clienteId', ParseIntPipe) clienteId: number,
   ) {
+    this.verificarDuenoCliente(clienteId, req);
     const ultima =
       await this.listadosService.obtenerUltimaSolicitudAprobada(clienteId);
     if (!ultima) {
@@ -291,8 +353,10 @@ export class SolicitudesController {
 
   @Get('cliente/:clienteId/estadisticas')
   async estadisticasCliente(
+    @Req() req: ReqUsuario,
     @Param('clienteId', ParseIntPipe) clienteId: number,
   ) {
+    this.verificarDuenoCliente(clienteId, req);
     const solicitudes =
       await this.listadosService.obtenerSolicitudesPorCliente(clienteId);
     return {
@@ -314,12 +378,14 @@ export class SolicitudesController {
 
   @Get('cliente/:clienteId')
   async obtenerSolicitudesPorCliente(
+    @Req() req: ReqUsuario,
     @Param('clienteId', ParseIntPipe) clienteId: number,
     @Query('searchTerm') searchTerm?: string,
     @Query('estado') estado?: string,
     @Query('fechaDesde') fechaDesde?: string,
     @Query('fechaHasta') fechaHasta?: string,
   ): Promise<SolicitudClienteDto[]> {
+    this.verificarDuenoCliente(clienteId, req);
     return this.listadosService.obtenerSolicitudesPorCliente(clienteId, {
       searchTerm,
       estado,
@@ -330,9 +396,11 @@ export class SolicitudesController {
 
   @Get('ultimas-cliente/:clienteId')
   async getUltimasSolicitudesCliente(
+    @Req() req: ReqUsuario,
     @Param('clienteId', ParseIntPipe) clienteId: number,
     @Query('limit') limit?: string,
   ): Promise<SolicitudClienteDto[]> {
+    this.verificarDuenoCliente(clienteId, req);
     try {
       console.log(`Buscando últimas solicitudes para cliente ${clienteId}`);
       const limitNum = limit ? Number(limit) : 5;
@@ -349,9 +417,11 @@ export class SolicitudesController {
 
   @Get('ejecutivo/:ejecutivoId/pendientes')
   async getPendientesForEjecutivo(
+    @Req() req: ReqUsuario,
     @Param('ejecutivoId', ParseIntPipe) ejecutivoId: number,
     @Query('verComoEjecutivo') verComoEjecutivo?: string,
   ) {
+    this.soloPersonalInterno(req);
     const data =
       await this.listadosService.getSolicitudesPendientesPorEjecutivoId(
         ejecutivoId,
@@ -373,7 +443,8 @@ export class SolicitudesController {
   }
 
   @Get('listado')
-  async getListado(@Query() query: any): Promise<SolicitudListadoGestionDto[]> {
+  async getListado(@Req() req: ReqUsuario, @Query() query: any): Promise<SolicitudListadoGestionDto[]> {
+    this.soloPersonalInterno(req);
     try {
       const result = await this.listadosService.getListado(query);
 
@@ -386,9 +457,11 @@ export class SolicitudesController {
 
   @Get('documentos')
   async getDocumentos(
+    @Req() req: ReqUsuario,
     @Query('mode') mode?: string,
     @Query('usr_id') usr_id?: string,
   ) {
+    this.soloPersonalInterno(req);
     try {
       const usuarioId = usr_id ? Number(usr_id) : undefined;
       const result = await this.documentosService.getDocumentos(
@@ -551,7 +624,9 @@ export class SolicitudesController {
   async descargarArchivo(
     @Param('sa_id', ParseIntPipe) sa_id: number,
     @Res() res: Response,
+    @Req() req: ReqUsuario,
   ) {
+    await this.documentosService.verificarAccesoArchivo(sa_id, req.user);
     try {
       const { downloadUrl } =
         await this.documentosService.descargarArchivoRespuesta(sa_id);
@@ -567,11 +642,13 @@ export class SolicitudesController {
 
   @Get('listado/:usuarioId')
   async getSolicitudesConFiltros(
+    @Req() req: ReqUsuario,
     @Param('usuarioId', ParseIntPipe) usuarioId: number,
     @Query('etapa_id') etapa_id?: string,
     @Query('resultado_etapa_id') resultado_etapa_id?: string,
     @Query('estado_id') estado_id?: string,
   ) {
+    this.soloPersonalInterno(req);
     try {
       console.log(
         '[getSolicitudesConFiltros] usuarioId:',
@@ -609,8 +686,10 @@ export class SolicitudesController {
 
   @Get('auxiliar-servicio-cliente/:usuarioId')
   async getSolicitudesPendientesAuxiliarServicioCliente(
+    @Req() req: ReqUsuario,
     @Param('usuarioId', ParseIntPipe) usuarioId: number,
   ) {
+    this.soloPersonalInterno(req);
     try {
       console.log(
         '[getSolicitudesPendientesAuxiliarServicioCliente] usuarioId:',
@@ -641,8 +720,10 @@ export class SolicitudesController {
 
   @Get('oc/:usuarioId')
   async getSolicitudesParaOC(
+    @Req() req: ReqUsuario,
     @Param('usuarioId', ParseIntPipe) usuarioId: number,
   ) {
+    this.soloPersonalInterno(req);
     try {
       console.log('[getSolicitudesParaOC] usuarioId:', usuarioId);
       const result = await this.listadosService.getSolicitudesParaOC(usuarioId);
@@ -661,8 +742,10 @@ export class SolicitudesController {
 
   @Get('comite-credito-1/:usuarioId')
   async getSolicitudesParaComiteCredito1(
+    @Req() req: ReqUsuario,
     @Param('usuarioId', ParseIntPipe) usuarioId: number,
   ) {
+    this.soloPersonalInterno(req);
     try {
       console.log('[getSolicitudesParaComiteCredito1] usuarioId:', usuarioId);
       const result =
@@ -685,8 +768,10 @@ export class SolicitudesController {
 
   @Get('comite-credito-2/:usuarioId')
   async getSolicitudesParaComiteCredito2(
+    @Req() req: ReqUsuario,
     @Param('usuarioId', ParseIntPipe) usuarioId: number,
   ) {
+    this.soloPersonalInterno(req);
     try {
       console.log('[getSolicitudesParaComiteCredito2] usuarioId:', usuarioId);
       const result =
@@ -710,7 +795,11 @@ export class SolicitudesController {
   // ====== RUTAS ESPECÍFICAS CON :id (DEBE ESTAR ANTES DE @Get(':id')) ======
 
   @Get(':id/formulario-renderizable')
-  async getFormularioRenderizable(@Param('id', ParseIntPipe) id: number) {
+  async getFormularioRenderizable(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: ReqUsuario,
+  ) {
+    await this.verificarDuenoSolicitud(id, req);
     try {
       return await this.formularioRenderizableService.obtenerFormularioRenderizable(
         id,
@@ -727,8 +816,10 @@ export class SolicitudesController {
   @Get(':id/respuestas-por-codigo')
   async getRespuestasPorCodigo(
     @Param('id', ParseIntPipe) id: number,
+    @Req() req: ReqUsuario,
     @Query('codigo') codigo?: string | string[],
   ) {
+    await this.verificarDuenoSolicitud(id, req);
     try {
       const codigos = !codigo ? [] : Array.isArray(codigo) ? codigo : [codigo];
       return await this.formularioRenderizableService.obtenerRespuestasPorCodigo(
@@ -749,7 +840,9 @@ export class SolicitudesController {
     @Param('id', ParseIntPipe) id: number,
     @Query('tdoId') tdoId: string | undefined,
     @Res() res: Response,
+    @Req() req: ReqUsuario,
   ) {
+    await this.verificarDuenoSolicitud(id, req);
     try {
       const pdfBuffer = await this.solicitudesService.generarPdfSolicitud(
         id,
@@ -775,7 +868,9 @@ export class SolicitudesController {
     @Param('id', ParseIntPipe) solicitudId: number,
     @Param('saId', ParseIntPipe) saId: number,
     @Res() res: Response,
+    @Req() req: ReqUsuario,
   ) {
+    await this.verificarDuenoSolicitud(solicitudId, req);
     try {
       const archivo = await this.respuestasService.obtenerRespuestaArchivo(
         solicitudId,
@@ -799,7 +894,9 @@ export class SolicitudesController {
   @Get(':id/respuestas/archivo')
   async obtenerArchivosExistentes(
     @Param('id', ParseIntPipe) solicitudId: number,
+    @Req() req: ReqUsuario,
   ) {
+    await this.verificarDuenoSolicitud(solicitudId, req);
     try {
       const archivos =
         await this.documentosService.obtenerArchivosExistentes(solicitudId);
@@ -824,7 +921,9 @@ export class SolicitudesController {
   @UseGuards(JwtAuthGuard)
   async obtenerDocumentosSolicitud(
     @Param('id', ParseIntPipe) solicitudId: number,
+    @Req() req: ReqUsuario,
   ) {
+    await this.verificarDuenoSolicitud(solicitudId, req);
     try {
       const documentos =
         await this.documentosService.obtenerDocumentosConVigencia(solicitudId);
@@ -848,8 +947,9 @@ export class SolicitudesController {
     @Param('id', ParseIntPipe) solicitudId: number,
     @UploadedFile() file: Express.Multer.File,
     @Body() body: { wet_id: string },
-    @Req() req: Request & { user: { usr_id: number } },
+    @Req() req: ReqUsuario,
   ) {
+    this.soloPersonalInterno(req);
     try {
       if (!file) {
         throw new BadRequestException('No se proporcionó ningún archivo');
@@ -862,7 +962,7 @@ export class SolicitudesController {
         solicitudId,
         wetId,
         file,
-        req.user.usr_id,
+        req.user.usr_id!,
       );
       return { ok: true, data: fila };
     } catch (error) {
@@ -878,8 +978,10 @@ export class SolicitudesController {
   @UseGuards(JwtAuthGuard)
   async obtenerSoportesAnalisis(
     @Param('id', ParseIntPipe) solicitudId: number,
+    @Req() req: ReqUsuario,
     @Query('wet_id') wetId?: string,
   ) {
+    this.soloPersonalInterno(req);
     try {
       const soportes = await this.documentosService.obtenerSoportesAnalisis(
         solicitudId,
@@ -900,7 +1002,9 @@ export class SolicitudesController {
   async eliminarSoporteAnalisis(
     @Param('id', ParseIntPipe) solicitudId: number,
     @Param('ssaId', ParseIntPipe) ssaId: number,
+    @Req() req: ReqUsuario,
   ) {
+    this.soloPersonalInterno(req);
     try {
       await this.documentosService.eliminarSoporteAnalisis(solicitudId, ssaId);
       return { ok: true };
@@ -917,7 +1021,11 @@ export class SolicitudesController {
   // cliente en el formulario, para la pantalla de Gestión Oficial de
   // Cumplimiento — ver FormularioRenderizableService.obtenerTablasCumplimiento.
   @Get(':id/tablas-cumplimiento')
-  async getTablasCumplimiento(@Param('id', ParseIntPipe) id: number) {
+  async getTablasCumplimiento(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: ReqUsuario,
+  ) {
+    this.soloPersonalInterno(req);
     try {
       return await this.formularioRenderizableService.obtenerTablasCumplimiento(
         id,
@@ -942,8 +1050,9 @@ export class SolicitudesController {
     @Param('id', ParseIntPipe) solicitudId: number,
     @UploadedFile() file: Express.Multer.File,
     @Body() body: { fp_id: string; fila_index: string },
-    @Req() req: Request & { user: { usr_id: number } },
+    @Req() req: ReqUsuario,
   ) {
+    this.soloPersonalInterno(req);
     try {
       if (!file) {
         throw new BadRequestException('No se proporcionó ningún archivo');
@@ -958,7 +1067,7 @@ export class SolicitudesController {
         fpId,
         filaIndex,
         file,
-        req.user.usr_id,
+        req.user.usr_id!,
       );
       return { ok: true, data: fila };
     } catch (error) {
@@ -975,7 +1084,9 @@ export class SolicitudesController {
   async obtenerEvidenciasPersona(
     @Param('id', ParseIntPipe) solicitudId: number,
     @Query('fp_id') fpId: string,
+    @Req() req: ReqUsuario,
   ) {
+    this.soloPersonalInterno(req);
     try {
       const evidencias = await this.documentosService.obtenerEvidenciasPersona(
         solicitudId,
@@ -996,7 +1107,9 @@ export class SolicitudesController {
   async eliminarEvidenciaPersona(
     @Param('id', ParseIntPipe) solicitudId: number,
     @Param('sepId', ParseIntPipe) sepId: number,
+    @Req() req: ReqUsuario,
   ) {
+    this.soloPersonalInterno(req);
     try {
       await this.documentosService.eliminarEvidenciaPersona(solicitudId, sepId);
       return { ok: true };
@@ -1012,13 +1125,19 @@ export class SolicitudesController {
   @Get(':id/respuestas')
   async obtenerRespuestas(
     @Param('id', ParseIntPipe) id: number,
+    @Req() req: ReqUsuario,
   ): Promise<SolicitudRespuestaDto[]> {
+    await this.verificarDuenoSolicitud(id, req);
     return this.respuestasService.obtenerRespuestas(id);
   }
 
   @Get(':id/workflow-historial')
   @UseGuards(JwtAuthGuard)
-  async obtenerWorkflowHistorial(@Param('id', ParseIntPipe) id: number) {
+  async obtenerWorkflowHistorial(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: ReqUsuario,
+  ) {
+    await this.verificarDuenoSolicitud(id, req);
     try {
       return await this.workflowService.obtenerWorkflowHistorial(id);
     } catch (error) {
@@ -1059,7 +1178,8 @@ export class SolicitudesController {
   }
 
   @Post('respuestas')
-  async guardarRespuesta(@Body() dto: any) {
+  async guardarRespuesta(@Req() req: ReqUsuario, @Body() dto: any) {
+    await this.verificarDuenoSolicitud(Number(dto?.sa_sol_id), req);
     try {
       const resultado = await this.respuestasService.guardarRespuesta(dto);
       return {
@@ -1202,9 +1322,9 @@ export class SolicitudesController {
   async cambiarEstado(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { estadoId: number },
-    @Req()
-    req: Request & { user: { usr_id?: number; id?: number; tipo?: string } },
+    @Req() req: ReqUsuario,
   ) {
+    await this.verificarDuenoSolicitud(id, req);
     const usuarioId = this.resolverUsuarioIdParaAuditoria(req.user);
     return this.workflowService.cambiarEstado(id, body.estadoId, usuarioId);
   }
@@ -1219,9 +1339,9 @@ export class SolicitudesController {
   @SoloAutenticado()
   async reiniciarEdicionSolicitud(
     @Param('id', ParseIntPipe) id: number,
-    @Req()
-    req: Request & { user: { usr_id?: number; id?: number; tipo?: string } },
+    @Req() req: ReqUsuario,
   ) {
+    await this.verificarDuenoSolicitud(id, req);
     try {
       console.log(
         `[reiniciarEdicionSolicitud] Reiniciando solicitud ${id} para re-firmar documentos`,
@@ -1245,9 +1365,9 @@ export class SolicitudesController {
   @SoloAutenticado()
   async actualizarResultadoPendiente(
     @Param('id', ParseIntPipe) id: number,
-    @Req()
-    req: Request & { user: { usr_id?: number; id?: number; tipo?: string } },
+    @Req() req: ReqUsuario,
   ) {
+    await this.verificarDuenoSolicitud(id, req);
     try {
       console.log(
         `[actualizarResultadoPendiente] Actualizando solicitud ${id} a resultado PENDIENTE`,
@@ -1270,9 +1390,9 @@ export class SolicitudesController {
   @UseGuards(JwtAuthGuard)
   async verificarDocumentosDiferidos(
     @Param('id', ParseIntPipe) id: number,
-    @Req()
-    req: Request & { user: { usr_id?: number; id?: number; tipo?: string } },
+    @Req() req: ReqUsuario,
   ) {
+    await this.verificarDuenoSolicitud(id, req);
     try {
       const usuarioId = this.resolverUsuarioIdParaAuditoria(req.user);
       return await this.workflowService.verificarYAvanzarDocumentosPlantilla(
@@ -1657,7 +1777,11 @@ export class SolicitudesController {
   // ====== RUTA GENÉRICA (DEBE ESTAR DESPUÉS DE TODAS LAS ESPECÍFICAS) ======
 
   @Get(':id')
-  async obtenerSolicitud(@Param('id', ParseIntPipe) id: number) {
+  async obtenerSolicitud(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: ReqUsuario,
+  ) {
+    await this.verificarDuenoSolicitud(id, req);
     try {
       const result = await this.documentosService.obtenerSolicitud(id);
       return result;
@@ -1672,7 +1796,11 @@ export class SolicitudesController {
 
   @Get(':id/documentos-requeridos')
   @UseGuards(JwtAuthGuard)
-  async getDocumentosRequeridos(@Param('id', ParseIntPipe) id: number) {
+  async getDocumentosRequeridos(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: ReqUsuario,
+  ) {
+    await this.verificarDuenoSolicitud(id, req);
     try {
       const documentos =
         await this.documentosService.getDocumentosRequeridos(id);

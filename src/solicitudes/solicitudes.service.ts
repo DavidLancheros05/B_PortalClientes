@@ -44,31 +44,6 @@ export class SolicitudesService {
     return result.length > 0;
   }
 
-  private async resolveLookupColumns() {
-    const result = await this.dataSource.query(`
-      SELECT
-        CASE WHEN COL_LENGTH('clientes','cli_id') IS NOT NULL THEN 'cli_id' ELSE 'cliente_id' END AS cli_id,
-        CASE WHEN COL_LENGTH('clientes','cli_razon_social') IS NOT NULL THEN 'cli_razon_social' ELSE 'cliente_razon_social' END AS cli_razon_social,
-        CASE WHEN COL_LENGTH('clientes','cli_ejecutivo_id') IS NOT NULL THEN 'cli_ejecutivo_id' ELSE 'ejecutivo_id' END AS cli_ejecutivo_id,
-        CASE WHEN COL_LENGTH('Centro_operacion','cop_id') IS NOT NULL THEN 'cop_id' ELSE 'cop_id' END AS co_id,
-        CASE WHEN COL_LENGTH('Centro_operacion','cop_nombre') IS NOT NULL THEN 'cop_nombre' ELSE 'cop_nombre' END AS co_nombre,
-        CASE WHEN COL_LENGTH('usuarios','usr_id') IS NOT NULL THEN 'usr_id' ELSE 'usr_id' END AS usr_id,
-        CASE WHEN COL_LENGTH('usuarios','usr_nombre') IS NOT NULL THEN 'usr_nombre' ELSE 'nombre' END AS usr_nombre
-    `);
-    const row = result[0] ?? {};
-    return {
-      cliId: String(row.cli_id ?? 'cliente_id').trim(),
-      cliRazonSocial: String(
-        row.cli_razon_social ?? 'cliente_razon_social',
-      ).trim(),
-      cliEjecutivoId: String(row.cli_ejecutivo_id ?? 'ejecutivo_id').trim(),
-      coId: String(row.co_id ?? 'co_id').trim(),
-      coNombre: String(row.co_nombre ?? 'co_nombre').trim(),
-      usrId: String(row.usr_id ?? 'usr_id').trim(),
-      usrNombre: String(row.usr_nombre ?? 'nombre').trim(),
-    };
-  }
-
   // El esquema no cambia en caliente (solo con una migración + redeploy), así
   // que esta introspección solo necesita correr una vez por proceso en vez
   // de en cada crearSolicitud().
@@ -104,6 +79,27 @@ export class SolicitudesService {
       if (!clienteId) {
         throw new Error('Falta cliente_id');
       }
+
+      // Validaciones baratas antes de consumir el consecutivo o consultar
+      // el calendario hábil.
+      const estadoId = Number(body.estado_id);
+      if (estadoId !== 1 && estadoId !== 2) {
+        throw new Error(
+          `estado_id inválido para crear una solicitud: ${body.estado_id} (debe ser 1=BORRADOR o 2=PENDIENTE).`,
+        );
+      }
+
+      // UPDLOCK sobre la fila del cliente serializa las creaciones
+      // concurrentes del mismo cliente (doble clic en "Enviar"): la segunda
+      // espera al commit de la primera y ya ve su solicitud en trámite.
+      const clienteResult = await queryRunner.query(
+        `SELECT ejng_id FROM clientes WITH (UPDLOCK, ROWLOCK) WHERE cli_id = @0`,
+        [clienteId],
+      );
+      if (clienteResult.length === 0) {
+        throw new Error(`No existe el cliente ${clienteId}`);
+      }
+      const ejecutivoId = clienteResult[0].ejng_id || null;
 
       // Estados "en trámite" por código (llave estable del flujo); el nombre
       // que ve el usuario sale de solicitud_estados.
@@ -179,21 +175,6 @@ export class SolicitudesService {
       const formularioVersion =
         await obtenerVersionFormularioActivo(queryRunner);
 
-      // 3.5 Obtener datos del cliente (ejecutivo)
-      const clienteResult = await queryRunner.query(
-        `SELECT ejng_id FROM clientes WHERE cli_id = @0`,
-        [clienteId],
-      );
-      const ejecutivoId = clienteResult?.[0]?.ejng_id || null;
-
-      // 4. SQL para insertar solicitud - USAR @0, @1, @2... para SQL Server
-      // sol_consumo_mensual_proyectado NO se llena aquí: lo que declaró el
-      // cliente ya vive en Formulario_respuesta; esta columna se reserva
-      // para cuando el Ejecutivo de Negocios la ajuste al gestionar (ver
-      // solicitudes-workflow.service.ts::guardarGestionEjecutivo) — antes
-      // se llenaba en ambos momentos con el mismo campo, perdiendo la
-      // distinción entre "lo que pidió el cliente" y "lo que ajustó el
-      // Ejecutivo" en cuanto este último gestionaba.
       const insertSolicitudSQL = `
         INSERT INTO solicitudes (
           sol_cli_id, sol_ses_id,
@@ -238,32 +219,15 @@ export class SolicitudesService {
         );
       }
 
-      // 5. Determinar estado inicial y fecha envío
-      // 1=BORRADOR o 2=PENDIENTE; sin default. Number() para que "2" (texto)
-      // no rompa las comparaciones === de abajo.
-      const estadoId = Number(body.estado_id);
-      if (estadoId !== 1 && estadoId !== 2) {
-        throw new Error(
-          `estado_id inválido para crear una solicitud: ${body.estado_id} (debe ser 1=BORRADOR o 2=PENDIENTE).`,
-        );
-      }
       const fechaEnvio = estadoId === 2 ? now : null; // Si es PENDIENTE, establecer fecha de envío
 
-      // 5.0 "Documentos diferidos": preguntas ocultas del formulario en vivo
-      // cuyo tipo de documento tiene plantilla descargable (se generan
-      // DESPUÉS de guardar la solicitud, con el número de solicitud). Como
-      // recién se está creando, ninguno puede estar subido todavía — si el
-      // formulario de esta versión tiene alguno configurado, la solicitud
-      // se queda en CLI+PEND_FIRMA en vez de pasar directo a EJN.
+
       let documentosDiferidosFaltantes: {
         tdo_id: number;
         tdo_nombre: string;
       }[] = [];
       if (estadoId === 2) {
-        // tdo_solo_distribuidor=1: documentos adicionales que solo aplican a
-        // clientes distribuidores (ej. "solicitud"/"manifestación" con logo
-        // de distribuidor) — se suman a los normales, no los reemplazan; a
-        // un cliente no-distribuidor no se le exigen.
+
         documentosDiferidosFaltantes = await queryRunner.query(
           `
           SELECT DISTINCT td.tdo_id, td.tdo_nombre
@@ -368,7 +332,9 @@ export class SolicitudesService {
         (${histCols.solicitud_col}, ${histCols.estado_col}, ${histCols.usuario_col}, ${histCols.fecha_col})
         VALUES (@0, @1, @2, GETDATE())
       `;
-      const usuarioHistorial = body.usuario_crea || 1; // Usuario que crea, o 1 si es cliente
+      // seh_usr_id / swh_usuario_id son NOT NULL: cuando crea un cliente
+      // (usuario_crea = null) se usa 1, igual que cambiarEstado().
+      const usuarioHistorial = body.usuario_crea ?? 1;
       await queryRunner.query(historialSQL, [
         solicitudId,
         estadoId,
@@ -387,7 +353,7 @@ export class SolicitudesService {
               solicitudId,
               etapaId: etapaTransicion,
               resultadoId: resultadoFinalId,
-              usuarioId: 1, // usuario 1
+              usuarioId: usuarioHistorial,
               comentario: mensajeTransicion,
             },
           );
@@ -411,10 +377,12 @@ export class SolicitudesService {
           const respuestaParams = [
             solicitudId, // @0
             respuesta.fp_id, // @1
+            // ?? y no ||: una respuesta numérica 0 es válida y no debe
+            // quedar como NULL ("Sin respuesta").
             respuesta.valor_texto || null, // @2
-            respuesta.valor_numero || null, // @3
+            respuesta.valor_numero ?? null, // @3
             respuesta.valor_fecha || null, // @4
-            respuesta.valor_opcion_id || null, // @5
+            respuesta.valor_opcion_id ?? null, // @5
             now, // @6
           ];
 
@@ -446,7 +414,7 @@ export class SolicitudesService {
         documentosDiferidosFaltantes,
         mensaje: 'Solicitud creada exitosamente con SQL directo',
       };
-    } catch (error) {
+    } catch (error: any) {
       await queryRunner.rollbackTransaction();
       console.error('❌ Error en SQL directo:', error.message);
       console.error('❌ Stack:', error.stack);
@@ -469,7 +437,7 @@ export class SolicitudesService {
         version: result[0]?.version?.substring(0, 100),
         fecha: result[0]?.fecha,
       };
-    } catch (error) {
+    } catch (error: any) {
       return {
         ok: false,
         conectado: false,
@@ -517,21 +485,18 @@ export class SolicitudesService {
         seccionIds,
       );
 
-      secciones = seccionesInfo.map((s: any) => ({
-        seccion_id: s.seccion_id,
-        seccion_nombre: s.seccion_nombre,
-        seccion_orden: s.seccion_orden,
-        preguntas: seccionesMap.get(s.seccion_id)?.preguntas || [],
-      }));
+      // Una sección con todas sus preguntas ocultas no se imprime (antes
+      // quedaba solo la barra de título azul, sin nada debajo).
+      secciones = seccionesInfo
+        .map((s: any) => ({
+          seccion_id: s.seccion_id,
+          seccion_nombre: s.seccion_nombre,
+          seccion_orden: s.seccion_orden,
+          preguntas: seccionesMap.get(s.seccion_id)?.preguntas || [],
+        }))
+        .filter((s: any) => s.preguntas.length > 0);
     }
 
-    // Encabezado "formato oficial" — este PDF ES el documento F-P3-06
-    // (tdo_tipo_plantilla='PDF_SOLICITUD'), así que su código/revisión salen
-    // de esa fila de Tipos_documentos en vez de estar hardcodeados.
-    // `tdoId` distingue entre las variantes PDF_SOLICITUD que puedan existir
-    // (ej. la normal vs. la de distribuidor, con logo distinto) — sin
-    // parámetro, cae a la primera por tdo_id (comportamiento de siempre,
-    // válido mientras solo exista una).
     const tipoDocumentoFormatoRows = await this.dataSource.query(
       `
       SELECT TOP 1 tdo_id, tdo_nombre, tdo_formato_codigo, tdo_formato_codigo_secundario, tdo_revision, tdo_encabezado_imagen_url
@@ -558,7 +523,10 @@ export class SolicitudesService {
     const revisionesDocumento = revisionesRows.map((r: any) => ({
       revision: r.tdr_revision,
       descripcionCambio: r.tdr_descripcion_cambio,
+      // Columna `date`: llega como medianoche UTC, formatear en UTC o se
+      // corre un día si el proceso no corre en UTC.
       fecha: new Date(r.tdr_fecha).toLocaleDateString('es-CO', {
+        timeZone: 'UTC',
         year: 'numeric',
         month: 'long',
         day: 'numeric',
@@ -630,7 +598,33 @@ export class SolicitudesService {
       fontSize: number,
       font: PDFFont = helvetica,
     ): string[] => {
-      const words = String(text).split(/\s+/).filter(Boolean);
+      // Una "palabra" más ancha que maxWidth (correo, URL, número largo sin
+      // espacios) se parte por caracteres; si no, se sale de su columna.
+      const partirPalabra = (palabra: string): string[] => {
+        if (font.widthOfTextAtSize(palabra, fontSize) <= maxWidth) {
+          return [palabra];
+        }
+        const trozos: string[] = [];
+        let trozo = '';
+        for (const caracter of palabra) {
+          if (
+            trozo &&
+            font.widthOfTextAtSize(trozo + caracter, fontSize) > maxWidth
+          ) {
+            trozos.push(trozo);
+            trozo = caracter;
+          } else {
+            trozo += caracter;
+          }
+        }
+        if (trozo) trozos.push(trozo);
+        return trozos;
+      };
+
+      const words = String(text)
+        .split(/\s+/)
+        .filter(Boolean)
+        .flatMap(partirPalabra);
       const lines: string[] = [];
       let currentLine = '';
 
@@ -1067,13 +1061,16 @@ export class SolicitudesService {
               helveticaBold,
             );
             try {
+              // Timeout para que un storage que no responde no deje colgada
+              // la generación del PDF.
               const respuestaImagen = await axios.get(
                 imagenPregunta.imagen_ruta,
-                { responseType: 'arraybuffer' },
+                { responseType: 'arraybuffer', timeout: 10000 },
               );
               const bytes = Buffer.from(respuestaImagen.data);
-              const esPng = /png/i.test(imagenPregunta.imagen_tipo_mime || '');
-              const embeddedImage = esPng
+              // Formato por los bytes reales, no por el MIME guardado (un
+              // PNG renombrado a .jpg reventaba en embedJpg).
+              const embeddedImage = esPng(bytes)
                 ? await pdfDoc.embedPng(bytes)
                 : await pdfDoc.embedJpg(bytes);
 
@@ -1210,68 +1207,79 @@ export class SolicitudesService {
 
       // Organizar un tramo de preguntas NORMALES en 3 columnas - ALTURA DINÁMICA
       const columnWidth = contentWidth / 3;
+      const maxColWidth = columnWidth - 12;
+
+      // Layout de una pregunta calculado UNA sola vez y usado tanto para la
+      // altura de la fila como para el dibujo — antes eran dos condiciones
+      // distintas y, cuando no coincidían, la fila reservaba 10pt pero se
+      // dibujaba en varias líneas, encimándose con la siguiente. Los anchos
+      // salen de la fuente real, no de "letras × 4.5".
+      const layoutNormal = (pregunta: any) => {
+        const valor = pregunta.valor_resuelto;
+        // 0 es una respuesta válida, no "Sin respuesta".
+        const respuestaText =
+          valor === null || valor === undefined || valor === ''
+            ? 'Sin respuesta'
+            : String(valor);
+        const preguntaLines = wrapText(
+          conDosPuntos(String(pregunta.fp_descripcion)),
+          maxColWidth,
+          8,
+          helveticaBold,
+        );
+        const respuestaLines = wrapText(respuestaText, maxColWidth, 8);
+        const anchoPregunta =
+          preguntaLines.length === 1
+            ? helveticaBold.widthOfTextAtSize(preguntaLines[0], 8)
+            : 0;
+        const enMismaLinea =
+          preguntaLines.length === 1 &&
+          respuestaLines.length === 1 &&
+          respuestaText.length < 30 &&
+          anchoPregunta + 2 + helvetica.widthOfTextAtSize(respuestaLines[0], 8) <=
+            maxColWidth;
+        const altura = enMismaLinea
+          ? 10
+          : preguntaLines.length * 9 + respuestaLines.length * 9 + 8;
+        return {
+          preguntaLines,
+          respuestaLines,
+          anchoPregunta,
+          enMismaLinea,
+          altura,
+        };
+      };
+
       const renderNormales = (preguntasArray: any[]) => {
         let preguntaIndex = 0;
 
         while (preguntaIndex < preguntasArray.length) {
-          const rowStartY = yPos;
-          const columnXPositions = [
-            marginLeft,
-            marginLeft + columnWidth,
-            marginLeft + columnWidth * 2,
-          ];
+          const preguntasFila = preguntasArray.slice(
+            preguntaIndex,
+            preguntaIndex + 3,
+          );
+          const layouts = preguntasFila.map(layoutNormal);
+          const maxHeightInRow = Math.max(...layouts.map((l) => l.altura), 15);
 
-          // Calcular altura real de cada columna
-          const columnHeights = [0, 0, 0];
-          for (let col = 0; col < 3; col++) {
-            if (preguntaIndex + col >= preguntasArray.length) continue;
-
-            const pregunta = preguntasArray[preguntaIndex + col];
-            const preguntaText = String(pregunta.fp_descripcion);
-            const maxColWidth = columnWidth - 12;
-
-            // Preguntas normales: mostrar pregunta + respuesta
-            const respuestaText = String(
-              pregunta.valor_resuelto || 'Sin respuesta',
-            );
-            const preguntaLines = wrapText(
-              conDosPuntos(preguntaText),
-              maxColWidth,
-              8,
-              helveticaBold,
-            );
-            const respuestaLines = wrapText(respuestaText, maxColWidth, 8);
-
-            // Si pregunta cabe en 1 línea y respuesta también, revisar si caben juntas
-            let totalHeight = 10;
-            if (preguntaLines.length === 1 && respuestaText.length < 30) {
-              totalHeight = 10;
-            } else {
-              totalHeight =
-                preguntaLines.length * 9 + respuestaLines.length * 9 + 8;
-            }
-
-            columnHeights[col] = totalHeight;
+          // Revisar el espacio ANTES de dibujar (antes solo se revisaba
+          // después y una fila alta cerca del final se salía del margen).
+          if (yPos - maxHeightInRow < 100) {
+            currentPage = nuevaPagina();
+            yPos = bodyTopY;
           }
 
-          const maxHeightInRow = Math.max(...columnHeights, 15);
+          const rowStartY = yPos;
 
-          // Procesar hasta 3 columnas
-          for (let col = 0; col < 3; col++) {
-            if (preguntaIndex >= preguntasArray.length) break;
-
-            const pregunta = preguntasArray[preguntaIndex];
-            const preguntaText = String(pregunta.fp_descripcion);
-
-            const colX = columnXPositions[col];
-            const maxColWidth = columnWidth - 12;
-
+          preguntasFila.forEach((pregunta, col) => {
+            const {
+              preguntaLines,
+              respuestaLines,
+              anchoPregunta,
+              enMismaLinea,
+            } = layouts[col];
+            const colX = marginLeft + columnWidth * col;
             let currentY = rowStartY;
 
-            // PREGUNTAS NORMALES: mostrar pregunta + respuesta
-            const respuestaText = String(
-              pregunta.valor_resuelto || 'Sin respuesta',
-            );
             // Documento cargado (ARCHIVO/DOCUMENTOS_TABLA con archivo real en
             // Solicitud_archivo, ver formulario-renderizable.service.ts): se
             // resalta en verde en vez del gris estándar de cualquier otra
@@ -1279,21 +1287,8 @@ export class SolicitudesService {
             const colorRespuesta = pregunta.documento_cargado
               ? rgb(0.02, 0.45, 0.15)
               : rgb(0.2, 0.2, 0.2);
-            const preguntaLines = wrapText(
-              conDosPuntos(preguntaText),
-              maxColWidth,
-              8,
-              helveticaBold,
-            );
-            const respuestaLines = wrapText(respuestaText, maxColWidth, 8);
 
-            // Si pregunta cabe en 1 línea y respuesta es corta, intentar poner juntas
-            if (
-              preguntaLines.length === 1 &&
-              respuestaText.length < 30 &&
-              (preguntaLines[0].length + respuestaText.length) * 4.5 <
-                maxColWidth
-            ) {
+            if (enMismaLinea) {
               // Caben en la misma línea
               currentPage.drawText(preguntaLines[0], {
                 x: colX,
@@ -1303,8 +1298,8 @@ export class SolicitudesService {
                 color: rgb(0, 0.239, 0.6),
               });
 
-              currentPage.drawText(respuestaText, {
-                x: colX + preguntaLines[0].length * 4.5 + 2,
+              currentPage.drawText(respuestaLines[0], {
+                x: colX + anchoPregunta + 2,
                 y: currentY,
                 size: 8,
                 font: helvetica,
@@ -1337,17 +1332,10 @@ export class SolicitudesService {
                 currentY -= 9;
               }
             }
+          });
 
-            preguntaIndex++;
-          }
-
+          preguntaIndex += preguntasFila.length;
           yPos -= maxHeightInRow + 12;
-
-          // Nueva página si es necesario
-          if (yPos < 100) {
-            currentPage = nuevaPagina();
-            yPos = bodyTopY;
-          }
         }
       };
 
@@ -1380,17 +1368,6 @@ export class SolicitudesService {
     }
 
     // ===== FOOTER FINAL =====
-    currentPage.drawText(
-      `Documento generado: ${new Date().toLocaleDateString('es-CO')}`,
-      {
-        x: marginLeft,
-        y: 30,
-        size: 8,
-        font: helvetica,
-        color: rgb(0.6, 0.6, 0.6),
-      },
-    );
-
     // Historial de revisiones ("CONTROL DE CAMBIOS"), al final de todo el
     // cuerpo — cursorTabla es un objeto temporal solo para reutilizar
     // dibujarTablaRevisionesPdf (que espera { page, y } mutable en vez de
@@ -1415,6 +1392,20 @@ export class SolicitudesService {
     );
     currentPage = cursorTabla.page;
     yPos = cursorTabla.y;
+
+    // Después de la tabla de revisiones (que puede agregar páginas) para
+    // que quede en la última página. Hora de Colombia: en Render el proceso
+    // corre en UTC y después de las 7 p.m. mostraba el día siguiente.
+    currentPage.drawText(
+      `Documento generado: ${new Date().toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })}`,
+      {
+        x: marginLeft,
+        y: 30,
+        size: 8,
+        font: helvetica,
+        color: rgb(0.6, 0.6, 0.6),
+      },
+    );
 
     // El encabezado oficial se dibuja al final, una vez que se sabe el
     // total real de páginas que ocupó el cuerpo — "PAGINA No. X de N"
@@ -1463,13 +1454,10 @@ export class SolicitudesService {
   }
 
   async getDiasRespuesta(): Promise<ParamDiasRespuestaResponseDto[]> {
-    console.log('📡 [getDiasRespuesta] Consultando base de datos');
     try {
-      const dias = await this.dataSource.query(
+      return await this.dataSource.query(
         `SELECT pdr_id AS id, pdr_area AS area, pdr_dias AS dias FROM param_dias_respuesta_solicitudes WHERE pdr_estado = 1 ORDER BY pdr_id`,
       );
-      console.log('📡 [getDiasRespuesta] Resultados:', dias);
-      return dias;
     } catch (error) {
       console.error(
         '❌ [getDiasRespuesta] Error obteniendo días de respuesta:',
@@ -1486,8 +1474,10 @@ export class SolicitudesService {
       );
       return etapas;
     } catch (error) {
+      // Se relanza: devolver [] dejaba el combo vacío en el frontend sin
+      // ninguna pista de que la BD había fallado.
       console.error('[getEtapas] Error:', error);
-      return [];
+      throw error;
     }
   }
 
@@ -1499,18 +1489,8 @@ export class SolicitudesService {
       return resultados;
     } catch (error) {
       console.error('[getResultados] Error:', error);
-      return [];
+      throw error;
     }
-  }
-
-  private formatCurrency(value?: number | null): string {
-    if (!value) return '-';
-    return new Intl.NumberFormat('es-CO', {
-      style: 'currency',
-      currency: 'COP',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(value);
   }
 
   private async obtenerSiguienteNumeroSolicitud(

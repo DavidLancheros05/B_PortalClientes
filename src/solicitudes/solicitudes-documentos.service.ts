@@ -357,6 +357,25 @@ export class SolicitudesDocumentosService {
     }
   }
 
+  // Igual que verificarAccesoSolicitud pero partiendo de un archivo
+  // (GET /solicitudes/archivo/:sa_id no trae el id de la solicitud).
+  async verificarAccesoArchivo(
+    saId: number,
+    user: { rol?: string; cliente_id?: number; cli_id?: number },
+  ): Promise<void> {
+    if (user?.rol && user.rol !== 'CLIENTE') {
+      return;
+    }
+    const [archivo] = await this.dataSource.query(
+      `SELECT sa_sol_id FROM Solicitud_archivo WHERE sa_id = @0`,
+      [saId],
+    );
+    if (!archivo) {
+      throw new ForbiddenException('No tienes acceso a este archivo');
+    }
+    await this.verificarAccesoSolicitud(archivo.sa_sol_id, user);
+  }
+
   async getDocumentos(mode?: string, usuarioId?: number) {
     // Query simplificada para obtener documentos con archivos
     const sql = `
