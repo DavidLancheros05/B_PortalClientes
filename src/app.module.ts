@@ -106,7 +106,11 @@ const resolveDbConfig = () => {
             trustServerCertificate: true,
           },
           pool: {
-            max: 10,
+            // Conexiones simultáneas a la BD: es el techo de peticiones por
+            // segundo del backend (ver documentacion/Portal Clientes/mejoras/
+            // escalabilidad-rendimiento.md, prueba de carga). Subirlo solo
+            // hasta donde el servidor de BD lo permita.
+            max: Number(process.env.DB_POOL_MAX) || 10,
             min: 1,
             idleTimeoutMillis: 300000,
           },
