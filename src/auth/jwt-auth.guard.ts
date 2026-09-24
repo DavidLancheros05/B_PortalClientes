@@ -12,6 +12,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { IS_PUBLIC_KEY } from './public.decorator';
+import { guardarVersion, versionEnCache } from './version-sesion-cache';
 
 // Roles válidos para acceder a la API. Un JWT con firma correcta pero un rol
 // fuera de esta lista se rechaza igual (ver también proxy.ts en el
@@ -103,10 +104,13 @@ export class JwtAuthGuard implements CanActivate {
       return true;
     }
 
-    const tabla = payload.tipo === 'cliente' ? 'Clientes' : 'usuarios';
-    const idColumna = payload.tipo === 'cliente' ? 'cli_id' : 'usr_id';
+    const tipo = payload.tipo === 'cliente' ? 'cliente' : 'usuario';
+    if (versionEnCache(tipo, payload.usr_id) === payload.tv) return true;
+
+    const tabla = tipo === 'cliente' ? 'Clientes' : 'usuarios';
+    const idColumna = tipo === 'cliente' ? 'cli_id' : 'usr_id';
     const versionColumna =
-      payload.tipo === 'cliente' ? 'cli_token_version' : 'usr_token_version';
+      tipo === 'cliente' ? 'cli_token_version' : 'usr_token_version';
 
     const rows = await this.dataSource.query(
       `SELECT ${versionColumna} AS tv FROM dbo.${tabla} WHERE ${idColumna} = @0`,
@@ -114,6 +118,8 @@ export class JwtAuthGuard implements CanActivate {
     );
 
     if (!rows || rows.length === 0) return false;
-    return Number(rows[0].tv) === payload.tv;
+    const vigente = Number(rows[0].tv) === payload.tv;
+    if (vigente) guardarVersion(tipo, payload.usr_id, payload.tv);
+    return vigente;
   }
 }

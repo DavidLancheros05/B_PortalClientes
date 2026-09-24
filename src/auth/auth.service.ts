@@ -7,6 +7,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { PermissionsService } from '../permissions/permissions.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { passwordCoincide, hashPassword } from '../common/utils/password.util';
+import { olvidarVersion } from './version-sesion-cache';
 
 @Injectable()
 export class AuthService {
@@ -155,6 +156,9 @@ export class AuthService {
       `UPDATE dbo.${tabla} SET ${versionColumna} = ${versionColumna} + 1 WHERE ${idColumna} = @0`,
       [usrId],
     );
+    // Sin esto el token revocado seguiría valiendo hasta que venza la
+    // caché de JwtAuthGuard.
+    olvidarVersion(tipo, usrId);
   }
 
   async actualizarPosicionMenu(
