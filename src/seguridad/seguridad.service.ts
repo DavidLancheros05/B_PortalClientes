@@ -1,56 +1,55 @@
-import { Injectable } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { BadRequestException, Injectable } from '@nestjs/common';
+import { DataSource, QueryRunner } from 'typeorm';
 
 @Injectable()
 export class SeguridadService {
   constructor(private readonly dataSource: DataSource) {}
 
   async getRoles() {
-    const result = await this.dataSource.query(`
+    // 3 consultas en total (antes: 2 por rol, y la lista de módulos se
+    // repetía idéntica para cada rol).
+    const roles = await this.dataSource.query(`
       SELECT *
       FROM pc_roles
       WHERE rol_activo = 1
       ORDER BY rol_id
     `);
 
-    const roles = result;
+    const allModulosResult = await this.dataSource.query(`
+      SELECT
+        m.mod_id AS mod_id,
+        m.mod_nombre AS mod_nombre,
+        m.mod_ruta AS mod_ruta,
+        m.mod_icono AS mod_icono,
+        m.mod_padre_id AS mod_padre_id,
+        m.mod_posicion AS mod_posicion
+      FROM pc_modulos m
+      WHERE m.mod_estado = 1
+      ORDER BY m.mod_posicion
+    `);
+
+    const todosPermisos = await this.dataSource.query(`
+      SELECT
+        rm.rm_rol_id, rm.rm_mod_id AS mod_id,
+        rm.rm_ver, rm.rm_crear, rm.rm_editar, rm.rm_eliminar, rm.rm_aprobar
+      FROM pc_rol_modulo rm
+      INNER JOIN pc_roles r ON r.rol_id = rm.rm_rol_id AND r.rol_activo = 1
+      WHERE rm.rm_activo = 1
+    `);
 
     for (const rol of roles) {
-      const allModulosResult = await this.dataSource.query(`
-        SELECT
-          m.mod_id AS mod_id,
-          m.mod_nombre AS mod_nombre,
-          m.mod_ruta AS mod_ruta,
-          m.mod_icono AS mod_icono,
-          m.mod_padre_id AS mod_padre_id,
-          m.mod_posicion AS mod_posicion
-        FROM pc_modulos m
-        WHERE m.mod_estado = 1
-        ORDER BY m.mod_posicion
-      `);
-
-      const rolesPermisosResult = await this.dataSource.query(
-        `
-          SELECT
-            m.mod_id AS mod_id,
-            rm.rm_ver, rm.rm_crear, rm.rm_editar, rm.rm_eliminar, rm.rm_aprobar
-          FROM pc_rol_modulo rm
-          INNER JOIN pc_modulos m ON m.mod_id = rm.rm_mod_id
-          WHERE rm.rm_rol_id = @0 AND rm.rm_activo = 1
-        `,
-        [rol.rol_id],
-      );
-
       const permisosMap: Record<number, any> = {};
-      rolesPermisosResult.forEach((p: any) => {
-        permisosMap[p.mod_id] = {
-          ver: !!p.rm_ver,
-          crear: !!p.rm_crear,
-          editar: !!p.rm_editar,
-          eliminar: !!p.rm_eliminar,
-          aprobar: !!p.rm_aprobar,
-        };
-      });
+      todosPermisos
+        .filter((p: any) => p.rm_rol_id === rol.rol_id)
+        .forEach((p: any) => {
+          permisosMap[p.mod_id] = {
+            ver: !!p.rm_ver,
+            crear: !!p.rm_crear,
+            editar: !!p.rm_editar,
+            eliminar: !!p.rm_eliminar,
+            aprobar: !!p.rm_aprobar,
+          };
+        });
 
       const map: Record<number, any> = {};
       allModulosResult.forEach((m: any) => {
@@ -97,143 +96,139 @@ export class SeguridadService {
     }));
   }
 
-  async crearRol(data: any) {
-    const nombre = data.rol_nombre ?? data.nombre;
-    const descripcion = data.rol_descripcion ?? data.descripcion;
-
-    const result = await this.dataSource.query(
-      `
-        INSERT INTO pc_roles (rol_nombre, rol_descripcion, rol_activo, rol_created_at)
-        OUTPUT INSERTED.*
-        VALUES (@0, @1, @2, SYSDATETIME())
-      `,
-      [nombre, descripcion || null, 1],
-    );
-
-    const rolCreado = result[0];
-
-    const insertarPermisosCrear = async (modulos: any[], rolId: number) => {
-      for (const mod of modulos) {
-        await this.dataSource.query(
-          `
-            INSERT INTO pc_rol_modulo (rm_rol_id, rm_mod_id, rm_ver, rm_crear, rm_editar, rm_eliminar, rm_aprobar, rm_activo, rm_created_at)
-            VALUES (@0, @1, @2, @3, @4, @5, @6, @7, SYSDATETIME())
-          `,
-          [
-            rolId,
-            mod.mod_id,
-            mod.permisos.ver ? 1 : 0,
-            mod.permisos.crear ? 1 : 0,
-            mod.permisos.editar ? 1 : 0,
-            mod.permisos.eliminar ? 1 : 0,
-            mod.permisos.aprobar ? 1 : 0,
-            1,
-          ],
-        );
-
-        if (mod.subModulos?.length) {
-          await insertarPermisosCrear(mod.subModulos, rolId);
+  // Aplana el árbol de módulos que manda la pantalla a filas
+  // {mod_id, ver, crear, editar, eliminar, aprobar}. Solo ids enteros
+  // válidos; un mismo módulo repetido se queda con la última aparición.
+  private aplanarPermisos(modulos: any[] | undefined) {
+    const porModulo = new Map<number, Record<string, number>>();
+    const recorrer = (mods: any[]) => {
+      for (const m of mods || []) {
+        const modId = Number(m?.mod_id);
+        if (Number.isInteger(modId) && modId > 0) {
+          const p = m.permisos || {};
+          porModulo.set(modId, {
+            mod_id: modId,
+            ver: p.ver ? 1 : 0,
+            crear: p.crear ? 1 : 0,
+            editar: p.editar ? 1 : 0,
+            eliminar: p.eliminar ? 1 : 0,
+            aprobar: p.aprobar ? 1 : 0,
+          });
         }
+        if (m?.subModulos?.length) recorrer(m.subModulos);
       }
     };
+    recorrer(modulos || []);
+    return Array.from(porModulo.values());
+  }
 
-    if (data.modulos?.length) {
-      await insertarPermisosCrear(data.modulos, rolCreado.rol_id);
+  // Deja pc_rol_modulo del rol EXACTAMENTE como la lista recibida, en 2
+  // sentencias (antes: SELECT + UPDATE/INSERT por módulo, ~120 viajes al
+  // servidor para ADMIN → 35-40 s). Lo que no viene en la lista se
+  // desactiva — también cuando la lista viene vacía (antes, quitar todos
+  // los permisos de un rol no quitaba ninguno).
+  private async sincronizarPermisosRol(
+    runner: QueryRunner,
+    rolId: number,
+    modulos: any[] | undefined,
+  ) {
+    const filas = JSON.stringify(this.aplanarPermisos(modulos));
+    const esquemaJson = `
+      WITH (mod_id INT, ver BIT, crear BIT, editar BIT, eliminar BIT, aprobar BIT)
+    `;
+
+    await runner.query(
+      `
+        UPDATE pc_rol_modulo
+        SET rm_activo = 0, updated_at = SYSDATETIME()
+        WHERE rm_rol_id = @0 AND rm_activo = 1
+          AND rm_mod_id NOT IN (SELECT mod_id FROM OPENJSON(@1) ${esquemaJson})
+      `,
+      [rolId, filas],
+    );
+
+    await runner.query(
+      `
+        MERGE pc_rol_modulo AS destino
+        USING (SELECT * FROM OPENJSON(@1) ${esquemaJson}) AS origen
+          ON destino.rm_rol_id = @0 AND destino.rm_mod_id = origen.mod_id
+        WHEN MATCHED THEN UPDATE SET
+          rm_ver = origen.ver, rm_crear = origen.crear, rm_editar = origen.editar,
+          rm_eliminar = origen.eliminar, rm_aprobar = origen.aprobar,
+          rm_activo = 1, updated_at = SYSDATETIME()
+        WHEN NOT MATCHED THEN INSERT
+          (rm_rol_id, rm_mod_id, rm_ver, rm_crear, rm_editar, rm_eliminar, rm_aprobar, rm_activo, rm_created_at)
+          VALUES (@0, origen.mod_id, origen.ver, origen.crear, origen.editar, origen.eliminar, origen.aprobar, 1, SYSDATETIME());
+      `,
+      [rolId, filas],
+    );
+  }
+
+  // Todo en una transacción: si algo falla, el rol no queda guardado a
+  // medias (antes cada sentencia se confirmaba sola).
+  private async enTransaccion<T>(trabajo: (runner: QueryRunner) => Promise<T>) {
+    const runner = this.dataSource.createQueryRunner();
+    await runner.connect();
+    await runner.startTransaction();
+    try {
+      const resultado = await trabajo(runner);
+      await runner.commitTransaction();
+      return resultado;
+    } catch (error) {
+      await runner.rollbackTransaction();
+      throw error;
+    } finally {
+      await runner.release();
+    }
+  }
+
+  async crearRol(data: any) {
+    const nombre = String(data.rol_nombre ?? data.nombre ?? '').trim();
+    const descripcion = data.rol_descripcion ?? data.descripcion;
+    // rol_codigo es NOT NULL sin default: antes no se insertaba y crear
+    // un rol fallaba siempre.
+    const codigo = String(data.rol_codigo ?? '').trim().toUpperCase();
+    if (!nombre || !codigo) {
+      throw new BadRequestException('El nombre y el código del rol son obligatorios');
     }
 
-    return { message: 'Rol creado correctamente', rol: rolCreado };
+    return this.enTransaccion(async (runner) => {
+      const [rolCreado] = await runner.query(
+        `
+          INSERT INTO pc_roles (rol_nombre, rol_descripcion, rol_codigo, rol_activo, rol_created_at)
+          OUTPUT INSERTED.*
+          VALUES (@0, @1, @2, 1, SYSDATETIME())
+        `,
+        [nombre, descripcion || null, codigo],
+      );
+
+      await this.sincronizarPermisosRol(runner, rolCreado.rol_id, data.modulos);
+
+      return { message: 'Rol creado correctamente', rol: rolCreado };
+    });
   }
 
   async actualizarRol(id: number, data: any) {
-    await this.dataSource.query(
-      `
-        UPDATE pc_roles
-        SET rol_nombre = @0,
-            rol_descripcion = @1,
-            rol_updated_at = SYSDATETIME()
-        WHERE rol_id = @2
-      `,
-      [data.rol_nombre, data.rol_descripcion || null, id],
-    );
-
-    const enviados: number[] = [];
-    const collectIds = (mods: any[]) => {
-      mods.forEach((m) => {
-        enviados.push(m.mod_id);
-        if (m.subModulos?.length) collectIds(m.subModulos);
-      });
-    };
-    if (data.modulos?.length) collectIds(data.modulos);
-
-    if (enviados.length) {
-      const list = enviados.join(',');
-      await this.dataSource.query(
+    return this.enTransaccion(async (runner) => {
+      await runner.query(
         `
-          UPDATE pc_rol_modulo
-          SET rm_activo = 0, updated_at = SYSDATETIME()
-          WHERE rm_rol_id = @0 AND rm_mod_id NOT IN (${list})
+          UPDATE pc_roles
+          SET rol_nombre = COALESCE(@0, rol_nombre),
+              rol_descripcion = @1,
+              rol_updated_at = SYSDATETIME()
+          WHERE rol_id = @2
         `,
-        [id],
+        [data.rol_nombre || null, data.rol_descripcion || null, id],
       );
-    }
 
-    const insertarPermisos = async (modulos: any[]) => {
-      for (const mod of modulos) {
-        const existe = await this.dataSource.query(
-          `
-            SELECT * FROM pc_rol_modulo
-            WHERE rm_rol_id = @0 AND rm_mod_id = @1
-          `,
-          [id, mod.mod_id],
-        );
-
-        if (existe.length > 0) {
-          await this.dataSource.query(
-            `
-              UPDATE pc_rol_modulo
-              SET rm_ver = @0, rm_crear = @1, rm_editar = @2, rm_eliminar = @3, rm_aprobar = @4, rm_activo = 1, updated_at = SYSDATETIME()
-              WHERE rm_rol_id = @5 AND rm_mod_id = @6
-            `,
-            [
-              mod.permisos.ver ? 1 : 0,
-              mod.permisos.crear ? 1 : 0,
-              mod.permisos.editar ? 1 : 0,
-              mod.permisos.eliminar ? 1 : 0,
-              mod.permisos.aprobar ? 1 : 0,
-              id,
-              mod.mod_id,
-            ],
-          );
-        } else {
-          await this.dataSource.query(
-            `
-              INSERT INTO pc_rol_modulo (rm_rol_id, rm_mod_id, rm_ver, rm_crear, rm_editar, rm_eliminar, rm_aprobar, rm_activo, rm_created_at)
-              VALUES (@0, @1, @2, @3, @4, @5, @6, @7, SYSDATETIME())
-            `,
-            [
-              id,
-              mod.mod_id,
-              mod.permisos.ver ? 1 : 0,
-              mod.permisos.crear ? 1 : 0,
-              mod.permisos.editar ? 1 : 0,
-              mod.permisos.eliminar ? 1 : 0,
-              mod.permisos.aprobar ? 1 : 0,
-              1,
-            ],
-          );
-        }
-
-        if (mod.subModulos?.length) {
-          await insertarPermisos(mod.subModulos);
-        }
+      // Solo se tocan los permisos si la pantalla los mandó (un update
+      // de solo nombre/descripción no debe borrar los permisos).
+      if (data.modulos !== undefined) {
+        await this.sincronizarPermisosRol(runner, id, data.modulos);
       }
-    };
 
-    if (data.modulos?.length) {
-      await insertarPermisos(data.modulos);
-    }
-
-    return { message: 'Rol actualizado correctamente' };
+      return { message: 'Rol actualizado correctamente' };
+    });
   }
 
   async inactivarRol(id: number) {
