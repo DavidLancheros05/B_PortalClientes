@@ -34,26 +34,15 @@ export class SolicitudesListadosService {
     OR s.sol_cupo_solicitado IS NOT NULL
   )`;
 
-  private async resolveLookupColumns() {
-    const result = await this.dataSource.query(`
-      SELECT
-        CASE WHEN COL_LENGTH('clientes','cli_id') IS NOT NULL THEN 'cli_id' ELSE 'cliente_id' END AS cli_id,
-        CASE WHEN COL_LENGTH('clientes','cli_razon_social') IS NOT NULL THEN 'cli_razon_social' ELSE 'cliente_razon_social' END AS cli_razon_social,
-        CASE WHEN COL_LENGTH('clientes','cli_ejecutivo_id') IS NOT NULL THEN 'cli_ejecutivo_id' ELSE 'ejecutivo_id' END AS cli_ejecutivo_id,
-        CASE WHEN COL_LENGTH('usuarios','usr_id') IS NOT NULL THEN 'usr_id' ELSE 'usr_id' END AS usr_id,
-        CASE WHEN COL_LENGTH('usuarios','usr_nombre') IS NOT NULL THEN 'usr_nombre' ELSE 'nombre' END AS usr_nombre
-    `);
-    const row = result[0] ?? {};
-    return {
-      cliId: String(row.cli_id ?? 'cliente_id').trim(),
-      cliRazonSocial: String(
-        row.cli_razon_social ?? 'cliente_razon_social',
-      ).trim(),
-      cliEjecutivoId: String(row.cli_ejecutivo_id ?? 'ejecutivo_id').trim(),
-      usrId: String(row.usr_id ?? 'usr_id').trim(),
-      usrNombre: String(row.usr_nombre ?? 'nombre').trim(),
-    };
-  }
+  // Nombres de columnas de clientes/usuarios. Antes se averiguaban con una
+  // consulta (COL_LENGTH) en cada llamada, lo que costaba un viaje a la BD
+  // remota (~0.3 s) por listado para un resultado que nunca cambia.
+  private static readonly COLUMNAS = {
+    cliId: 'cli_id',
+    cliRazonSocial: 'cli_razon_social',
+    usrId: 'usr_id',
+    usrNombre: 'usr_nombre',
+  };
 
   // ===== LISTADO: Query methods =====
 
@@ -68,7 +57,7 @@ export class SolicitudesListadosService {
     resultado_etapa_id?: string;
     tipo_solicitud?: string;
   }): Promise<SolicitudListadoGestionDto[]> {
-    const columns = await this.resolveLookupColumns();
+    const columns = SolicitudesListadosService.COLUMNAS;
 
     if ((query.mode || '').trim().toLowerCase() === 'ejecutivos') {
       return await this.dataSource.query(`
@@ -180,10 +169,7 @@ export class SolicitudesListadosService {
       LEFT JOIN workflow_estado_etapa wr ON wr.wee_id = s.sol_wee_id
       ${whereSql}
       ORDER BY s.sol_fecha_creacion DESC
-    `.replace(/\?/g, (_) => {
-      const param = params.shift();
-      return typeof param === 'string' ? `'${param}'` : param;
-    });
+    `;
 
     const results = await this.dataSource.query(sql, params);
     return results;
@@ -320,7 +306,7 @@ export class SolicitudesListadosService {
       return [];
     }
 
-    const columns = await this.resolveLookupColumns();
+    const columns = SolicitudesListadosService.COLUMNAS;
 
     const sql = `
     SELECT
@@ -400,7 +386,7 @@ export class SolicitudesListadosService {
       return [];
     }
 
-    const columns = await this.resolveLookupColumns();
+    const columns = SolicitudesListadosService.COLUMNAS;
 
     const sql = `
     SELECT
@@ -506,7 +492,7 @@ export class SolicitudesListadosService {
       estado_id?: number;
     },
   ) {
-    const columns = await this.resolveLookupColumns();
+    const columns = SolicitudesListadosService.COLUMNAS;
     const whereClauses: string[] = [];
 
     if (filtros?.etapa_id !== undefined) {
@@ -658,7 +644,7 @@ export class SolicitudesListadosService {
   // ===== POR ETAPA DE WORKFLOW =====
 
   async getSolicitudesPendientesAuxiliarServicioCliente(usuarioId: number) {
-    const columns = await this.resolveLookupColumns();
+    const columns = SolicitudesListadosService.COLUMNAS;
     const sql = this.buildSolicitudesQuery(
       columns,
       `s.sol_wet_id = (SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'ASC')
@@ -668,7 +654,7 @@ export class SolicitudesListadosService {
   }
 
   async getSolicitudesParaOC(usuarioId: number) {
-    const columns = await this.resolveLookupColumns();
+    const columns = SolicitudesListadosService.COLUMNAS;
     const sql = this.buildSolicitudesQuery(
       columns,
       `s.sol_wet_id = (SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'OFC')
@@ -678,7 +664,7 @@ export class SolicitudesListadosService {
   }
 
   async getSolicitudesParaComiteCredito1(usuarioId: number) {
-    const columns = await this.resolveLookupColumns();
+    const columns = SolicitudesListadosService.COLUMNAS;
     const sql = this.buildSolicitudesQuery(
       columns,
       `s.sol_wet_id = (SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'CC1')
@@ -688,7 +674,7 @@ export class SolicitudesListadosService {
   }
 
   async getSolicitudesParaComiteCredito2(usuarioId: number) {
-    const columns = await this.resolveLookupColumns();
+    const columns = SolicitudesListadosService.COLUMNAS;
     const sql = this.buildSolicitudesQuery(
       columns,
       `s.sol_wet_id = (SELECT wet_id FROM workflow_etapas WHERE wet_codigo = 'CC2')
