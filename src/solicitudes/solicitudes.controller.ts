@@ -1197,6 +1197,37 @@ export class SolicitudesController {
     }
   }
 
+  // Guarda todas las respuestas del formulario de una vez (una transacción).
+  // A diferencia de POST respuestas, un error responde con status HTTP de
+  // error, no 200 + ok:false, para que el front se entere.
+  @Post('respuestas/lote')
+  @UseGuards(JwtAuthGuard)
+  @SoloAutenticado()
+  async guardarRespuestasLote(
+    @Req() req: ReqUsuario,
+    @Body() body: { sa_sol_id: number; respuestas: any[] },
+  ) {
+    const solicitudId = Number(body?.sa_sol_id);
+    const respuestas = body?.respuestas;
+    if (!Number.isInteger(solicitudId) || solicitudId <= 0) {
+      throw new BadRequestException('sa_sol_id inválido');
+    }
+    if (
+      !Array.isArray(respuestas) ||
+      respuestas.some((r) => !Number.isInteger(Number(r?.fp_id)))
+    ) {
+      throw new BadRequestException(
+        'respuestas debe ser un arreglo con fp_id numérico',
+      );
+    }
+    await this.verificarDuenoSolicitud(solicitudId, req);
+    const resultado = await this.respuestasService.guardarRespuestasLote(
+      solicitudId,
+      respuestas,
+    );
+    return { ok: true, data: resultado };
+  }
+
   @Post('respuestas/archivo')
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(FileInterceptor('archivo'))

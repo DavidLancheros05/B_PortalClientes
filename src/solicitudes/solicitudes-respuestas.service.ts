@@ -1,6 +1,6 @@
 // src/solicitudes/solicitudes-respuestas.service.ts
 import { Inject, Injectable, BadRequestException } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { DataSource, QueryRunner } from 'typeorm';
 import { createHash } from 'crypto';
 import { TABLAS, COLUMNAS } from '../common/constants/tablas.constants';
 import { SolicitudRespuestaDto } from './dto/solicitud-respuesta.response.dto';
@@ -16,6 +16,15 @@ import {
   nombreGuardadoArchivo,
   nombreOriginalArchivo,
 } from '../common/utils/storage-file-name.util';
+
+// Una fila de Formulario_respuesta, sin sol_id/fp_id.
+type FilaRespuesta = {
+  texto: any;
+  numero: any;
+  fecha: any;
+  opcion_id: number | null;
+  multi: 0 | 1 | null;
+};
 
 @Injectable()
 export class SolicitudesRespuestasService {
@@ -114,30 +123,16 @@ export class SolicitudesRespuestasService {
     return await this.dataSource.query(sql, [solicitudId]);
   }
 
-  async guardarRespuesta(dto: any) {
-    const {
-      sa_sol_id,
-      fp_id,
-      valor_texto,
-      valor_numero,
-      valor_fecha,
-      valor_opcion_id,
-      es_multiselect,
-    } = dto;
+  // Convierte la respuesta de una pregunta en las filas a insertar en
+  // Formulario_respuesta (una por opción marcada). Devuelve null si la
+  // respuesta no trae ningún valor. La usan guardarRespuesta y
+  // guardarRespuestasLote para que las reglas no se dupliquen.
+  private normalizarRespuesta(
+    dto: any,
+    fpTipo: string | undefined,
+  ): FilaRespuesta[] | null {
+    const { valor_texto, valor_numero, valor_fecha, valor_opcion_id } = dto;
 
-    // Validar que los datos no sean undefined
-    if (!sa_sol_id || !fp_id) {
-      throw new Error('sa_sol_id y fp_id son obligatorios');
-    }
-
-    // Obtener el tipo de pregunta para determinar cómo guardar la respuesta
-    const preguntaResult = await this.dataSource.query(
-      `SELECT fp_tipo FROM Formulario_pregunta WHERE fp_id = @0`,
-      [fp_id],
-    );
-    const fpTipo = preguntaResult?.[0]?.fp_tipo;
-
-    // Convertir undefined a null y validar tipos
     let valorTexto =
       valor_texto !== undefined
         ? valor_texto === ''
@@ -188,6 +183,72 @@ export class SolicitudesRespuestasService {
       !valorNumero &&
       !valorFecha
     ) {
+      return null;
+    }
+
+    const multi = esMultiselectTipo ? 1 : 0;
+    const vacia: FilaRespuesta = {
+      texto: null,
+      numero: null,
+      fecha: null,
+      opcion_id: null,
+      multi: null,
+    };
+
+    // SELECT_TABLA guarda el id elegido en fr_valor_numero, no en
+    // fr_valor_opcion_id (no es una Formulario_pregunta_opcion).
+    if (esSelectTabla && opcionesIds.length > 0) {
+      return opcionesIds.map((id) => ({ ...vacia, numero: id, multi }));
+    }
+    if (opcionesIds.length > 0) {
+      return opcionesIds.map((id) => ({ ...vacia, opcion_id: id, multi }));
+    }
+    return [
+      { ...vacia, texto: valorTexto, numero: valorNumero, fecha: valorFecha },
+    ];
+  }
+
+  // Inserta las filas ya normalizadas en una sola sentencia (OPENJSON).
+  private async insertarFilas(
+    runner: QueryRunner,
+    solicitudId: number,
+    filas: Array<FilaRespuesta & { fp_id: number }>,
+  ) {
+    if (filas.length === 0) return;
+    // texto/numero/fecha se leen como texto y SQL Server los convierte al
+    // insertar, igual que hacía el driver con los parámetros sueltos.
+    await runner.query(
+      `
+        INSERT INTO Formulario_respuesta
+          (fr_sol_id, fr_fp_id, fr_valor_texto, fr_valor_numero, fr_valor_fecha,
+           fr_valor_opcion_id, fr_es_multiselect, fr_created_at)
+        SELECT @0, fp_id, texto, numero, fecha, opcion_id, multi, GETDATE()
+        FROM OPENJSON(@1) WITH (
+          fp_id INT, texto NVARCHAR(MAX), numero NVARCHAR(100),
+          fecha NVARCHAR(50), opcion_id BIGINT, multi BIT
+        )
+      `,
+      [solicitudId, JSON.stringify(filas)],
+    );
+  }
+
+  async guardarRespuesta(dto: any) {
+    const { sa_sol_id, fp_id } = dto;
+
+    // Validar que los datos no sean undefined
+    if (!sa_sol_id || !fp_id) {
+      throw new Error('sa_sol_id y fp_id son obligatorios');
+    }
+
+    // Obtener el tipo de pregunta para determinar cómo guardar la respuesta
+    const preguntaResult = await this.dataSource.query(
+      `SELECT fp_tipo FROM Formulario_pregunta WHERE fp_id = @0`,
+      [fp_id],
+    );
+    const fpTipo = preguntaResult?.[0]?.fp_tipo;
+
+    const filas = this.normalizarRespuesta(dto, fpTipo);
+    if (!filas) {
       console.warn('⚠️ Todos los valores están vacíos');
       throw new Error(
         'Debe proporcionar al menos un valor (texto, número, fecha u opción)',
@@ -203,53 +264,11 @@ export class SolicitudesRespuestasService {
         `DELETE FROM Formulario_respuesta WHERE fr_sol_id = @0 AND fr_fp_id = @1`,
         [sa_sol_id, fp_id],
       );
-      if (esSelectTabla && opcionesIds.length > 0) {
-        const sql = `
-          INSERT INTO Formulario_respuesta
-          (fr_sol_id, fr_fp_id, fr_valor_numero, fr_es_multiselect, fr_created_at)
-          VALUES (@0, @1, @2, @3, GETDATE())
-        `;
-
-        for (const opcionId of opcionesIds) {
-          const params = [
-            sa_sol_id,
-            fp_id,
-            opcionId,
-            esMultiselectTipo ? 1 : 0,
-          ];
-          await queryRunner.query(sql, params);
-        }
-      } else if (opcionesIds.length > 0) {
-        // Si hay opciones (SELECT regular, no SELECT_TABLA), insertar un registro por cada opción
-        const sql = `
-          INSERT INTO Formulario_respuesta
-          (fr_sol_id, fr_fp_id, fr_valor_opcion_id, fr_es_multiselect, fr_created_at)
-          VALUES (@0, @1, @2, @3, GETDATE())
-        `;
-
-        for (const opcionId of opcionesIds) {
-          const params = [
-            sa_sol_id,
-            fp_id,
-            opcionId,
-            esMultiselectTipo ? 1 : 0,
-          ];
-
-          await queryRunner.query(sql, params);
-        }
-      } else {
-        // Insertar registro único para valor_texto, numero, o fecha
-        const sql = `
-          INSERT INTO Formulario_respuesta
-          (fr_sol_id, fr_fp_id, fr_valor_texto, fr_valor_numero, fr_valor_fecha, fr_created_at)
-          VALUES (@0, @1, @2, @3, @4, GETDATE())
-        `;
-
-        const params = [sa_sol_id, fp_id, valorTexto, valorNumero, valorFecha];
-
-        await queryRunner.query(sql, params);
-      }
-
+      await this.insertarFilas(
+        queryRunner,
+        sa_sol_id,
+        filas.map((f) => ({ ...f, fp_id: Number(fp_id) })),
+      );
       await queryRunner.commitTransaction();
     } catch (error) {
       await queryRunner.rollbackTransaction();
@@ -260,9 +279,64 @@ export class SolicitudesRespuestasService {
 
     return {
       ok: true,
-      mensaje: esSelectTabla
-        ? 'Respuesta guardada (SELECT_TABLA)'
-        : 'Respuesta guardada',
+      mensaje:
+        fpTipo === 'SELECT_TABLA'
+          ? 'Respuesta guardada (SELECT_TABLA)'
+          : 'Respuesta guardada',
+    };
+  }
+
+  // Guarda todas las respuestas del formulario en una sola transacción:
+  // ~4 viajes a la BD en vez de ~6 por pregunta (ver
+  // documentacion/Portal Clientes/mejoras/escalabilidad-rendimiento.md, 4.1).
+  // Todo o nada: si una falla, no queda el formulario guardado a medias.
+  // Las preguntas sin ningún valor se saltan y conservan su respuesta
+  // anterior, igual que cuando guardarRespuesta rechazaba la vacía.
+  async guardarRespuestasLote(solicitudId: number, respuestas: any[]) {
+    const fpIds = [...new Set(respuestas.map((r) => Number(r.fp_id)))];
+    if (fpIds.length === 0) return { guardadas: 0, omitidas: 0 };
+
+    const tipos: Array<{ fp_id: number; fp_tipo: string }> =
+      await this.dataSource.query(
+        `SELECT fp_id, fp_tipo FROM Formulario_pregunta
+         WHERE fp_id IN (SELECT value FROM OPENJSON(@0))`,
+        [JSON.stringify(fpIds)],
+      );
+    const tipoPorId = new Map(tipos.map((t) => [t.fp_id, t.fp_tipo]));
+
+    const filas: Array<FilaRespuesta & { fp_id: number }> = [];
+    const conValor: number[] = [];
+    for (const r of respuestas) {
+      const fpId = Number(r.fp_id);
+      const normalizadas = this.normalizarRespuesta(r, tipoPorId.get(fpId));
+      if (!normalizadas) continue;
+      conValor.push(fpId);
+      filas.push(...normalizadas.map((f) => ({ ...f, fp_id: fpId })));
+    }
+
+    if (conValor.length > 0) {
+      const queryRunner = this.dataSource.createQueryRunner();
+      await queryRunner.connect();
+      await queryRunner.startTransaction();
+      try {
+        await queryRunner.query(
+          `DELETE FROM Formulario_respuesta
+           WHERE fr_sol_id = @0 AND fr_fp_id IN (SELECT value FROM OPENJSON(@1))`,
+          [solicitudId, JSON.stringify(conValor)],
+        );
+        await this.insertarFilas(queryRunner, solicitudId, filas);
+        await queryRunner.commitTransaction();
+      } catch (error) {
+        await queryRunner.rollbackTransaction();
+        throw error;
+      } finally {
+        await queryRunner.release();
+      }
+    }
+
+    return {
+      guardadas: conValor.length,
+      omitidas: respuestas.length - conValor.length,
     };
   }
 

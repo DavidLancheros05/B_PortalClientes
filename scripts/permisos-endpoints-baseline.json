@@ -121,31 +121,31 @@
   },
   {
     "archivo": "src/solicitudes/solicitudes.controller.ts",
-    "linea": 1200,
+    "linea": 1231,
     "decorador": "@Post('respuestas/archivo')",
     "rutaParcial": "respuestas/archivo"
   },
   {
     "archivo": "src/solicitudes/solicitudes.controller.ts",
-    "linea": 1248,
+    "linea": 1279,
     "decorador": "@Post('respuestas/archivo/reutilizar')",
     "rutaParcial": "respuestas/archivo/reutilizar"
   },
   {
     "archivo": "src/solicitudes/solicitudes.controller.ts",
-    "linea": 1284,
+    "linea": 1315,
     "decorador": "@Patch(':id/respuestas/documento/fecha')",
     "rutaParcial": ":id/respuestas/documento/fecha"
   },
   {
     "archivo": "src/solicitudes/solicitudes.controller.ts",
-    "linea": 1389,
+    "linea": 1420,
     "decorador": "@Patch(':id/documentos-diferidos/verificar')",
     "rutaParcial": ":id/documentos-diferidos/verificar"
   },
   {
     "archivo": "src/solicitudes/solicitudes.controller.ts",
-    "linea": 1680,
+    "linea": 1711,
     "decorador": "@Delete(':id')",
     "rutaParcial": ":id"
   },
