@@ -306,14 +306,22 @@ export class AuthService {
              r.rol_id, r.rol_nombre, r.rol_codigo
       FROM usuarios u
       -- Solo roles activos (antes un rol desactivado podía quedar en el
-      -- JWT) y con ORDER BY para que con varios roles se elija siempre el
-      -- mismo (antes usuarioData[0] dependía del orden físico de SQL
-      -- Server). Los permisos reales salen de TODOS los roles activos vía
+      -- JWT). Los permisos reales salen de TODOS los roles activos vía
       -- getModulesByUsuario / PermissionsService.resolverRolIds.
       LEFT JOIN pc_usuario_rol ur ON u.usr_id = ur.ur_usuario_id AND ur.ur_activo = 1
       LEFT JOIN pc_roles r ON ur.ur_rol_id = r.rol_id
       WHERE u.usr_usuario = @0
-      ORDER BY r.rol_id
+      -- usr_usuario NO es único: la tabla la comparte otro sistema y hay
+      -- logins repetidos (ej. dos "Administrador", uno sin acceso al
+      -- portal). Se toma primero el que tiene acceso al portal, luego el
+      -- que tiene rol, y el rol de menor id. Ojo: un ORDER BY r.rol_id a
+      -- secas ponía primero las filas SIN rol (NULL va primero en SQL
+      -- Server) y dejó al admin real sin poder entrar.
+      ORDER BY
+        CASE WHEN u.usr_acceso_pc = 1 THEN 0 ELSE 1 END,
+        CASE WHEN r.rol_id IS NULL THEN 1 ELSE 0 END,
+        r.rol_id,
+        u.usr_id
       `,
       [usuario],
     );
