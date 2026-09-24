@@ -152,11 +152,47 @@ export class MaestrosService {
     return value.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
   }
 
+  // Nombre de la base a la que está conectado el proceso: no cambia mientras
+  // el proceso vive. Antes se consultaba (SELECT DB_NAME()) en cada llamada
+  // a /maestros/catalogo — un viaje de ~0.3 s a la BD remota por catálogo.
+  private nombreBaseActual: string | undefined;
+
+  private async obtenerNombreBaseActual(): Promise<string> {
+    if (this.nombreBaseActual === undefined) {
+      const result = await this.dataSource.query(`SELECT DB_NAME() AS db_name`);
+      this.nombreBaseActual = String(result?.[0]?.db_name ?? '').trim();
+    }
+    return this.nombreBaseActual;
+  }
+
+  // Columna de estado por tabla: sale de INFORMATION_SCHEMA, que solo
+  // cambia al alterar el esquema. Cache de 10 min (mismo motivo que arriba).
+  private columnaEstadoCache = new Map<
+    string,
+    { valor: string | null; expira: number }
+  >();
+
+  private async detectarColumnaEstado(
+    targetDb: string,
+    tabla: string,
+  ): Promise<string | null> {
+    const clave = `${targetDb}.${tabla}`.toLowerCase();
+    const enCache = this.columnaEstadoCache.get(clave);
+    if (enCache && enCache.expira > Date.now()) return enCache.valor;
+
+    const valor = await this.consultarColumnaEstado(targetDb, tabla);
+    this.columnaEstadoCache.set(clave, {
+      valor,
+      expira: Date.now() + 10 * 60_000,
+    });
+    return valor;
+  }
+
   // Busca una columna tipo "ciu_estado"/"pai_activo"/"estado" en la tabla
   // sin traer todo INFORMATION_SCHEMA — un solo query liviano, priorizando
   // nombres que terminen en "_estado" (convención real de este esquema)
   // sobre "_activo" (nunca se usa, pero por si acaso).
-  private async detectarColumnaEstado(
+  private async consultarColumnaEstado(
     targetDb: string,
     tabla: string,
   ): Promise<string | null> {
@@ -385,10 +421,7 @@ export class MaestrosService {
       condicion: columnaCondicion,
     });
 
-    const currentDbResult = await this.dataSource.query(
-      `SELECT DB_NAME() AS db_name`,
-    );
-    const currentDb = String(currentDbResult?.[0]?.db_name ?? '').trim();
+    const currentDb = await this.obtenerNombreBaseActual();
     const targetDb = baseDatos || currentDb;
 
     // Si ya nos dan columna de valor Y columna llave explícitas, no hace
@@ -702,10 +735,7 @@ export class MaestrosService {
       return result.map((row: any) => String(row.name));
     }
 
-    const currentDbResult = await this.dataSource.query(
-      `SELECT DB_NAME() AS db_name`,
-    );
-    const currentDb = String(currentDbResult?.[0]?.db_name ?? '').trim();
+    const currentDb = await this.obtenerNombreBaseActual();
     const targetDb = baseDatos || currentDb;
 
     if (!targetDb || !this.isSafeIdentifier(targetDb)) {

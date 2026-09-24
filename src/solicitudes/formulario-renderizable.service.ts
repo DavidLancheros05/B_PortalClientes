@@ -226,8 +226,11 @@ export class FormularioRenderizableService {
     // principal causa de la demora al abrir esta página.
     const respuestasMap = new Map<number, string>();
     const tablaFilasMap = new Map<number, Record<string, string>[]>();
+    const opciones = await this.cargarValoresOpcion(respuestas);
     const valoresResueltos = await Promise.all(
-      respuestas.map((respuesta) => this.resolverValorRespuesta(respuesta)),
+      respuestas.map((respuesta) =>
+        this.resolverValorRespuesta(respuesta, opciones),
+      ),
     );
     respuestas.forEach((respuesta, i) => {
       respuestasMap.set(respuesta.fr_fp_id, valoresResueltos[i]);
@@ -372,8 +375,9 @@ export class FormularioRenderizableService {
       [solicitudId, ...codigos],
     );
 
+    const opciones = await this.cargarValoresOpcion(filas);
     const valoresResueltos = await Promise.all(
-      filas.map((fila: any) => this.resolverValorRespuesta(fila)),
+      filas.map((fila: any) => this.resolverValorRespuesta(fila, opciones)),
     );
 
     return codigos.map((codigo) => {
@@ -519,7 +523,35 @@ export class FormularioRenderizableService {
     }
   }
 
-  private async resolverValorRespuesta(respuesta: any): Promise<string> {
+  // fpo_valor de todas las opciones elegidas, en una sola consulta. Antes
+  // resolverValorRespuesta hacía una consulta por respuesta SELECT (27 en
+  // una solicitud real), todas a la vez, y copaban el pool de 10 conexiones
+  // mientras se generaba el PDF, frenando al resto de peticiones.
+  private async cargarValoresOpcion(
+    respuestas: any[],
+  ): Promise<Map<number, string>> {
+    const ids = [
+      ...new Set(
+        respuestas
+          .map((r) => r.fr_valor_opcion_id)
+          .filter((id) => id !== null && id !== undefined)
+          .map(Number),
+      ),
+    ];
+    if (ids.length === 0) return new Map();
+    const filas: { fpo_id: number; fpo_valor: string }[] =
+      await this.dataSource.query(
+        `SELECT fpo_id, fpo_valor FROM Formulario_pregunta_opcion
+         WHERE fpo_id IN (SELECT value FROM OPENJSON(@0))`,
+        [JSON.stringify(ids)],
+      );
+    return new Map(filas.map((f) => [Number(f.fpo_id), f.fpo_valor]));
+  }
+
+  private async resolverValorRespuesta(
+    respuesta: any,
+    opciones: Map<number, string>,
+  ): Promise<string> {
     // TABLA: fr_valor_texto guarda un JSON con las filas capturadas
     if (respuesta.fp_tipo === 'TABLA' && respuesta.fr_valor_texto) {
       try {
@@ -559,15 +591,9 @@ export class FormularioRenderizableService {
 
     // SELECT: buscar en opciones
     if (respuesta.fr_valor_opcion_id) {
-      try {
-        const opcion = await this.dataSource.query(
-          `SELECT fpo_valor FROM Formulario_pregunta_opcion WHERE fpo_id = @0`,
-          [respuesta.fr_valor_opcion_id],
-        );
-        return opcion?.[0]?.fpo_valor || 'Sin respuesta';
-      } catch {
-        return 'Sin respuesta';
-      }
+      return (
+        opciones.get(Number(respuesta.fr_valor_opcion_id)) || 'Sin respuesta'
+      );
     }
 
     // Tipos simples
