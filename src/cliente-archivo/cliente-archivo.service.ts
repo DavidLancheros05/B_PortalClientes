@@ -65,73 +65,81 @@ export class ClienteArchivoService {
     const fallidos: { tdo_id: number; tdo_nombre: string; error: string }[] =
       [];
 
-    for (const doc of documentos) {
-      // Duplicado real en el almacenamiento (no solo copiar la URL): el archivo
-      // "definitivo" del cliente debe ser un asset propio e independiente,
-      // para que reemplazar/eliminar el original en la solicitud aprobada
-      // (storageService.destroy()) no rompa el archivo consolidado del
-      // cliente ni ninguna Ampliación de Cupo que lo haya clonado desde acá.
-      let duplicado;
-      try {
-        duplicado = await this.storageService.duplicate(
-          doc.sa_ruta_almacenamiento,
-          {
-            folder: `documentos-cliente/${clienteId}/${doc.tdo_id}`,
-            filename: doc.sa_nombre_original,
-            resourceType: doc.sa_resource_type || 'raw',
-          },
-        );
-      } catch (error) {
+    // Duplicado real en el almacenamiento (no solo copiar la URL): el archivo
+    // "definitivo" del cliente debe ser un asset propio e independiente,
+    // para que reemplazar/eliminar el original en la solicitud aprobada
+    // (storageService.destroy()) no rompa el archivo consolidado del
+    // cliente ni ninguna Ampliación de Cupo que lo haya clonado desde acá.
+    // Todas las copias en paralelo (antes una tras otra).
+    const resultados = await Promise.allSettled(
+      documentos.map((doc) =>
+        this.storageService.duplicate(doc.sa_ruta_almacenamiento, {
+          folder: `documentos-cliente/${clienteId}/${doc.tdo_id}`,
+          filename: doc.sa_nombre_original,
+          resourceType: doc.sa_resource_type || 'raw',
+        }),
+      ),
+    );
+
+    // Una fila por tdo_id: si la solicitud trae varios documentos del mismo
+    // tipo, gana el último que se duplicó bien (igual que el upsert uno a
+    // uno de antes, donde cada uno pisaba al anterior).
+    const porTdo = new Map<number, Record<string, any>>();
+    resultados.forEach((r, i) => {
+      const doc = documentos[i];
+      if (r.status === 'rejected') {
         this.logger.error(
           `[promoverDocumentos] No se pudo duplicar el documento tdo_id=${doc.tdo_id} (sa_id=${doc.sa_id}) — se omite, el original en Solicitud_archivo sigue siendo la fuente de verdad:`,
-          error,
+          r.reason,
         );
         fallidos.push({
           tdo_id: doc.tdo_id,
           tdo_nombre: doc.tdo_nombre,
-          error: error instanceof Error ? error.message : String(error),
+          error:
+            r.reason instanceof Error ? r.reason.message : String(r.reason),
         });
-        continue;
+        return;
       }
-
-      const [existente] = await queryRunner.query(
-        `SELECT ca_id FROM Cliente_archivo WHERE ca_cli_id = @0 AND ca_tdo_id = @1`,
-        [clienteId, doc.tdo_id],
-      );
-
-      const params = [
-        doc.sa_id,
-        doc.sa_nombre_original,
-        duplicado.url,
-        doc.sa_tipo_mime,
-        doc.sa_fecha_emision,
-        doc.sa_fecha_vencimiento,
-        duplicado.providerId,
-        duplicado.resourceType,
-      ];
-
-      if (existente) {
-        await queryRunner.query(
-          `UPDATE Cliente_archivo SET
-             ca_sa_id = @0, ca_nombre_original = @1, ca_ruta_almacenamiento = @2,
-             ca_tipo_mime = @3, ca_fecha_emision = @4, ca_fecha_vencimiento = @5,
-             ca_id_almacenamiento = @6, ca_resource_type = @7,
-             ca_created_at = GETDATE()
-           WHERE ca_cli_id = @8 AND ca_tdo_id = @9`,
-          [...params, clienteId, doc.tdo_id],
-        );
-      } else {
-        await queryRunner.query(
-          `INSERT INTO Cliente_archivo
-             (ca_cli_id, ca_tdo_id, ca_sa_id, ca_nombre_original, ca_ruta_almacenamiento,
-              ca_tipo_mime, ca_fecha_emision, ca_fecha_vencimiento,
-              ca_id_almacenamiento, ca_resource_type)
-           VALUES (@8, @9, @0, @1, @2, @3, @4, @5, @6, @7)`,
-          [...params, clienteId, doc.tdo_id],
-        );
-      }
-
+      porTdo.set(doc.tdo_id, {
+        tdo_id: doc.tdo_id,
+        sa_id: doc.sa_id,
+        nombre: doc.sa_nombre_original,
+        ruta: r.value.url,
+        mime: doc.sa_tipo_mime,
+        emision: doc.sa_fecha_emision,
+        vencimiento: doc.sa_fecha_vencimiento,
+        id_alm: r.value.providerId,
+        resource_type: r.value.resourceType,
+      });
       promovidos++;
+    });
+
+    if (porTdo.size > 0) {
+      await queryRunner.query(
+        `MERGE Cliente_archivo AS destino
+         USING (
+           SELECT * FROM OPENJSON(@1) WITH (
+             tdo_id INT, sa_id INT, nombre NVARCHAR(500), ruta NVARCHAR(MAX),
+             mime NVARCHAR(200), emision DATE, vencimiento DATE,
+             id_alm NVARCHAR(500), resource_type NVARCHAR(50)
+           )
+         ) AS origen
+           ON destino.ca_cli_id = @0 AND destino.ca_tdo_id = origen.tdo_id
+         WHEN MATCHED THEN UPDATE SET
+           ca_sa_id = origen.sa_id, ca_nombre_original = origen.nombre,
+           ca_ruta_almacenamiento = origen.ruta, ca_tipo_mime = origen.mime,
+           ca_fecha_emision = origen.emision, ca_fecha_vencimiento = origen.vencimiento,
+           ca_id_almacenamiento = origen.id_alm, ca_resource_type = origen.resource_type,
+           ca_created_at = GETDATE()
+         WHEN NOT MATCHED THEN INSERT
+           (ca_cli_id, ca_tdo_id, ca_sa_id, ca_nombre_original, ca_ruta_almacenamiento,
+            ca_tipo_mime, ca_fecha_emision, ca_fecha_vencimiento,
+            ca_id_almacenamiento, ca_resource_type)
+           VALUES (@0, origen.tdo_id, origen.sa_id, origen.nombre, origen.ruta,
+                   origen.mime, origen.emision, origen.vencimiento,
+                   origen.id_alm, origen.resource_type);`,
+        [clienteId, JSON.stringify([...porTdo.values()])],
+      );
     }
 
     this.logger.log(

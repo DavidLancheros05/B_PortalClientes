@@ -444,54 +444,85 @@ export class AmpliacionCupoService {
       porFpIdOrigen.set(r.fr_fp_id, lista);
     }
 
+    // Opciones activas de las preguntas destino, en una sola consulta, para
+    // traducir cada opción de origen por su fpo_codigo (antes era una
+    // consulta por fila).
+    const opciones: { fpo_id: number; fpo_fp_id: number; fpo_codigo: string }[] =
+      preguntasNuevas.length === 0
+        ? []
+        : await queryRunner.query(
+            `SELECT fpo_id, fpo_fp_id, fpo_codigo FROM Formulario_pregunta_opcion
+             WHERE fpo_estado = 1 AND fpo_codigo IS NOT NULL
+               AND fpo_fp_id IN (SELECT value FROM OPENJSON(@0))`,
+            [JSON.stringify(preguntasNuevas.map((p) => p.fp_id))],
+          );
+    const opcionPorClave = new Map<string, number>();
+    for (const o of opciones) {
+      const clave = `${o.fpo_fp_id}|${o.fpo_codigo}`;
+      if (!opcionPorClave.has(clave)) opcionPorClave.set(clave, o.fpo_id);
+    }
+
+    const filasNuevas: {
+      fp_id: number;
+      texto: string | null;
+      numero: number | null;
+      fecha: string | null;
+      opcion_id: number | null;
+      multi: boolean | null;
+    }[] = [];
+
     for (const filas of porFpIdOrigen.values()) {
       const nueva = nuevaPorCodigo.get(filas[0].fp_codigo);
       if (!nueva) continue; // la pregunta ya no existe en esta versión
-
-      const insertarFila = async (fila: (typeof respuestas)[number]) => {
-        let opcionId: number | null = null;
-        if (fila.fr_valor_opcion_id) {
-          if (!fila.fpo_codigo) return; // opción sin identidad estable, no se traduce con seguridad
-          const [opcion] = await queryRunner.query(
-            `SELECT fpo_id FROM Formulario_pregunta_opcion
-             WHERE fpo_fp_id = @0 AND fpo_codigo = @1 AND fpo_estado = 1`,
-            [nueva.fp_id, fila.fpo_codigo],
-          );
-          if (!opcion) return; // la opción ya no existe en esta versión
-          opcionId = opcion.fpo_id;
-        }
-        await queryRunner.query(
-          `INSERT INTO Formulario_respuesta
-             (fr_sol_id, fr_fp_id, fr_valor_texto, fr_valor_numero, fr_valor_fecha,
-              fr_valor_opcion_id, fr_es_multiselect, fr_actualizado_por, fr_completado, fr_created_at)
-           VALUES (@0, @1, @2, @3, @4, @5, @6, @7, 1, GETDATE())`,
-          [
-            solicitudIdNueva,
-            nueva.fp_id,
-            fila.fr_valor_texto,
-            fila.fr_valor_numero,
-            fila.fr_valor_fecha,
-            opcionId,
-            fila.fr_es_multiselect,
-            usuarioId,
-          ],
-        );
-      };
 
       // Guardar una respuesta siempre reemplaza la anterior (DELETE+INSERT
       // o UPDATE), así que todas las filas de la pregunta son vigentes.
       // Solo las de selección múltiple pueden tener varias; cualquier otro
       // tipo con más de una es un dato inconsistente → revienta.
-      if (nueva.fp_tipo === 'MULTISELECT' || nueva.fp_tipo === 'SELECT_TABLA') {
-        for (const fila of filas) await insertarFila(fila);
-      } else if (filas.length === 1) {
-        await insertarFila(filas[0]);
-      } else {
+      if (
+        nueva.fp_tipo !== 'MULTISELECT' &&
+        nueva.fp_tipo !== 'SELECT_TABLA' &&
+        filas.length !== 1
+      ) {
         throw new Error(
           `La pregunta ${filas[0].fp_codigo} (${nueva.fp_tipo}) tiene ${filas.length} respuestas en la solicitud ${ultimaAprobada.sol_id}; se esperaba una.`,
         );
       }
+
+      for (const fila of filas) {
+        let opcionId: number | null = null;
+        if (fila.fr_valor_opcion_id) {
+          if (!fila.fpo_codigo) continue; // opción sin identidad estable, no se traduce con seguridad
+          const traducida = opcionPorClave.get(
+            `${nueva.fp_id}|${fila.fpo_codigo}`,
+          );
+          if (!traducida) continue; // la opción ya no existe en esta versión
+          opcionId = traducida;
+        }
+        filasNuevas.push({
+          fp_id: nueva.fp_id,
+          texto: fila.fr_valor_texto,
+          numero: fila.fr_valor_numero,
+          fecha: fila.fr_valor_fecha,
+          opcion_id: opcionId,
+          multi: fila.fr_es_multiselect,
+        });
+      }
     }
+
+    if (filasNuevas.length === 0) return;
+
+    await queryRunner.query(
+      `INSERT INTO Formulario_respuesta
+         (fr_sol_id, fr_fp_id, fr_valor_texto, fr_valor_numero, fr_valor_fecha,
+          fr_valor_opcion_id, fr_es_multiselect, fr_actualizado_por, fr_completado, fr_created_at)
+       SELECT @0, fp_id, texto, numero, fecha, opcion_id, multi, @2, 1, GETDATE()
+       FROM OPENJSON(@1) WITH (
+         fp_id INT, texto NVARCHAR(MAX), numero DECIMAL(18, 0), fecha DATE,
+         opcion_id BIGINT, multi BIT
+       )`,
+      [solicitudIdNueva, JSON.stringify(filasNuevas), usuarioId],
+    );
   }
 
   private async clonarDocumentosClienteArchivo(
@@ -535,54 +566,80 @@ export class AmpliacionCupoService {
       TIPO_ARCHIVO_URLS.SOLICITUDES,
     );
     const carpetaDestino = `${carpetaBase}formularios/${numeroSolicitud}`;
-    let clonados = 0;
 
-    for (const doc of documentosCliente) {
-      // Documento del archivo maestro cuyo tipo no se pide en el formulario
-      // actual (ej. subido por otra vía): no hay dónde ponerlo, se omite.
-      const fpId = fpIdPorTdoId.get(doc.ca_tdo_id);
-      if (!fpId) continue;
+    // Documento del archivo maestro cuyo tipo no se pide en el formulario
+    // actual (ej. subido por otra vía): no hay dónde ponerlo, se omite.
+    const aClonar = documentosCliente
+      .map((doc) => ({ doc, fpId: fpIdPorTdoId.get(doc.ca_tdo_id) }))
+      .filter((x): x is { doc: (typeof documentosCliente)[number]; fpId: number } =>
+        Boolean(x.fpId),
+      );
 
-      // Sin try/catch: si el almacenamiento falla, falla la ampliación completa
-      // (antes se omitía el documento en silencio).
-      const duplicado = await this.storageService.duplicate(
-        doc.ca_ruta_almacenamiento,
-        {
+    // Copias en paralelo (antes una tras otra). Sin try/catch: si el
+    // almacenamiento falla, falla la ampliación completa (antes se omitía
+    // el documento en silencio). allSettled y no all: hay que registrar en
+    // copiasAlmacenamiento TODAS las copias que sí se crearon, para que el
+    // caller las borre si la ampliación falla; con all, las que terminan
+    // después del primer error quedarían huérfanas.
+    const resultados = await Promise.allSettled(
+      aClonar.map(({ doc }) =>
+        this.storageService.duplicate(doc.ca_ruta_almacenamiento, {
           folder: carpetaDestino,
           filename: doc.ca_nombre_original,
           resourceType: doc.ca_resource_type || 'raw',
-        },
-      );
-      copiasAlmacenamiento.push({
-        providerId: duplicado.providerId,
-        resourceType: duplicado.resourceType,
-      });
+        }),
+      ),
+    );
+    for (const r of resultados) {
+      if (r.status === 'fulfilled') {
+        copiasAlmacenamiento.push({
+          providerId: r.value.providerId,
+          resourceType: r.value.resourceType,
+        });
+      }
+    }
+    const fallo = resultados.find((r) => r.status === 'rejected');
+    if (fallo) throw (fallo as PromiseRejectedResult).reason;
 
+    const filas = aClonar.map(({ doc, fpId }, i) => {
+      const duplicado = (
+        resultados[i] as PromiseFulfilledResult<{
+          url: string;
+          providerId: string;
+          resourceType: string;
+        }>
+      ).value;
+      return {
+        fp_id: fpId,
+        nombre: doc.ca_nombre_original,
+        mime: doc.ca_tipo_mime,
+        ruta: duplicado.url,
+        id_alm: duplicado.providerId,
+        resource_type: duplicado.resourceType,
+        emision: doc.ca_fecha_emision,
+        vencimiento: doc.ca_fecha_vencimiento,
+      };
+    });
+
+    if (filas.length > 0) {
       await queryRunner.query(
         `INSERT INTO Solicitud_archivo
            (sa_sol_id, sa_fp_id, sa_nombre_original, sa_nombre_guardado, sa_tipo_mime,
             sa_ruta_almacenamiento, sa_id_almacenamiento, sa_resource_type,
             sa_estado, sa_created_at, sa_fecha_emision, sa_fecha_vencimiento)
-         VALUES (@0, @1, @2, @3, @4, @5, @6, @7, 'activo', GETDATE(), @8, @9)`,
-        [
-          solicitudIdNueva,
-          fpId,
-          doc.ca_nombre_original,
-          doc.ca_nombre_original,
-          doc.ca_tipo_mime,
-          duplicado.url,
-          duplicado.providerId,
-          duplicado.resourceType,
-          doc.ca_fecha_emision,
-          doc.ca_fecha_vencimiento,
-        ],
+         SELECT @0, fp_id, nombre, nombre, mime, ruta, id_alm, resource_type,
+                'activo', GETDATE(), emision, vencimiento
+         FROM OPENJSON(@1) WITH (
+           fp_id INT, nombre NVARCHAR(500), mime NVARCHAR(200),
+           ruta NVARCHAR(MAX), id_alm NVARCHAR(500), resource_type NVARCHAR(50),
+           emision DATE, vencimiento DATE
+         )`,
+        [solicitudIdNueva, JSON.stringify(filas)],
       );
-
-      clonados++;
     }
 
     this.logger.log(
-      `[clonarDocumentosClienteArchivo] Cliente ${clienteId} → solicitud ${solicitudIdNueva}: ${clonados}/${documentosCliente.length} documento(s) clonados (duplicados)`,
+      `[clonarDocumentosClienteArchivo] Cliente ${clienteId} → solicitud ${solicitudIdNueva}: ${filas.length}/${documentosCliente.length} documento(s) clonados (duplicados)`,
     );
   }
 

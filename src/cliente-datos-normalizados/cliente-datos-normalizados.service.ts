@@ -355,18 +355,34 @@ export class ClienteDatosNormalizadosService {
     const sets: string[] = [];
     const params: any[] = [];
 
-    for (const campo of CAMPOS_PLANOS) {
-      const [pregunta] = await queryRunner.query(
-        `SELECT fp_id FROM Formulario_pregunta WHERE fp_codigo = @0 AND fp_version = @1`,
-        [campo.fpCodigo, fpVersion],
-      );
-      if (!pregunta) continue;
+    // Pregunta + respuesta de todos los campos en una sola consulta (antes
+    // eran dos por campo). Si una pregunta tiene varias respuestas se toma
+    // la primera, igual que antes.
+    const filas: {
+      fp_codigo: string;
+      fr_valor_texto: string | null;
+      fr_valor_numero: number | null;
+      fr_valor_opcion_id: number | null;
+    }[] = await queryRunner.query(
+      `SELECT fp.fp_codigo, fr.fr_valor_texto, fr.fr_valor_numero, fr.fr_valor_opcion_id
+       FROM Formulario_pregunta fp
+       JOIN Formulario_respuesta fr ON fr.fr_fp_id = fp.fp_id AND fr.fr_sol_id = @0
+       WHERE fp.fp_version = @1
+         AND fp.fp_codigo IN (SELECT value FROM OPENJSON(@2))`,
+      [
+        solicitudId,
+        fpVersion,
+        JSON.stringify(CAMPOS_PLANOS.map((c) => c.fpCodigo)),
+      ],
+    );
+    const respuestaPorCodigo = new Map<string, (typeof filas)[number]>();
+    for (const f of filas) {
+      if (!respuestaPorCodigo.has(f.fp_codigo))
+        respuestaPorCodigo.set(f.fp_codigo, f);
+    }
 
-      const [respuesta] = await queryRunner.query(
-        `SELECT fr_valor_texto, fr_valor_numero, fr_valor_opcion_id
-         FROM Formulario_respuesta WHERE fr_sol_id = @0 AND fr_fp_id = @1`,
-        [solicitudId, pregunta.fp_id],
-      );
+    for (const campo of CAMPOS_PLANOS) {
+      const respuesta = respuestaPorCodigo.get(campo.fpCodigo);
       if (!respuesta) continue; // esta solicitud nunca respondió esta pregunta
 
       const valor = await this.resolverValorCampoPlano(

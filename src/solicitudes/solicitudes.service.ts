@@ -365,29 +365,37 @@ export class SolicitudesService {
       }
 
       // 7. Insertar respuestas (también con parámetros nombrados)
+      // Todas en un solo INSERT (OPENJSON) en vez de uno por respuesta.
       if (body.respuestas?.length > 0) {
+        if (body.respuestas.some((r) => Array.isArray(r.valor_opcion_id))) {
+          throw new Error(
+            'valor_opcion_id no puede ser un arreglo al crear la solicitud',
+          );
+        }
+        const filas = body.respuestas.map((respuesta) => ({
+          fp_id: respuesta.fp_id,
+          // ?? y no ||: una respuesta numérica 0 es válida y no debe
+          // quedar como NULL ("Sin respuesta").
+          texto: respuesta.valor_texto || null,
+          numero: respuesta.valor_numero ?? null,
+          fecha: respuesta.valor_fecha || null,
+          opcion_id: respuesta.valor_opcion_id ?? null,
+        }));
 
-        for (const respuesta of body.respuestas) {
-          const insertRespuestaSQL = `
+        // Los valores se leen como texto y SQL Server los convierte al
+        // insertar, igual que hacía el driver con los parámetros sueltos.
+        await queryRunner.query(
+          `
             INSERT INTO Formulario_respuesta
             (fr_sol_id, fr_fp_id, fr_valor_texto, fr_valor_numero, fr_valor_fecha, fr_valor_opcion_id, fr_created_at)
-            VALUES (@0, @1, @2, @3, @4, @5, @6)
-          `;
-
-          const respuestaParams = [
-            solicitudId, // @0
-            respuesta.fp_id, // @1
-            // ?? y no ||: una respuesta numérica 0 es válida y no debe
-            // quedar como NULL ("Sin respuesta").
-            respuesta.valor_texto || null, // @2
-            respuesta.valor_numero ?? null, // @3
-            respuesta.valor_fecha || null, // @4
-            respuesta.valor_opcion_id ?? null, // @5
-            now, // @6
-          ];
-
-          await queryRunner.query(insertRespuestaSQL, respuestaParams);
-        }
+            SELECT @0, fp_id, texto, numero, fecha, opcion_id, @2
+            FROM OPENJSON(@1) WITH (
+              fp_id NVARCHAR(50), texto NVARCHAR(MAX), numero NVARCHAR(100),
+              fecha NVARCHAR(50), opcion_id NVARCHAR(50)
+            )
+          `,
+          [solicitudId, JSON.stringify(filas), now],
+        );
       }
 
       // 8. Commit
