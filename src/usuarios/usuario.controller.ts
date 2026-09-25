@@ -26,7 +26,7 @@ import {
 import type { Request } from 'express';
 
 interface AuthRequest extends Request {
-  user: { id: number };
+  user: { usr_id: number; tipo?: 'cliente' | 'usuario'; rol?: string };
 }
 
 @UseGuards(JwtAuthGuard)
@@ -104,19 +104,27 @@ export class UsuarioController {
     @Body() dto: ChangePasswordDto,
     @Req() req: AuthRequest,
   ) {
-    await this.usersService.changePassword(
-      req.user.id,
-      dto.currentPassword,
-      dto.newPassword,
-    );
+    // Antes leía req.user.id, que no existe (lo agregaba JwtStrategy, que
+    // nunca corrió), y el cambio siempre fallaba. Los clientes cambian su
+    // contraseña por /clientes; su cli_id no es un usr_id.
+    if (req.user.tipo === 'cliente' || req.user.rol === 'CLIENTE') {
+      throw new BadRequestException(
+        'Los clientes cambian su contraseña desde su perfil de cliente',
+      );
+    }
+    try {
+      await this.usersService.changePassword(
+        req.user.usr_id,
+        dto.currentPassword,
+        dto.newPassword,
+      );
+    } catch (error: any) {
+      throw new BadRequestException(
+        error.message || 'No se pudo cambiar la contraseña',
+      );
+    }
 
     return { message: 'Contraseña actualizada correctamente' };
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @Get('me')
-  async getCurrentUser(@Req() req: AuthRequest) {
-    return this.usersService.findById(req.user.id);
   }
 
   @UseGuards(JwtAuthGuard)

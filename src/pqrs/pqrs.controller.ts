@@ -51,11 +51,14 @@ export class PQRSController {
   @Get()
   async getListado(@Request() req) {
     this.logger.log(
-      `📥 GET /pqrs solicitado por usuario: ${req.user.id} (rol: ${req.user.rol})`,
+      `📥 GET /pqrs solicitado por usuario: ${req.user.usr_id} (rol: ${req.user.rol})`,
     );
+    // Antes se pasaba req.user.id, que no existe (lo agregaba JwtStrategy,
+    // que nunca corrió): el filtro se saltaba y un cliente veía las PQRS de
+    // todos los clientes.
     const resultado = await this.pqrsService.getListado({
-      usuario_id: req.user.id,
       rol: req.user.rol,
+      cliente_id: req.user.cliente_id,
     });
     this.logger.log(`📤 Retornando ${resultado.length} PQRS`);
     return resultado;

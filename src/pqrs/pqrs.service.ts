@@ -135,21 +135,14 @@ export class PQRSService {
       });
     }
 
-    if (filtros?.usuario_id) {
-      const esStaff = ['ADMIN', 'ADMINISTRACION', 'EJECUTIVO'].includes(
-        filtros.rol,
-      );
-
-      if (esStaff) {
-        query = query.andWhere(
-          '(p.pqrs_usr_asignado_id = :usuarioId OR p.pqrs_usr_asignado_id IS NULL)',
-          { usuarioId: filtros.usuario_id },
-        );
-      } else {
-        query = query.andWhere('p.pqrs_cliu_id = :usuarioId', {
-          usuarioId: filtros.usuario_id,
-        });
-      }
+    // Un cliente solo ve sus propias PQRS. Si falta cliente_id no se
+    // devuelve nada: antes un filtro vacío se saltaba y devolvía todas.
+    // El personal interno ve todas (es lo que venía viendo en la práctica).
+    if (filtros?.rol === 'CLIENTE') {
+      if (!filtros.cliente_id) return [];
+      query = query.andWhere('p.pqrs_cliu_id = :clienteId', {
+        clienteId: filtros.cliente_id,
+      });
     }
 
     if (filtros?.numero) {

@@ -7,8 +7,8 @@
  *   node scripts/mint-jwt.mjs ADMIN
  *   node scripts/mint-jwt.mjs CLIENTE 13603
  *
- * El payload que espera JwtStrategy (src/auth/jwt.strategy.ts) es
- * { usr_id, email, rol, cliente_id }. Para rol CLIENTE, usr_id y
+ * JwtAuthGuard (src/auth/jwt-auth.guard.ts) pone el payload tal cual en
+ * req.user: { usr_id, email, rol, cliente_id }. Para rol CLIENTE, usr_id y
  * cliente_id normalmente son el mismo cli_id (ver auth.service.ts).
  */
 

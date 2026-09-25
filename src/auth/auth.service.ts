@@ -9,6 +9,9 @@ import { NotificacionesService } from '../notificaciones/notificaciones.service'
 import { passwordCoincide, hashPassword } from '../common/utils/password.util';
 import { olvidarVersion } from './version-sesion-cache';
 
+// Minutos mínimos entre dos correos de recuperación para la misma cuenta.
+const RESET_ESPERA_MIN = 2;
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -221,7 +224,8 @@ export class AuthService {
     if (accessType === 'cliente') {
       const rows = await this.sistemaComercialDb.query(
         `SELECT cli_id, cli_correo, cli_razon_social FROM clientes
-         WHERE cli_nro_identificacion = @0 AND cli_acceso_pc = 1`,
+         WHERE cli_nro_identificacion = @0 AND cli_acceso_pc = 1
+           AND cli_estado = 'A'`,
         [identifier],
       );
       const row = rows?.[0];
@@ -260,12 +264,48 @@ export class AuthService {
     // calculaba en Node (el driver la escribe en UTC) y se comparaba contra
     // el reloj del servidor: según su zona horaria el link duraba 3-8 horas
     // o nacía vencido. Ver documentacion/manejo-fechas-zona-horaria.md.
-    await this.sistemaComercialDb.query(
-      `INSERT INTO dbo.param_reset_password_tokens
-       (rpt_tipo, rpt_usr_id, rpt_token_hash, rpt_expira_en)
-       VALUES (@0, @1, @2, DATEADD(HOUR, 1, SYSDATETIME()))`,
-      [accessType, cuenta.id, tokenHash],
+    //
+    // Límite de frecuencia: el endpoint es público y cada llamada manda un
+    // correo, así que con solo el NIT se le podía llenar el buzón a un
+    // cliente. Si ya hay un link sin usar pedido hace menos de
+    // RESET_ESPERA_MIN (su vencimiento está a más de 60 - espera min), no se
+    // crea otro ni se manda correo; la respuesta es la misma, no revela nada.
+    // Si se crea: se borran los links anteriores de la cuenta (solo sirve el
+    // último) y los usados/vencidos de todas, así la tabla no crece. UPDLOCK/
+    // HOLDLOCK en una transacción: dos pedidos a la vez no pasan los dos.
+    const [resultado] = await this.sistemaComercialDb.query(
+      `SET XACT_ABORT ON;
+       BEGIN TRANSACTION;
+       IF EXISTS (
+         SELECT 1 FROM dbo.param_reset_password_tokens WITH (UPDLOCK, HOLDLOCK)
+         WHERE rpt_tipo = @0 AND rpt_usr_id = @1 AND rpt_usado = 0
+           AND rpt_expira_en > DATEADD(MINUTE, 60 - @3, SYSDATETIME())
+       )
+       BEGIN
+         COMMIT TRANSACTION;
+         SELECT CAST(0 AS BIT) AS creado;
+       END
+       ELSE
+       BEGIN
+         DELETE FROM dbo.param_reset_password_tokens
+         WHERE (rpt_tipo = @0 AND rpt_usr_id = @1)
+            OR rpt_usado = 1
+            OR rpt_expira_en <= SYSDATETIME();
+         INSERT INTO dbo.param_reset_password_tokens
+           (rpt_tipo, rpt_usr_id, rpt_token_hash, rpt_expira_en)
+         VALUES (@0, @1, @2, DATEADD(HOUR, 1, SYSDATETIME()));
+         COMMIT TRANSACTION;
+         SELECT CAST(1 AS BIT) AS creado;
+       END`,
+      [accessType, cuenta.id, tokenHash, RESET_ESPERA_MIN],
     );
+
+    if (!resultado?.creado) {
+      return {
+        ...RESPUESTA_GENERICA,
+        correoEnmascarado: this.enmascararCorreo(cuenta.email),
+      };
+    }
 
     // Sin default: sin esta variable el correo saldría con un link relativo
     // ("/reset-password?...") que no abre desde el cliente de correo.
@@ -378,9 +418,13 @@ export class AuthService {
       `
       SELECT cli_id, cli_razon_social, cli_nro_identificacion, cli_password,
              cli_acceso_pc, cli_intentos_login, cli_token_version,
-             cli_menu_posicion
+             cli_menu_posicion, cli_estado
       FROM clientes
       WHERE cli_nro_identificacion = @0
+      -- El NIT solo es único entre clientes activos
+      -- (UX_Clientes_NroIdentificacion_Activo): puede haber inactivos con el
+      -- mismo número. Primero el activo; sin ORDER BY podía tomar el inactivo.
+      ORDER BY CASE WHEN cli_estado = 'A' THEN 0 ELSE 1 END, cli_id DESC
       `,
       [identificacion],
     );
@@ -394,6 +438,14 @@ export class AuthService {
     if (!cli.cli_acceso_pc) {
       throw new UnauthorizedException(
         'Cliente no tiene acceso al portal habilitado',
+      );
+    }
+
+    // Antes solo se miraba cli_acceso_pc y un cliente inactivo con acceso
+    // podía entrar.
+    if (cli.cli_estado !== 'A') {
+      throw new UnauthorizedException(
+        'Cliente inactivo. Solicita la activación al administrador.',
       );
     }
 

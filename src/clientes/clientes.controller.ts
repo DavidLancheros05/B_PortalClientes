@@ -25,7 +25,7 @@ import { ClienteDetailResponseDto } from './dto/cliente-detail.response.dto';
 import { CentroOperacionResponseDto } from './dto/centro-operacion.response.dto';
 
 type AuthRequest = Request & {
-  user: { id: number; cliente_id: number | null; rol: string };
+  user: { usr_id: number; cliente_id: number | null; rol: string };
 };
 
 @UseGuards(JwtAuthGuard)
