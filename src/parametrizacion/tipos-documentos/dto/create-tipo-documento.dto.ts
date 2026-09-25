@@ -52,10 +52,6 @@ export class CreateTipoDocumentoDto {
 
   @IsBoolean()
   @Type(() => Boolean)
-  aplicaZonaFranca: boolean;
-
-  @IsBoolean()
-  @Type(() => Boolean)
   @IsOptional()
   estado?: boolean;
 
@@ -67,6 +63,18 @@ export class CreateTipoDocumentoDto {
   @IsOptional()
   @IsIn(['TEXTO', 'PDF_SOLICITUD'])
   tipoPlantilla?: 'TEXTO' | 'PDF_SOLICITUD';
+
+  // Se entrega después de enviar el formulario (documento para firmar).
+  @IsBoolean()
+  @Type(() => Boolean)
+  @IsOptional()
+  esDiferido?: boolean;
+
+  // Solo se exige a clientes distribuidores.
+  @IsBoolean()
+  @Type(() => Boolean)
+  @IsOptional()
+  soloDistribuidor?: boolean;
 
   @ValidateIf(
     (o) => o.tienePlantilla === true && o.tipoPlantilla !== 'PDF_SOLICITUD',

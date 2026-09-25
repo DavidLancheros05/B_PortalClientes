@@ -251,8 +251,13 @@ export class UsuarioService {
         u.usr_inactivar AS usr_inactivar,
         u.usr_fecha_usr AS usuario_created_at,
         u.usr_intentos_login AS usr_intentos_login,
-        u.usr_bloqueado AS usr_bloqueado
+        -- Bloqueo temporal vigente por intentos fallidos (solo informativo,
+        -- se levanta solo — ver auth.service.ts / pc_bloqueo_login).
+        DATEDIFF(MINUTE, SYSDATETIME(), b.blq_bloqueado_hasta) AS usr_bloqueo_min_restantes
       FROM usuarios u
+      LEFT JOIN dbo.pc_bloqueo_login b
+        ON b.blq_tipo = 'usuario' AND b.blq_cuenta_id = u.usr_id
+       AND b.blq_bloqueado_hasta > SYSDATETIME()
       ORDER BY u.usr_nombre ASC
     `);
 
@@ -264,22 +269,12 @@ export class UsuarioService {
       usuario_activo: !row.usr_inactivar,
       usuario_created_at: row.usuario_created_at,
       usr_intentos_login: Number(row.usr_intentos_login ?? 0),
-      usr_bloqueado: Boolean(row.usr_bloqueado),
+      usr_bloqueado: row.usr_bloqueo_min_restantes != null,
+      usr_bloqueo_min_restantes:
+        row.usr_bloqueo_min_restantes != null
+          ? Math.max(1, Number(row.usr_bloqueo_min_restantes))
+          : null,
     }));
-  }
-
-  async desbloquear(usrId: number) {
-    const result = await this.usuarioRepository.query(
-      `UPDATE dbo.usuarios
-       SET usr_bloqueado = 0, usr_intentos_login = 0
-       OUTPUT INSERTED.usr_id
-       WHERE usr_id = @0`,
-      [usrId],
-    );
-
-    if (!result || result.length === 0) {
-      throw new Error('Usuario no encontrado');
-    }
   }
 
   async createUser(dto: {

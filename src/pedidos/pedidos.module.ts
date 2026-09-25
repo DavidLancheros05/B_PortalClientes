@@ -2,11 +2,12 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ClienteEntity } from '../clientes/entities/clientes.entity';
 import { AuthModule } from '../auth/auth.module';
+import { SiesaModule } from '../integraciones/siesa/siesa.module';
 import { PedidosController } from './pedidos.controller';
 import { PedidosService } from './pedidos.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([ClienteEntity]), AuthModule],
+  imports: [TypeOrmModule.forFeature([ClienteEntity]), AuthModule, SiesaModule],
   controllers: [PedidosController],
   providers: [PedidosService],
 })

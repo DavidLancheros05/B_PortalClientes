@@ -43,6 +43,16 @@ export class TipoDocumento {
   @Column({ name: 'tdo_tiene_plantilla', type: 'bit', default: false })
   tienePlantilla: boolean;
 
+  // El cliente lo entrega DESPUÉS de enviar el formulario (panel de firma /
+  // Mis Documentos); mientras falte, la solicitud queda en PEND_FIRMA. Ver
+  // solicitudes/documentos-diferidos.sql.ts.
+  @Column({ name: 'tdo_es_diferido', type: 'bit', default: false })
+  esDiferido: boolean;
+
+  // Solo se exige a clientes con Clientes.cli_es_distribuidor = 1.
+  @Column({ name: 'tdo_solo_distribuidor', type: 'bit', default: false })
+  soloDistribuidor: boolean;
+
   @Column({
     name: 'tdo_plantilla_contenido',
     type: 'nvarchar',
@@ -61,12 +71,6 @@ export class TipoDocumento {
 
   @Column({ name: 'tdo_permite_vencimiento', type: 'bit', default: false })
   aplicaFechaEmision: boolean;
-
-  @Column({ name: 'tdo_aplica_cliente', type: 'bit', default: true })
-  aplicaCliente: boolean;
-
-  @Column({ name: 'tdo_aplica_zona_franca', type: 'bit', default: false })
-  aplicaZonaFranca: boolean;
 
   @Column({ name: 'tdo_estado', type: 'bit', default: true })
   estado: boolean;

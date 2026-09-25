@@ -188,6 +188,7 @@ export class SolicitudesController {
     try {
       return await this.listadosService.getSolicitudesPendientes();
     } catch (error) {
+      if (error instanceof HttpException) throw error;
       console.error('Error obteniendo pendientes:', error);
       throw new HttpException(
         error instanceof Error ? error.message : 'Error obteniendo pendientes',
@@ -471,6 +472,7 @@ export class SolicitudesController {
 
       return result;
     } catch (error) {
+      if (error instanceof HttpException) throw error;
       console.error('[getDocumentos] Error:', error);
       throw new HttpException(
         error instanceof Error ? error.message : 'Error al obtener documentos',
@@ -550,6 +552,7 @@ export class SolicitudesController {
         documentosDiferidos,
       };
     } catch (error) {
+      if (error instanceof HttpException) throw error;
       console.error('[getMisDocumentos] Error:', error);
       throw new HttpException(
         error instanceof Error ? error.message : 'Error al obtener documentos',
@@ -609,7 +612,7 @@ export class SolicitudesController {
       }
       return { representanteLegal };
     } catch (error) {
-      if (error instanceof ForbiddenException) throw error;
+      if (error instanceof HttpException) throw error;
       console.error('[getRepresentanteLegal] Error:', error);
       throw new HttpException(
         error instanceof Error
@@ -632,6 +635,7 @@ export class SolicitudesController {
         await this.documentosService.descargarArchivoRespuesta(sa_id);
       res.redirect(302, downloadUrl);
     } catch (error) {
+      if (error instanceof HttpException) throw error;
       console.error('[descargarArchivo] Error:', error);
       throw new HttpException(
         error instanceof Error ? error.message : 'Error al descargar archivo',
@@ -676,6 +680,7 @@ export class SolicitudesController {
       );
       return result;
     } catch (error: any) {
+      if (error instanceof HttpException) throw error;
       console.error(
         '[getSolicitudesConFiltros] Error:',
         error.message || error,
@@ -706,6 +711,7 @@ export class SolicitudesController {
       );
       return result;
     } catch (error: any) {
+      if (error instanceof HttpException) throw error;
       console.error(
         '[getSolicitudesPendientesAuxiliarServicioCliente] Error:',
         error.message || error,
@@ -734,6 +740,7 @@ export class SolicitudesController {
       );
       return result;
     } catch (error: any) {
+      if (error instanceof HttpException) throw error;
       console.error('[getSolicitudesParaOC] Error:', error.message || error);
       console.error('[getSolicitudesParaOC] Stack:', error.stack);
       throw new HttpException(error.message || 'Error interno', 500);
@@ -757,6 +764,7 @@ export class SolicitudesController {
       );
       return result;
     } catch (error: any) {
+      if (error instanceof HttpException) throw error;
       console.error(
         '[getSolicitudesParaComiteCredito1] Error:',
         error.message || error,
@@ -783,6 +791,7 @@ export class SolicitudesController {
       );
       return result;
     } catch (error: any) {
+      if (error instanceof HttpException) throw error;
       console.error(
         '[getSolicitudesParaComiteCredito2] Error:',
         error.message || error,
@@ -805,6 +814,7 @@ export class SolicitudesController {
         id,
       );
     } catch (error) {
+      if (error instanceof HttpException) throw error;
       console.error('Error obteniendo formulario renderizable:', error);
       throw new HttpException(
         error instanceof Error ? error.message : 'Error al obtener formulario',
@@ -827,6 +837,7 @@ export class SolicitudesController {
         codigos,
       );
     } catch (error) {
+      if (error instanceof HttpException) throw error;
       console.error('Error obteniendo respuestas por código:', error);
       throw new HttpException(
         error instanceof Error ? error.message : 'Error al obtener respuestas',
@@ -855,6 +866,7 @@ export class SolicitudesController {
       );
       res.send(pdfBuffer);
     } catch (error) {
+      if (error instanceof HttpException) throw error;
       console.error('Error generando PDF:', error);
       throw new HttpException(
         error instanceof Error ? error.message : 'Error al generar PDF',
@@ -879,6 +891,7 @@ export class SolicitudesController {
 
       res.redirect(302, archivo.downloadUrl);
     } catch (error) {
+      if (error instanceof HttpException) throw error;
       console.error('Error al obtener archivo:', error);
       const statusCode =
         error instanceof Error && (error as any).statusCode
@@ -905,6 +918,7 @@ export class SolicitudesController {
         data: archivos,
       };
     } catch (error) {
+      if (error instanceof HttpException) throw error;
       console.error('Error al obtener archivos existentes:', error);
       throw new HttpException(
         error instanceof Error ? error.message : 'Error al obtener archivos',
@@ -929,6 +943,7 @@ export class SolicitudesController {
         await this.documentosService.obtenerDocumentosConVigencia(solicitudId);
       return { ok: true, data: documentos };
     } catch (error) {
+      if (error instanceof HttpException) throw error;
       console.error('Error al obtener documentos de la solicitud:', error);
       throw new HttpException(
         error instanceof Error ? error.message : 'Error al obtener documentos',
@@ -966,6 +981,7 @@ export class SolicitudesController {
       );
       return { ok: true, data: fila };
     } catch (error) {
+      if (error instanceof HttpException) throw error;
       console.error('Error al subir soporte de análisis:', error);
       throw new HttpException(
         error instanceof Error ? error.message : 'Error al subir soporte',
@@ -989,6 +1005,7 @@ export class SolicitudesController {
       );
       return { ok: true, data: soportes };
     } catch (error) {
+      if (error instanceof HttpException) throw error;
       console.error('Error al obtener soportes de análisis:', error);
       throw new HttpException(
         error instanceof Error ? error.message : 'Error al obtener soportes',
@@ -1009,6 +1026,7 @@ export class SolicitudesController {
       await this.documentosService.eliminarSoporteAnalisis(solicitudId, ssaId);
       return { ok: true };
     } catch (error) {
+      if (error instanceof HttpException) throw error;
       console.error('Error al eliminar soporte de análisis:', error);
       throw new HttpException(
         error instanceof Error ? error.message : 'Error al eliminar soporte',
@@ -1031,6 +1049,7 @@ export class SolicitudesController {
         id,
       );
     } catch (error) {
+      if (error instanceof HttpException) throw error;
       console.error('Error obteniendo tablas de cumplimiento:', error);
       throw new HttpException(
         error instanceof Error
@@ -1071,6 +1090,7 @@ export class SolicitudesController {
       );
       return { ok: true, data: fila };
     } catch (error) {
+      if (error instanceof HttpException) throw error;
       console.error('Error al subir evidencia de persona:', error);
       throw new HttpException(
         error instanceof Error ? error.message : 'Error al subir evidencia',
@@ -1094,6 +1114,7 @@ export class SolicitudesController {
       );
       return { ok: true, data: evidencias };
     } catch (error) {
+      if (error instanceof HttpException) throw error;
       console.error('Error al obtener evidencias de persona:', error);
       throw new HttpException(
         error instanceof Error ? error.message : 'Error al obtener evidencias',
@@ -1114,6 +1135,7 @@ export class SolicitudesController {
       await this.documentosService.eliminarEvidenciaPersona(solicitudId, sepId);
       return { ok: true };
     } catch (error) {
+      if (error instanceof HttpException) throw error;
       console.error('Error al eliminar evidencia de persona:', error);
       throw new HttpException(
         error instanceof Error ? error.message : 'Error al eliminar evidencia',
@@ -1141,6 +1163,7 @@ export class SolicitudesController {
     try {
       return await this.workflowService.obtenerWorkflowHistorial(id);
     } catch (error) {
+      if (error instanceof HttpException) throw error;
       throw new HttpException(
         error instanceof Error ? error.message : 'Error al obtener historial',
         500,
@@ -1168,7 +1191,7 @@ export class SolicitudesController {
         saId,
       );
     } catch (error) {
-      if (error instanceof ForbiddenException) throw error;
+      if (error instanceof HttpException) throw error;
       console.error('Error al eliminar archivo:', error);
       throw new HttpException(
         error instanceof Error ? error.message : 'Error al eliminar archivo',
@@ -1383,6 +1406,7 @@ export class SolicitudesController {
         usuarioId,
       );
     } catch (error: any) {
+      if (error instanceof HttpException) throw error;
       console.error(
         '[reiniciarEdicionSolicitud] Error:',
         error.message || error,
@@ -1409,6 +1433,7 @@ export class SolicitudesController {
         usuarioId,
       );
     } catch (error: any) {
+      if (error instanceof HttpException) throw error;
       console.error(
         '[actualizarResultadoPendiente] Error:',
         error.message || error,
@@ -1431,6 +1456,7 @@ export class SolicitudesController {
         usuarioId,
       );
     } catch (error: any) {
+      if (error instanceof HttpException) throw error;
       console.error(
         '[verificarDocumentosDiferidos] Error:',
         error.message || error,
@@ -1486,6 +1512,7 @@ export class SolicitudesController {
       console.log('[aprobarRechazarSolicitud] Resultado:', result);
       return result;
     } catch (error: any) {
+      if (error instanceof HttpException) throw error;
       console.error(
         '[aprobarRechazarSolicitud] Error:',
         error.message || error,
@@ -1540,6 +1567,7 @@ export class SolicitudesController {
 
       return result;
     } catch (error: any) {
+      if (error instanceof HttpException) throw error;
       console.error(`❌ [CONTROLLER] Error guardando concepto:`, error);
       throw new HttpException(error.message || 'Error interno', 500);
     }
@@ -1565,6 +1593,7 @@ export class SolicitudesController {
         req.user.usr_id,
       );
     } catch (error: any) {
+      if (error instanceof HttpException) throw error;
       throw new HttpException(error.message || 'Error interno', 500);
     }
   }
@@ -1595,6 +1624,7 @@ export class SolicitudesController {
       );
       return result;
     } catch (error: any) {
+      if (error instanceof HttpException) throw error;
       console.error(
         '[guardarGestionAuxiliarServicioCliente] Error:',
         error.message,
@@ -1628,6 +1658,7 @@ export class SolicitudesController {
       );
       return result;
     } catch (error: any) {
+      if (error instanceof HttpException) throw error;
       console.error(
         '[guardarConceptoOficialCumplimiento] Error:',
         error.message,
@@ -1658,6 +1689,7 @@ export class SolicitudesController {
       );
       return result;
     } catch (error: any) {
+      if (error instanceof HttpException) throw error;
       console.error('[guardarConceptoComiteCredito1] Error:', error.message);
       throw new HttpException(error.message || 'Error interno', 500);
     }
@@ -1703,6 +1735,7 @@ export class SolicitudesController {
       );
       return result;
     } catch (error: any) {
+      if (error instanceof HttpException) throw error;
       console.error('[guardarConceptoComiteCredito2] Error:', error.message);
       throw new HttpException(error.message || 'Error interno', 500);
     }
@@ -1725,6 +1758,7 @@ export class SolicitudesController {
     try {
       return await this.documentosService.deleteSolicitud(id, req.user);
     } catch (error: any) {
+      if (error instanceof HttpException) throw error;
       const statusCode = error.statusCode || 500;
       throw new HttpException(error.message || 'Error interno', statusCode);
     }
@@ -1772,6 +1806,7 @@ export class SolicitudesController {
         body.usuario_modifica,
       );
     } catch (error: any) {
+      if (error instanceof HttpException) throw error;
       const statusCode = error.statusCode || 500;
       throw new HttpException(error.message || 'Error interno', statusCode);
     }
@@ -1800,6 +1835,7 @@ export class SolicitudesController {
         body.usuario_modifica,
       );
     } catch (error: any) {
+      if (error instanceof HttpException) throw error;
       const statusCode = error.statusCode || 500;
       throw new HttpException(error.message || 'Error interno', statusCode);
     }
@@ -1817,6 +1853,7 @@ export class SolicitudesController {
       const result = await this.documentosService.obtenerSolicitud(id);
       return result;
     } catch (error) {
+      if (error instanceof HttpException) throw error;
       console.error(`❌ [CONTROLLER] Error en GET :id (${id}):`, error);
       throw new HttpException(
         error instanceof Error ? error.message : 'Error al obtener solicitud',
@@ -1837,6 +1874,7 @@ export class SolicitudesController {
         await this.documentosService.getDocumentosRequeridos(id);
       return documentos;
     } catch (error) {
+      if (error instanceof HttpException) throw error;
       console.error(
         `❌ [CONTROLLER] Error en GET documentos-requeridos (${id}):`,
         error,

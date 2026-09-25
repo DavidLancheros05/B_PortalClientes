@@ -1,17 +1,29 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { DataSource, QueryRunner } from 'typeorm';
+
+// Roles de los que depende la lógica del sistema (login, portal de
+// clientes): inactivarlos dejaría a todos sus usuarios sin acceso.
+const ROLES_NO_INACTIVABLES = ['ADMIN', 'CLIENTE'];
 
 @Injectable()
 export class SeguridadService {
   constructor(private readonly dataSource: DataSource) {}
 
-  async getRoles() {
+  // incluirInactivos: solo la pantalla de Roles los pide (para poder
+  // reactivarlos); las demás pantallas asignan roles y solo deben ver los
+  // activos.
+  async getRoles(incluirInactivos = false) {
     // 3 consultas en total (antes: 2 por rol, y la lista de módulos se
     // repetía idéntica para cada rol).
     const roles = await this.dataSource.query(`
       SELECT *
       FROM pc_roles
-      WHERE rol_activo = 1
+      ${incluirInactivos ? '' : 'WHERE rol_activo = 1'}
       ORDER BY rol_id
     `);
 
@@ -33,7 +45,8 @@ export class SeguridadService {
         rm.rm_rol_id, rm.rm_mod_id AS mod_id,
         rm.rm_ver, rm.rm_crear, rm.rm_editar, rm.rm_eliminar, rm.rm_aprobar
       FROM pc_rol_modulo rm
-      INNER JOIN pc_roles r ON r.rol_id = rm.rm_rol_id AND r.rol_activo = 1
+      INNER JOIN pc_roles r ON r.rol_id = rm.rm_rol_id
+        ${incluirInactivos ? '' : 'AND r.rol_activo = 1'}
       WHERE rm.rm_activo = 1
     `);
 
@@ -193,6 +206,16 @@ export class SeguridadService {
     }
 
     return this.enTransaccion(async (runner) => {
+      // pc_roles no tiene índice único sobre rol_codigo, y el código es lo
+      // que usa la lógica del sistema para reconocer el rol.
+      const [existente] = await runner.query(
+        `SELECT TOP 1 rol_id FROM pc_roles WHERE rol_codigo = @0`,
+        [codigo],
+      );
+      if (existente) {
+        throw new ConflictException(`Ya existe un rol con el código ${codigo}`);
+      }
+
       const [rolCreado] = await runner.query(
         `
           INSERT INTO pc_roles (rol_nombre, rol_descripcion, rol_codigo, rol_activo, rol_created_at)
@@ -209,16 +232,37 @@ export class SeguridadService {
   }
 
   async actualizarRol(id: number, data: any) {
+    if (data.rol_activo === false || data.rol_activo === 0) {
+      await this.validarPuedeInactivar(id);
+    }
+
     return this.enTransaccion(async (runner) => {
+      // Cada campo solo se toca si vino en el body: un update de solo
+      // permisos no debe borrar la descripción ni cambiar el estado.
+      const traeDescripcion = data.rol_descripcion !== undefined;
+      const activo =
+        data.rol_activo === undefined || data.rol_activo === null
+          ? null
+          : data.rol_activo
+            ? 1
+            : 0;
+
       await runner.query(
         `
           UPDATE pc_roles
           SET rol_nombre = COALESCE(@0, rol_nombre),
-              rol_descripcion = @1,
+              rol_descripcion = CASE WHEN @3 = 1 THEN @1 ELSE rol_descripcion END,
+              rol_activo = COALESCE(@4, rol_activo),
               rol_updated_at = SYSDATETIME()
           WHERE rol_id = @2
         `,
-        [data.rol_nombre || null, data.rol_descripcion || null, id],
+        [
+          data.rol_nombre || null,
+          data.rol_descripcion || null,
+          id,
+          traeDescripcion ? 1 : 0,
+          activo,
+        ],
       );
 
       // Solo se tocan los permisos si la pantalla los mandó (un update
@@ -231,7 +275,35 @@ export class SeguridadService {
     });
   }
 
+  private async validarPuedeInactivar(id: number) {
+    const [rol] = await this.dataSource.query(
+      `SELECT rol_codigo, rol_activo FROM pc_roles WHERE rol_id = @0`,
+      [id],
+    );
+    if (!rol) throw new NotFoundException('Rol no encontrado');
+    // Ya inactivo: guardar sus permisos no es "inactivarlo" otra vez.
+    if (!rol.rol_activo) return;
+
+    if (ROLES_NO_INACTIVABLES.includes(String(rol.rol_codigo).toUpperCase())) {
+      throw new BadRequestException(
+        `El rol ${rol.rol_codigo} es del sistema y no se puede inactivar`,
+      );
+    }
+
+    const [{ usuarios }] = await this.dataSource.query(
+      `SELECT COUNT(*) AS usuarios FROM pc_usuario_rol WHERE ur_rol_id = @0 AND ur_activo = 1`,
+      [id],
+    );
+    if (usuarios > 0) {
+      throw new BadRequestException(
+        `No se puede inactivar: el rol tiene ${usuarios} usuario(s) asignado(s). Quítaselo primero.`,
+      );
+    }
+  }
+
   async inactivarRol(id: number) {
+    await this.validarPuedeInactivar(id);
+
     await this.dataSource.query(
       `
         UPDATE pc_roles
@@ -242,37 +314,5 @@ export class SeguridadService {
     );
 
     return { message: 'Rol inactivado' };
-  }
-
-  async getModulos() {
-    const result = await this.dataSource.query(`
-      SELECT
-        mod_id,
-        mod_nombre,
-        mod_ruta,
-        mod_icono,
-        mod_padre_id,
-        mod_posicion
-      FROM pc_modulos
-      WHERE mod_estado = 1
-      ORDER BY mod_posicion
-    `);
-
-    const buildTree = (modulos: any[], parentId?: number): any[] => {
-      return modulos
-        .filter((m) =>
-          parentId ? m.mod_padre_id === parentId : !m.mod_padre_id,
-        )
-        .map((m) => ({
-          mod_id: m.mod_id,
-          mod_nombre: m.mod_nombre,
-          mod_ruta: m.mod_ruta,
-          mod_icono: m.mod_icono,
-          mod_padre_id: m.mod_padre_id,
-          subModulos: buildTree(modulos, m.mod_id),
-        }));
-    };
-
-    return buildTree(result);
   }
 }

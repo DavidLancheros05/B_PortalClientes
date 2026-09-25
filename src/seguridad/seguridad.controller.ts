@@ -6,6 +6,7 @@ import {
   Delete,
   Param,
   Body,
+  Query,
   ParseIntPipe,
   UseGuards,
   HttpException,
@@ -14,17 +15,27 @@ import { SeguridadService } from './seguridad.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RequierePermiso } from '../permissions/requiere-permiso.decorator';
 
+// Los errores con status propio (400 validación, 404, 409 código repetido)
+// pasan tal cual; solo lo inesperado se reporta como 500. Antes todo salía
+// como 500, incluso "el nombre es obligatorio".
+const relanzar = (error: any, mensaje: string): never => {
+  if (error instanceof HttpException) throw error;
+  throw new HttpException(error?.message || mensaje, 500);
+};
+
 @UseGuards(JwtAuthGuard)
 @Controller('seguridad')
 export class SeguridadController {
   constructor(private readonly seguridadService: SeguridadService) {}
 
   @Get('roles')
-  async getRoles() {
+  async getRoles(@Query('incluirInactivos') incluirInactivos?: string) {
     try {
-      return await this.seguridadService.getRoles();
+      return await this.seguridadService.getRoles(
+        incluirInactivos === 'true' || incluirInactivos === '1',
+      );
     } catch (error: any) {
-      throw new HttpException(error.message || 'Error cargando roles', 500);
+      relanzar(error, 'Error cargando roles');
     }
   }
 
@@ -34,7 +45,7 @@ export class SeguridadController {
     try {
       return await this.seguridadService.crearRol(body);
     } catch (error: any) {
-      throw new HttpException(error.message || 'Error creando rol', 500);
+      relanzar(error, 'Error creando rol');
     }
   }
 
@@ -45,13 +56,9 @@ export class SeguridadController {
     @Body() body: any,
   ) {
     try {
-      if (!rolId) {
-        throw new Error('rol_id inválido');
-      }
-
       return await this.seguridadService.actualizarRol(rolId, body);
     } catch (error: any) {
-      throw new HttpException(error.message || 'Error actualizando rol', 500);
+      relanzar(error, 'Error actualizando rol');
     }
   }
 
@@ -59,14 +66,9 @@ export class SeguridadController {
   @RequierePermiso('/seguridad/roles', 'eliminar')
   async inactivarRol(@Param('rolId', ParseIntPipe) rolId: number) {
     try {
-      if (!rolId) {
-        throw new Error('rol_id inválido');
-      }
-
       return await this.seguridadService.inactivarRol(rolId);
     } catch (error: any) {
-      throw new HttpException(error.message || 'Error inactivando rol', 500);
+      relanzar(error, 'Error inactivando rol');
     }
   }
-
 }

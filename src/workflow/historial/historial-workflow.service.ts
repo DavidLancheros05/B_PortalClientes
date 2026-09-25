@@ -184,9 +184,10 @@ export class HistorialWorkflowService {
         -- 2) "desde etapa anterior": swh_fecha_estimada, calculada en
         --    registrarTransicionConSLA en el momento real en que la
         --    solicitud ENTRÓ a esta etapa (fecha de esa entrada + dias SLA
-        --    de esta etapa) — sí refleja demoras acumuladas. Puede ser NULL
-        --    si no hay una fila configurada en
-        --    param_dias_respuesta_solicitudes para el nombre de esta etapa.
+        --    de esta etapa) — sí refleja demoras acumuladas. Solo es NULL
+        --    para la etapa CLI (ETAPA_SIN_SLA): para las demás, si falta la
+        --    configuración, registrarTransicionConSLA revienta en vez de
+        --    guardar la fila sin fecha.
         swh.swh_fecha_estimada as fechaEstimadaEtapaAnterior,
         swh.swh_comentario as comentario,
         we.wet_id as etapaId,
@@ -211,22 +212,28 @@ export class HistorialWorkflowService {
       LEFT JOIN usuarios u ON swh.swh_usuario_id = u.usr_id
       LEFT JOIN Clientes cli ON swh.swh_usuario_id = cli.cli_id
       WHERE swh.swh_sol_id = @0
-      ORDER BY swh.swh_fecha ASC
+      -- swh_id desempata filas con la misma swh_fecha: el frontend toma la
+      -- ÚLTIMA fila como la etapa pendiente, así que el orden debe ser estable.
+      ORDER BY swh.swh_fecha ASC, swh.swh_id ASC
     `,
         [solicitudId],
       ),
     ]);
 
-    // Agregar etapa de creación como primera entrada
+    // Agregar etapa de creación como primera entrada. No es una fila real de
+    // solicitud_workflow_historial: etapaId va en null (1 es el wet_id real
+    // de CLI) y los campos de fecha estimada tienen la misma forma que las
+    // filas reales.
     if (solicitud?.[0]?.sol_fecha_creacion) {
       const clienteName = solicitud[0].cliente_nombre || 'Cliente';
       const etapaCreacion = {
         historialId: 0,
         solicitudId: solicitudId,
         fecha: solicitud[0].sol_fecha_creacion,
-        fechaEstimada: null,
+        fechaEstimadaInicio: null,
+        fechaEstimadaEtapaAnterior: null,
         comentario: null,
-        etapaId: 1,
+        etapaId: null,
         etapaNombre: 'Creación',
         etapaCodigo: 'CREACION',
         resultadoId: null,

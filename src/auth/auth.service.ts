@@ -19,6 +19,185 @@ export class AuthService {
     private readonly notificacionesService: NotificacionesService,
   ) {}
 
+  // ── Bloqueo temporal por intentos fallidos ──────────────────────────────
+  // Ver documentacion/Portal Clientes/Login permisos/bloqueo-temporal-login.md.
+  // blq_bloqueado_hasta se calcula y compara siempre con SYSDATETIME() del
+  // servidor SQL (mismo reloj en ambos lados).
+
+  private maxIntentosLogin(): number {
+    return Math.max(
+      1,
+      Number.parseInt(process.env.LOGIN_MAX_ATTEMPTS || '5', 10) || 5,
+    );
+  }
+
+  // Minutos de cada bloqueo seguido: 15 min, 1 h, 24 h (luego se repite el
+  // último).
+  private duracionesBloqueo(): number[] {
+    const minutos = String(process.env.LOGIN_LOCK_MINUTES || '15,60,1440')
+      .split(',')
+      .map((n) => Number.parseInt(n.trim(), 10))
+      .filter((n) => n > 0);
+    return minutos.length ? minutos : [15, 60, 1440];
+  }
+
+  private mensajeBloqueo(minutos: number): string {
+    const tiempo =
+      minutos >= 60
+        ? `${Math.ceil(minutos / 60)} hora(s)`
+        : `${minutos} minuto(s)`;
+    return `Cuenta bloqueada temporalmente por demasiados intentos fallidos. Intenta de nuevo en ${tiempo} o usa "¿Olvidaste tu contraseña?" para desbloquearla ya.`;
+  }
+
+  // Minutos que faltan si la cuenta tiene un bloqueo temporal vigente.
+  private async minutosBloqueoRestantes(
+    tipo: 'cliente' | 'usuario',
+    cuentaId: number,
+  ): Promise<number | null> {
+    const rows = await this.sistemaComercialDb.query(
+      `SELECT DATEDIFF(SECOND, SYSDATETIME(), blq_bloqueado_hasta) AS segundos
+       FROM dbo.pc_bloqueo_login
+       WHERE blq_tipo = @0 AND blq_cuenta_id = @1
+         AND blq_bloqueado_hasta > SYSDATETIME()`,
+      [tipo, cuentaId],
+    );
+    return rows?.[0]
+      ? Math.max(1, Math.ceil(Number(rows[0].segundos) / 60))
+      : null;
+  }
+
+  // Bloquea la cuenta y devuelve cuántos minutos. La duración escala con los
+  // bloqueos seguidos; el escalón vuelve a 0 si el último bloqueo terminó
+  // hace más de 24 h. Leer el escalón y guardarlo va en una transacción con
+  // UPDLOCK/HOLDLOCK: sin eso, dos peticiones a la vez podían leer el mismo
+  // escalón o chocar al insertar la fila (UNIQUE) y dar 500.
+  private async bloquearTemporalmente(
+    tipo: 'cliente' | 'usuario',
+    cuentaId: number,
+  ): Promise<number> {
+    const duraciones = this.duracionesBloqueo();
+    const qr = this.sistemaComercialDb.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+    try {
+      const [previo] = await qr.query(
+        `SELECT CASE
+                  WHEN blq_bloqueado_hasta IS NULL
+                    OR blq_bloqueado_hasta < DATEADD(HOUR, -24, SYSDATETIME())
+                  THEN 0 ELSE blq_nivel
+                END AS nivel
+         FROM dbo.pc_bloqueo_login WITH (UPDLOCK, HOLDLOCK)
+         WHERE blq_tipo = @0 AND blq_cuenta_id = @1`,
+        [tipo, cuentaId],
+      );
+      const nivel = Number(previo?.nivel ?? 0);
+      const minutos = duraciones[Math.min(nivel, duraciones.length - 1)];
+
+      await qr.query(
+        previo
+          ? `UPDATE dbo.pc_bloqueo_login
+             SET blq_nivel = @2, blq_bloqueado_hasta = DATEADD(MINUTE, @3, SYSDATETIME())
+             WHERE blq_tipo = @0 AND blq_cuenta_id = @1`
+          : `INSERT INTO dbo.pc_bloqueo_login
+               (blq_tipo, blq_cuenta_id, blq_nivel, blq_bloqueado_hasta)
+             VALUES (@0, @1, @2, DATEADD(MINUTE, @3, SYSDATETIME()))`,
+        [tipo, cuentaId, nivel + 1, minutos],
+      );
+      await qr.commitTransaction();
+      return minutos;
+    } catch (err) {
+      await qr.rollbackTransaction();
+      throw err;
+    } finally {
+      await qr.release();
+    }
+  }
+
+  private async limpiarBloqueoTemporal(
+    tipo: 'cliente' | 'usuario',
+    cuentaId: number,
+  ) {
+    await this.sistemaComercialDb.query(
+      `DELETE FROM dbo.pc_bloqueo_login WHERE blq_tipo = @0 AND blq_cuenta_id = @1`,
+      [tipo, cuentaId],
+    );
+  }
+
+  private columnasCuenta(tipo: 'cliente' | 'usuario') {
+    return tipo === 'cliente'
+      ? { tabla: 'Clientes', id: 'cli_id', intentos: 'cli_intentos_login' }
+      : { tabla: 'usuarios', id: 'usr_id', intentos: 'usr_intentos_login' };
+  }
+
+  // Antes de mirar la contraseña: durante un bloqueo no se revela si es
+  // correcta. Solo existe el bloqueo temporal (pc_bloqueo_login); las columnas
+  // cli_bloqueado/usr_bloqueado del bloqueo permanente anterior se eliminaron
+  // (migración 20260925_eliminar_columnas_bloqueado.sql).
+  private async verificarCuentaNoBloqueada(
+    tipo: 'cliente' | 'usuario',
+    cuentaId: number,
+  ) {
+    const restantes = await this.minutosBloqueoRestantes(tipo, cuentaId);
+    if (restantes) {
+      throw new UnauthorizedException(this.mensajeBloqueo(restantes));
+    }
+  }
+
+  // Contraseña incorrecta: suma el intento y, al llegar al máximo, reinicia el
+  // contador y bloquea temporalmente. El conteo se decide con el valor que
+  // devuelve el propio UPDATE (OUTPUT DELETED) y no con el leído al inicio
+  // del login: con intentos en paralelo cada uno veía el mismo valor viejo y
+  // se podían probar más contraseñas de las permitidas por ciclo.
+  private async registrarIntentoFallido(
+    tipo: 'cliente' | 'usuario',
+    cuentaId: number,
+  ): Promise<never> {
+    const c = this.columnasCuenta(tipo);
+    const maxIntentos = this.maxIntentosLogin();
+
+    // OUTPUT ... INTO @tabla: Clientes/usuarios tienen triggers (de
+    // Comercial) y SQL Server rechaza OUTPUT sin INTO en tablas con triggers.
+    const [fila] = await this.sistemaComercialDb.query(
+      `DECLARE @r TABLE (previos INT);
+       UPDATE dbo.${c.tabla}
+       SET ${c.intentos} = CASE
+             WHEN ISNULL(${c.intentos}, 0) + 1 >= @1 THEN 0
+             ELSE ISNULL(${c.intentos}, 0) + 1
+           END
+       OUTPUT ISNULL(DELETED.${c.intentos}, 0) INTO @r
+       WHERE ${c.id} = @0;
+       SELECT previos FROM @r;`,
+      [cuentaId, maxIntentos],
+    );
+    const intentos = Number(fila?.previos ?? 0) + 1;
+
+    if (intentos >= maxIntentos) {
+      const minutos = await this.bloquearTemporalmente(tipo, cuentaId);
+      throw new UnauthorizedException(this.mensajeBloqueo(minutos));
+    }
+
+    const quedan = maxIntentos - intentos;
+    throw new UnauthorizedException(
+      `La contraseña es incorrecta. Te queda(n) ${quedan} intento(s) antes de un bloqueo temporal.`,
+    );
+  }
+
+  // Ingreso correcto: reinicia intentos y el escalón de bloqueos.
+  private async registrarIngresoExitoso(
+    tipo: 'cliente' | 'usuario',
+    cuentaId: number,
+    intentosPrevios: number,
+  ) {
+    const c = this.columnasCuenta(tipo);
+    if (intentosPrevios > 0) {
+      await this.sistemaComercialDb.query(
+        `UPDATE dbo.${c.tabla} SET ${c.intentos} = 0 WHERE ${c.id} = @0`,
+        [cuentaId],
+      );
+    }
+    await this.limpiarBloqueoTemporal(tipo, cuentaId);
+  }
+
   private enmascararCorreo(email: string): string {
     const [usuario, dominio] = email.split('@');
     if (!usuario || !dominio) return email;
@@ -76,13 +255,16 @@ export class AuthService {
       .createHash('sha256')
       .update(tokenCrudo)
       .digest('hex');
-    const expiraEn = new Date(Date.now() + 60 * 60 * 1000); // 1 hora
-
+    // La expiración (1 hora) se calcula con el MISMO reloj con el que la
+    // valida resetPassword (SYSDATETIME() del servidor SQL). Antes se
+    // calculaba en Node (el driver la escribe en UTC) y se comparaba contra
+    // el reloj del servidor: según su zona horaria el link duraba 3-8 horas
+    // o nacía vencido. Ver documentacion/manejo-fechas-zona-horaria.md.
     await this.sistemaComercialDb.query(
       `INSERT INTO dbo.param_reset_password_tokens
        (rpt_tipo, rpt_usr_id, rpt_token_hash, rpt_expira_en)
-       VALUES (@0, @1, @2, @3)`,
-      [accessType, cuenta.id, tokenHash, expiraEn],
+       VALUES (@0, @1, @2, DATEADD(HOUR, 1, SYSDATETIME()))`,
+      [accessType, cuenta.id, tokenHash],
     );
 
     // Sin default: sin esta variable el correo saldría con un link relativo
@@ -114,6 +296,8 @@ export class AuthService {
     // Marcar como usado y leerlo en UNA sola sentencia: antes era SELECT y
     // después UPDATE, y dos peticiones simultáneas con el mismo link pasaban
     // las dos. Ahora solo una logra el UPDATE (rpt_usado = 0 en el WHERE).
+    // SYSDATETIME() debe ser el mismo reloj con el que se calculó
+    // rpt_expira_en al crear el token (ver arriba).
     const rows = await this.sistemaComercialDb.query(
       `UPDATE dbo.param_reset_password_tokens
        SET rpt_usado = 1
@@ -133,14 +317,21 @@ export class AuthService {
     const tabla = tipo === 'cliente' ? 'Clientes' : 'usuarios';
     const idColumna = tipo === 'cliente' ? 'cli_id' : 'usr_id';
     const passColumna = tipo === 'cliente' ? 'cli_password' : 'usr_password';
+    const prefijo = tipo === 'cliente' ? 'cli' : 'usr';
 
     const nuevaHash = await hashPassword(newPassword);
 
+    // Usar el link del correo demuestra que es el dueño de la cuenta, así
+    // que también la desbloquea: antes cambiaba la contraseña pero la cuenta
+    // seguía bloqueada y había que llamar a la empresa para desbloquearla.
     await this.sistemaComercialDb.query(
-      `UPDATE dbo.${tabla} SET ${passColumna} = @0 WHERE ${idColumna} = @1`,
+      `UPDATE dbo.${tabla}
+       SET ${passColumna} = @0, ${prefijo}_intentos_login = 0
+       WHERE ${idColumna} = @1`,
       [nuevaHash, row.rpt_usr_id],
     );
 
+    await this.limpiarBloqueoTemporal(tipo, row.rpt_usr_id);
     await this.invalidarSesiones(row.rpt_usr_id, tipo);
 
     return { ok: true, mensaje: 'Contraseña actualizada correctamente' };
@@ -183,14 +374,10 @@ export class AuthService {
   }
 
   private async loginCliente(identificacion: string, password: string) {
-    const maxIntentos = Math.max(
-      1,
-      Number.parseInt(process.env.LOGIN_MAX_ATTEMPTS || '5', 10) || 5,
-    );
     const cliente = await this.sistemaComercialDb.query(
       `
       SELECT cli_id, cli_razon_social, cli_nro_identificacion, cli_password,
-             cli_acceso_pc, cli_bloqueado, cli_intentos_login, cli_token_version,
+             cli_acceso_pc, cli_intentos_login, cli_token_version,
              cli_menu_posicion
       FROM clientes
       WHERE cli_nro_identificacion = @0
@@ -210,42 +397,13 @@ export class AuthService {
       );
     }
 
-    if (cli.cli_bloqueado) {
-      throw new UnauthorizedException(
-        'Cliente bloqueado por demasiados intentos fallidos. Solicita el desbloqueo al administrador.',
-      );
-    }
+    await this.verificarCuentaNoBloqueada('cliente', cli.cli_id);
 
+    const intentosPrevios = Number(cli.cli_intentos_login ?? 0);
     if (!(await passwordCoincide(password, cli.cli_password))) {
-      await this.sistemaComercialDb.query(
-        `UPDATE dbo.Clientes
-         SET cli_intentos_login = cli_intentos_login + 1,
-             cli_bloqueado = CASE
-               WHEN cli_intentos_login + 1 >= @1 THEN 1
-               ELSE cli_bloqueado
-             END
-         WHERE cli_id = @0`,
-        [cli.cli_id, maxIntentos],
-      );
-
-      const intentos = Number(cli.cli_intentos_login ?? 0) + 1;
-      if (intentos >= maxIntentos) {
-        throw new UnauthorizedException(
-          'Cliente bloqueado por demasiados intentos fallidos. Solicita el desbloqueo al administrador.',
-        );
-      }
-
-      throw new UnauthorizedException('La contraseña es incorrecta');
+      await this.registrarIntentoFallido('cliente', cli.cli_id);
     }
-
-    if (Number(cli.cli_intentos_login ?? 0) > 0) {
-      await this.sistemaComercialDb.query(
-        `UPDATE dbo.Clientes
-         SET cli_intentos_login = 0, cli_bloqueado = 0
-         WHERE cli_id = @0`,
-        [cli.cli_id],
-      );
-    }
+    await this.registrarIngresoExitoso('cliente', cli.cli_id, intentosPrevios);
 
     // Obtener módulos del rol CLIENTE
     const rolClienteData = await this.sistemaComercialDb.query(
@@ -295,16 +453,11 @@ export class AuthService {
   }
 
   private async loginUsuarioInterno(usuario: string, password: string) {
-    const maxIntentos = Math.max(
-      1,
-      Number.parseInt(process.env.LOGIN_MAX_ATTEMPTS || '5', 10) || 5,
-    );
-
     const usuarioData = await this.sistemaComercialDb.query(
       `
       SELECT u.usr_id, u.usr_usuario, u.usr_password, u.usr_acceso_pc,
              u.usr_inactivar, u.usr_nombre, u.usr_correo, u.ejng_id,
-             u.usr_token_version, u.usr_bloqueado, u.usr_intentos_login,
+             u.usr_token_version, u.usr_intentos_login,
              u.usr_menu_posicion,
              ur.ur_activo, ur.ur_rol_id,
              r.rol_id, r.rol_nombre, r.rol_codigo
@@ -348,42 +501,13 @@ export class AuthService {
       );
     }
 
-    if (usr.usr_bloqueado) {
-      throw new UnauthorizedException(
-        'Usuario bloqueado por demasiados intentos fallidos. Solicita el desbloqueo al administrador.',
-      );
-    }
+    await this.verificarCuentaNoBloqueada('usuario', usr.usr_id);
 
+    const intentosPrevios = Number(usr.usr_intentos_login ?? 0);
     if (!(await passwordCoincide(password, usr.usr_password))) {
-      await this.sistemaComercialDb.query(
-        `UPDATE dbo.usuarios
-         SET usr_intentos_login = usr_intentos_login + 1,
-             usr_bloqueado = CASE
-               WHEN usr_intentos_login + 1 >= @1 THEN 1
-               ELSE usr_bloqueado
-             END
-         WHERE usr_id = @0`,
-        [usr.usr_id, maxIntentos],
-      );
-
-      const intentos = Number(usr.usr_intentos_login ?? 0) + 1;
-      if (intentos >= maxIntentos) {
-        throw new UnauthorizedException(
-          'Usuario bloqueado por demasiados intentos fallidos. Solicita el desbloqueo al administrador.',
-        );
-      }
-
-      throw new UnauthorizedException('La contraseña es incorrecta');
+      await this.registrarIntentoFallido('usuario', usr.usr_id);
     }
-
-    if (Number(usr.usr_intentos_login ?? 0) > 0) {
-      await this.sistemaComercialDb.query(
-        `UPDATE dbo.usuarios
-         SET usr_intentos_login = 0, usr_bloqueado = 0
-         WHERE usr_id = @0`,
-        [usr.usr_id],
-      );
-    }
+    await this.registrarIngresoExitoso('usuario', usr.usr_id, intentosPrevios);
 
     const modulos = await this.permissionsService.getModulesByUsuario(
       usr.usr_id,

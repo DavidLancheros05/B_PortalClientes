@@ -28,6 +28,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       email: payload.email,
       rol: payload.rol,
       cliente_id: payload.cliente_id,
+      // Ya venía en el token (auth.service.ts::login) pero no se propagaba:
+      // pedidos.controller.ts lo usa para que un ejecutivo solo consulte su
+      // propia cartera (/pedidos/ejecutivo/:ejngId).
+      ejng_id: payload.ejng_id,
       // Antes no se propagaba: auth.controller.ts::logout() lee
       // req.user.tipo para decidir qué tabla invalidar (Clientes vs
       // usuarios) y siempre caía al fallback 'usuario' — un cliente que

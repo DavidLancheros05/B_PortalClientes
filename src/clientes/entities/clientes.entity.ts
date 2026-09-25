@@ -117,7 +117,4 @@ export class ClienteEntity {
 
   @Column({ name: 'cli_intentos_login', type: 'int', default: 0 })
   cli_intentos_login: number;
-
-  @Column({ name: 'cli_bloqueado', type: 'bit', default: false })
-  cli_bloqueado: boolean;
 }

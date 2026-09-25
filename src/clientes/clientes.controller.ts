@@ -129,13 +129,6 @@ export class ClientesController {
     return this.clientesService.update(+id, dto);
   }
 
-  @Post(':id/desbloquear')
-  @RequierePermiso('/parametrizacion/clientes/listado', 'editar')
-  async desbloquear(@Param('id') id: string): Promise<{ message: string }> {
-    await this.clientesService.desbloquear(+id);
-    return { message: 'Cliente desbloqueado correctamente' };
-  }
-
   @Delete(':id')
   @RequierePermiso('/parametrizacion/clientes/listado', 'eliminar')
   async delete(@Param('id') id: string): Promise<{ success: boolean }> {

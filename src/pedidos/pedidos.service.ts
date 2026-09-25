@@ -1,14 +1,45 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ClienteEntity } from '../clientes/entities/clientes.entity';
+import { SiesaDbService } from '../integraciones/siesa/siesa-db.service';
 import { PedidoClienteResponseDto } from './dto/pedido-cliente.response.dto';
+
+// SQL Server acepta hasta 2100 parámetros por consulta.
+const NITS_POR_CONSULTA = 1000;
+
+// Columnas que ve el rol CLIENTE; el resto (inventario, pesos, plan, CDV,
+// vendedor, códigos internos) es solo para usuarios internos. Ver
+// documentacion/Portal Clientes/CONSULTAS/listado-pedidos-por-tipo-de-usuario.md.
+const CAMPOS_VISIBLES_CLIENTE = [
+  'numeroDocumento',
+  'numero',
+  'estado',
+  'fechaCreacion',
+  'fechaEntrega',
+  'ordenCompra',
+  'referencia',
+  'descripcionItem',
+  'cantidadPedida',
+  'cantidadRemisionada',
+  'cantidadPendiente',
+  'ciudad',
+  'direccion',
+  'precioUnitario',
+  'valorPendienteSubtotal',
+  'valorPendiente',
+  'valorNeto',
+  'notas',
+] as const satisfies readonly (keyof PedidoClienteResponseDto)[];
 
 @Injectable()
 export class PedidosService {
+  private readonly logger = new Logger(PedidosService.name);
+
   constructor(
     @InjectRepository(ClienteEntity)
     private readonly clienteRepo: Repository<ClienteEntity>,
+    private readonly siesaDb: SiesaDbService,
   ) {}
 
   // Todos los clientes asignados a un ejecutivo de negocios (Clientes.ejng_id)
@@ -21,39 +52,96 @@ export class PedidosService {
       where: { ejng_id: ejngId },
     });
 
-    const pedidosPorCliente = await Promise.all(
-      clientes.map((cliente) => this.getPedidosPorCliente(cliente.cli_id)),
-    );
+    if (!this.siesaDb.estaConfigurado()) {
+      return clientes.flatMap((c) =>
+        this.pedidosDeEjemplo().map((p) => ({
+          ...p,
+          clientePortal: c.cli_razon_social,
+        })),
+      );
+    }
 
-    return pedidosPorCliente.flat();
+    // Razón social del portal por NIT (puede haber más de un cliente del
+    // portal con el mismo NIT).
+    const nombresPorNit = new Map<string, string[]>();
+    for (const c of clientes) {
+      const nit = c.cli_nro_identificacion?.trim();
+      if (!nit) continue;
+      nombresPorNit.set(nit, [
+        ...(nombresPorNit.get(nit) ?? []),
+        c.cli_razon_social,
+      ]);
+    }
+
+    // Una sola consulta a SIESA con todos los NITs de la cartera, en vez de
+    // una consulta pesada por cliente.
+    const nits = [...nombresPorNit.keys()];
+    const resultado: PedidoClienteResponseDto[] = [];
+    for (let i = 0; i < nits.length; i += NITS_POR_CONSULTA) {
+      resultado.push(
+        ...(await this.consultarSiesa(nits.slice(i, i + NITS_POR_CONSULTA))),
+      );
+    }
+    return resultado.map((p) => ({
+      ...p,
+      clientePortal: nombresPorNit.get(p.nit ?? '')?.join(' / ') ?? null,
+    }));
   }
 
   async getPedidosPorCliente(
     cliId: number,
   ): Promise<PedidoClienteResponseDto[]> {
     const cliente = await this.clienteRepo.findOne({ where: { cli_id: cliId } });
-    const nit = cliente?.cli_nro_identificacion;
+    const nit = cliente?.cli_nro_identificacion?.trim();
 
-    // ────────────────────────────────────────────────────────────────────
-    // Pendiente: acceso real a SIESA (ver
-    // documentacion/plan-migracion-clientes-siesa.md). Esta consulta va
-    // contra la BD de SIESA, no contra la BD del portal — necesita su
-    // propia conexión (`mssql`/DataSource aparte, apuntando al servidor de
-    // SIESA), distinta de `this.clienteRepo` de arriba. Cuando exista esa
-    // conexión, descomentar este bloque, reemplazar `siesaDataSource` por
-    // la instancia real, y borrar el bloque de datos quemados de abajo.
-    //
-    // Consulta verificada contra SIESA el 2026-07-21 (origen: archivo
-    // "1. Consulta de Pedido por Item.sql", NIT de prueba 800092967).
-    // ────────────────────────────────────────────────────────────────────
-    /*
-    const rows = await siesaDataSource.query(
+    const pedidos = !this.siesaDb.estaConfigurado()
+      ? this.pedidosDeEjemplo()
+      : nit
+        ? await this.consultarSiesa([nit])
+        : [];
+    return pedidos.map((p) => ({
+      ...p,
+      clientePortal: cliente?.cli_razon_social ?? null,
+    }));
+  }
+
+  // Un ejecutivo solo consulta clientes de su cartera (Clientes.ejng_id).
+  async clientePerteneceAEjecutivo(
+    cliId: number,
+    ejngId: number,
+  ): Promise<boolean> {
+    return this.clienteRepo.exists({
+      where: { cli_id: cliId, ejng_id: ejngId },
+    });
+  }
+
+  // Deja solo las columnas del cliente (CAMPOS_VISIBLES_CLIENTE).
+  soloCamposCliente(
+    pedidos: PedidoClienteResponseDto[],
+  ): PedidoClienteResponseDto[] {
+    return pedidos.map(
+      (p) =>
+        Object.fromEntries(
+          CAMPOS_VISIBLES_CLIENTE.map((campo) => [campo, p[campo]]),
+        ) as unknown as PedidoClienteResponseDto,
+    );
+  }
+
+  // Consulta verificada contra SIESA el 2026-07-21 (origen: archivo
+  // "1. Consulta de Pedido por Item.sql", NIT de prueba 800092967). Único
+  // cambio: filtra por varios NITs (`IN`) en vez de uno solo.
+  private async consultarSiesa(
+    nits: string[],
+  ): Promise<PedidoClienteResponseDto[]> {
+    if (nits.length === 0) return [];
+    const placeholders = nits.map((_, i) => `@${i}`).join(', ');
+
+    const rows = await this.siesaDb.query(
       `
       DECLARE @p_cia          SMALLINT = 1
       DECLARE @p_tipo_inv     CHAR(10) = '3'
       DECLARE @p_fec_inicial  DATETIME = DATEADD(YEAR, -5, CAST(GETDATE() AS DATE))  -- hoy - 5 años (dinámico)
       DECLARE @p_fec_final    DATETIME = CAST(GETDATE() AS DATE)                     -- hoy (dinámico)
-      DECLARE @p_nit VARCHAR(20) = @0
 
       ;WITH t430_meta AS (
           SELECT
@@ -669,58 +757,66 @@ export class PedidosService {
         AND  v431_ind_estado                <> 4    -- no cumplidos
         --AND  f120_id_tipo_inv_serv           = @p_tipo_inv    -- tipo inventario '3'
         AND  t430_docto.f430_id_fecha  BETWEEN @p_fec_inicial AND @p_fec_final  -- últimos 5 años
-        AND clientefact.f200_nit = @p_nit
+        AND clientefact.f200_nit IN (${placeholders})
       ORDER  BY
           t430_docto.f430_id_fecha,
           f_nrodocto,
           f120_id
       `,
-      [nit],
+      nits,
     );
 
+    // SIESA rellena los CHAR con espacios (ej. notas vacías = 255 espacios):
+    // se recortan, y los opcionales vacíos pasan a null para que el front
+    // muestre "-" en vez de una celda en blanco.
+    const texto = (v: string | null): string => (v ?? '').trim();
+    const opcional = (v: string | null): string | null => texto(v) || null;
+
     return rows.map((r: any) => ({
-      clienteRazonSocial: r.f_cliente_fact_razon_soc,
-      nit: r.f200_nit,
+      clienteRazonSocial: texto(r.f_cliente_fact_razon_soc),
+      nit: texto(r.f200_nit),
       numeroDocumento: r.f_nrodocto,
       estado: r.f_estado_docto,
       fechaCreacion: r.f_fecha_creacion_docto,
       fechaEntrega: r.f_fecha_entrega,
-      ordenCompra: r.f_orden_compra,
+      ordenCompra: opcional(r.f_orden_compra),
       item: r.f_item,
-      referencia: r.f_referencia,
-      descripcionItem: r.f_desc_item,
+      referencia: texto(r.f_referencia),
+      descripcionItem: texto(r.f_desc_item),
       cantidadPedida: r.f_cant_pedida_base,
       cantidadDisponibleInsumo: r.f_cant_disponible_ins,
       cantidadRemisionada: r.f_cant_remision_base,
       cantidadPendiente: r.f_cant_pendiente_base,
       pesoPendiente: r.f_peso_pendiente,
       volumenPendiente: r.f_vol_pendiente,
-      ciudad: r.f_desc_ciudad,
+      ciudad: texto(r.f_desc_ciudad),
       precioUnitario: r.f_precio_unit_docto,
       precioPeso: r.f_precio_peso,
-      plan003: r.f_01_003,
+      plan003: opcional(r.f_01_003),
       valorPendienteSubtotal: r.f_vlr_pendiente_subtotal,
       valorPendiente: r.f_vlr_pendiente_pedido,
-      direccion: r.f_direccion1,
-      vendedor: r.f_vendedor_razon_social,
+      direccion: texto(r.f_direccion1),
+      vendedor: texto(r.f_vendedor_razon_social),
       valorNeto: r.f_valor_neto_docto,
       valorBrutoLocal: r.f_valor_bruto_local,
       pesoPedida: r.f_peso_pedida,
-      cdv: r.f_02_CDV,
-      notas: r.f_notas_movto,
+      cdv: opcional(r.f_02_CDV),
+      notas: opcional(r.f_notas_movto),
       numero: r.f_numero,
     }));
     // Nota: se excluyen a propósito f_divisor_margen_prom, f_divisor_margen_est,
     // f_utilidad_prom_f (cálculos internos de margen/utilidad — no deben
     // exponerse al cliente) y f_rowid_pv_docto/f_rowid/f_rowid_movto (llaves
     // internas de SIESA sin valor para el cliente).
-    */
+  }
 
-    // ────────────────────────────────────────────────────────────────────
-    // Datos quemados temporales (fila real de ejemplo devuelta por la
-    // consulta anterior contra SIESA, NIT 800092967) mientras no hay
-    // acceso a SIESA. Borrar este bloque al descomentar el de arriba.
-    // ────────────────────────────────────────────────────────────────────
+  // Fila real de ejemplo (consulta de arriba, NIT 800092967) que se devuelve
+  // mientras SIESA_DB_* no esté configurado en .env — así los entornos sin
+  // acceso a SIESA siguen funcionando igual que antes.
+  private pedidosDeEjemplo(): PedidoClienteResponseDto[] {
+    this.logger.warn(
+      'SIESA no configurado (SIESA_DB_*): devolviendo pedidos de ejemplo',
+    );
     return [
       {
         clienteRazonSocial: 'INDUSTRIAS CARTON',

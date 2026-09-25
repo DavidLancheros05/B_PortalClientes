@@ -23,6 +23,7 @@ import {
 } from './formulario-renderizable.service';
 import { VariablesPlantillaService } from '../parametrizacion/variables-plantilla/variables-plantilla.service';
 import { nombreGuardadoArchivo } from '../common/utils/storage-file-name.util';
+import { condicionDocumentoDiferido } from './documentos-diferidos.sql';
 
 @Injectable()
 export class SolicitudesWorkflowService {
@@ -107,13 +108,11 @@ export class SolicitudesWorkflowService {
   }
 
   /**
-   * "Documentos diferidos": preguntas ARCHIVO/DOCUMENTOS_TABLA ocultas del
-   * formulario en vivo (fp_oculto_en_formulario, o su sección tiene
-   * fs_oculta_en_formulario) cuyo tipo de documento tiene plantilla
-   * descargable (tdo_tiene_plantilla). Los documentos generados ya quedan
-   * guardados en Solicitud_archivo; aquí también se muestran para consulta,
-   * pero el bloqueo del workflow solo aplica a las versiones firmadas que
-   * todavía faltan por subir.
+   * "Documentos diferidos": preguntas del formulario cuyo tipo de documento
+   * está marcado tdo_es_diferido (regla única en documentos-diferidos.sql.ts).
+   * Incluye tanto los generados por el sistema (con plantilla) como los
+   * firmados que sube el cliente. Todos deben existir para que la solicitud
+   * salga de PEND_FIRMA.
    */
   private async obtenerDocumentosDiferidosConSubidos(
     solicitudId: number,
@@ -161,21 +160,9 @@ export class SolicitudesWorkflowService {
         fp.fp_id
       FROM Formulario_pregunta fp
       JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tdo_id
-      LEFT JOIN Formulario_secciones fs ON fs.fs_id = fp.seccion_id
       WHERE fp.fp_estado = 1
-        AND (
-          td.tdo_tiene_plantilla = 1
-          OR td.tdo_nombre LIKE '%Firmad%'
-        )
-        AND (
-          fp.fp_oculto_en_formulario = 1
-          OR fs.fs_oculta_en_formulario = 1
-          OR td.tdo_tipo_plantilla = 'PDF_SOLICITUD'
-          OR td.tdo_plantilla_contenido IS NOT NULL
-          OR td.tdo_nombre LIKE '%Firmad%'
-        )
         AND ISNULL(fp.fp_version, 1) = @0
-        AND (td.tdo_solo_distribuidor = 0 OR @1 = 1)
+        AND ${condicionDocumentoDiferido('@1')}
       `,
       [version, esDistribuidor ? 1 : 0],
     );
@@ -1943,25 +1930,13 @@ export class SolicitudesWorkflowService {
          FROM Solicitud_archivo sa
          JOIN Formulario_pregunta fp ON fp.fp_id = sa.sa_fp_id
          JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tdo_id
-         LEFT JOIN Formulario_secciones fs ON fs.fs_id = fp.seccion_id
          JOIN solicitudes s ON s.sol_id = sa.sa_sol_id
          JOIN Clientes c ON c.cli_id = s.sol_cli_id
          WHERE sa.sa_sol_id = @0
            AND sa.sa_estado = 'activo'
            AND fp.fp_estado = 1
            AND ISNULL(fp.fp_version, 1) = ISNULL(s.sol_formulario_version, 1)
-           AND (
-             td.tdo_tiene_plantilla = 1
-             OR td.tdo_nombre LIKE '%Firmad%'
-           )
-           AND (
-             fp.fp_oculto_en_formulario = 1
-             OR fs.fs_oculta_en_formulario = 1
-             OR td.tdo_tipo_plantilla = 'PDF_SOLICITUD'
-             OR td.tdo_plantilla_contenido IS NOT NULL
-             OR td.tdo_nombre LIKE '%Firmad%'
-           )
-           AND (ISNULL(td.tdo_solo_distribuidor, 0) = 0 OR c.cli_es_distribuidor = 1)`,
+           AND ${condicionDocumentoDiferido('c.cli_es_distribuidor')}`,
         [solicitudId],
       );
 

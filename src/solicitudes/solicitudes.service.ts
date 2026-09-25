@@ -12,6 +12,7 @@ import { PDFDocument, PDFFont, PDFPage, rgb } from 'pdf-lib';
 import { WorkflowEtapaResponseDto } from './dto/workflow-etapa.response.dto';
 import { WorkflowResultadoResponseDto } from './dto/workflow-resultado.response.dto';
 import { ParamDiasRespuestaResponseDto } from './dto/param-dias-respuesta.response.dto';
+import { condicionDocumentoDiferido } from './documentos-diferidos.sql';
 import {
   ENCABEZADO_ALTURA,
   dibujarEncabezadoOficialPdf,
@@ -233,14 +234,10 @@ export class SolicitudesService {
           SELECT DISTINCT td.tdo_id, td.tdo_nombre
           FROM Formulario_pregunta fp
           JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tdo_id
-          LEFT JOIN Formulario_secciones fs ON fs.fs_id = fp.seccion_id
+          LEFT JOIN Clientes c ON c.cli_id = @1
           WHERE fp.fp_estado = 1
-            AND td.tdo_tiene_plantilla = 1
-            AND (fp.fp_oculto_en_formulario = 1 OR fs.fs_oculta_en_formulario = 1)
             AND ISNULL(fp.fp_version, 1) = @0
-            AND (td.tdo_solo_distribuidor = 0 OR EXISTS (
-              SELECT 1 FROM Clientes c WHERE c.cli_id = @1 AND c.cli_es_distribuidor = 1
-            ))
+            AND ${condicionDocumentoDiferido('c.cli_es_distribuidor')}
           `,
           [formularioVersion, clienteId],
         );

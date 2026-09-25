@@ -183,15 +183,6 @@ export class UsuarioController {
     return this.usersService.updateUser(usr_id, body);
   }
 
-  @Post(':usr_id/desbloquear')
-  @RequierePermiso('/seguridad/usuarios', 'editar')
-  async desbloquear(
-    @Param('usr_id', ParseIntPipe) usr_id: number,
-  ): Promise<{ message: string }> {
-    await this.usersService.desbloquear(usr_id);
-    return { message: 'Usuario desbloqueado correctamente' };
-  }
-
   @Delete(':usr_id')
   @RequierePermiso('/seguridad/usuarios', 'eliminar')
   async remove(@Param('usr_id', ParseIntPipe) usr_id: number) {

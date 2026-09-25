@@ -50,11 +50,16 @@ export class ClientesService {
         c.cli_acceso_pc AS [cli_acceso_pc],
         c.cli_siesa AS [cli_siesa],
         c.cli_intentos_login AS [cli_intentos_login],
-        c.cli_bloqueado AS [cli_bloqueado],
+        -- Bloqueo temporal vigente por intentos fallidos (solo informativo,
+        -- se levanta solo — ver auth.service.ts / pc_bloqueo_login).
+        DATEDIFF(MINUTE, SYSDATETIME(), b.blq_bloqueado_hasta) AS [cli_bloqueo_min_restantes],
         c.ejng_id AS [ejng_id],
         e.ejng_nombre AS [ejng_nombre]
       FROM dbo.Clientes c
       LEFT JOIN dbo.Ejecutivo_negocio e ON e.ejng_id = c.ejng_id
+      LEFT JOIN dbo.pc_bloqueo_login b
+        ON b.blq_tipo = 'cliente' AND b.blq_cuenta_id = c.cli_id
+       AND b.blq_bloqueado_hasta > SYSDATETIME()
       ORDER BY c.cli_razon_social ASC
     `);
 
@@ -68,7 +73,11 @@ export class ClientesService {
       cli_acceso_pc: item.cli_acceso_pc,
       cli_siesa: item.cli_siesa,
       cli_intentos_login: Number(item.cli_intentos_login ?? 0),
-      cli_bloqueado: Boolean(item.cli_bloqueado),
+      cli_bloqueado: item.cli_bloqueo_min_restantes != null,
+      cli_bloqueo_min_restantes:
+        item.cli_bloqueo_min_restantes != null
+          ? Math.max(1, Number(item.cli_bloqueo_min_restantes))
+          : null,
       ejng_id: item.ejng_id,
       ejecutivo: item.ejng_nombre ? { nombre: item.ejng_nombre } : null,
     }));
@@ -257,20 +266,6 @@ export class ClientesService {
     }
 
     await this.clienteRepo.update(cli_id, { cli_estado: 'I' });
-  }
-
-  async desbloquear(cli_id: number): Promise<void> {
-    const result = await this.clienteRepo.query(
-      `UPDATE dbo.Clientes
-       SET cli_bloqueado = 0, cli_intentos_login = 0
-       OUTPUT INSERTED.cli_id
-       WHERE cli_id = @0`,
-      [cli_id],
-    );
-
-    if (!result?.length) {
-      throw new NotFoundException('Cliente no existe');
-    }
   }
 
   // ========================
@@ -485,7 +480,16 @@ export class ClientesService {
 
     const passwordGenerada = Math.random().toString(36).slice(-8);
     const passwordHasheada = await hashPassword(passwordGenerada);
-    await this.clienteRepo.update(cli_id, { cli_password: passwordHasheada });
+    await this.clienteRepo.update(cli_id, {
+      cli_password: passwordHasheada,
+      cli_intentos_login: 0,
+    });
+    // Con contraseña nueva, el bloqueo temporal por intentos (hechos con la
+    // vieja) ya no tiene sentido — mismo criterio que AuthService.resetPassword.
+    await this.clienteRepo.query(
+      `DELETE FROM dbo.pc_bloqueo_login WHERE blq_tipo = 'cliente' AND blq_cuenta_id = @0`,
+      [cli_id],
+    );
 
     await this.notificacionesService.notificarCredencialesUsuario({
       nombre: cliente.cli_razon_social,

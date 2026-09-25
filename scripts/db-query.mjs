@@ -6,6 +6,7 @@
  * Uso (desde BACKEND/):
  *   node scripts/db-query.mjs "SELECT TOP 5 * FROM solicitudes"
  *   node scripts/db-query.mjs migrations/20260712_algo.sql
+ *   node scripts/db-query.mjs --siesa "SELECT TOP 1 * FROM t200_mm_terceros"
  *
  * Si el argumento es una ruta a un archivo .sql existente, ejecuta su
  * contenido; si no, lo trata como SQL literal. Soporta separadores "GO"
@@ -48,19 +49,34 @@ const envKey =
 const dbEnv = (name) =>
   process.env[`${name}_${envKey}`] ?? process.env[name];
 
+// --siesa: misma consulta pero contra la BD de SIESA (SIESA_DB_*, ver
+// src/integraciones/siesa/siesa-db.service.ts) en vez de la del portal.
+const args = process.argv.slice(2);
+const usarSiesa = args[0] === "--siesa";
+if (usarSiesa) args.shift();
+const prefijo = usarSiesa ? "SIESA_DB" : "DB";
+
 const dbConfig = {
-  user: dbEnv("DB_USER"),
-  password: dbEnv("DB_PASSWORD"),
-  server: dbEnv("DB_HOST"),
-  port: dbEnv("DB_PORT") ? Number(dbEnv("DB_PORT")) : 1433,
-  database: dbEnv("DB_NAME"),
+  user: dbEnv(`${prefijo}_USER`),
+  password: dbEnv(`${prefijo}_PASSWORD`),
+  server: dbEnv(`${prefijo}_HOST`),
+  port: dbEnv(`${prefijo}_PORT`) ? Number(dbEnv(`${prefijo}_PORT`)) : 1433,
+  database: dbEnv(`${prefijo}_NAME`),
+  requestTimeout: 60000,
   options: { encrypt: true, trustServerCertificate: true },
 };
 
 async function main() {
-  const arg = process.argv[2];
+  const arg = args[0];
   if (!arg) {
-    console.error('Uso: node scripts/db-query.mjs "SELECT ..." | archivo.sql');
+    console.error('Uso: node scripts/db-query.mjs [--siesa] "SELECT ..." | archivo.sql');
+    process.exit(1);
+  }
+
+  if (!dbConfig.server || !dbConfig.user || !dbConfig.database) {
+    console.error(
+      `Faltan variables ${prefijo}_HOST/${prefijo}_USER/${prefijo}_PASSWORD/${prefijo}_NAME en .env`,
+    );
     process.exit(1);
   }
 

@@ -64,10 +64,10 @@ export class TiposDocumentosService {
         reglaVigencia === 'ANIO'
           ? (createDto.aniosAtrasPermitidos ?? null)
           : null,
-      aplicaZonaFranca: createDto.aplicaZonaFranca,
       estado: createDto.estado ?? true,
-      aplicaCliente: true,
       tienePlantilla: createDto.tienePlantilla ?? false,
+      esDiferido: createDto.esDiferido ?? false,
+      soloDistribuidor: createDto.soloDistribuidor ?? false,
       tipoPlantilla: createDto.tipoPlantilla ?? 'TEXTO',
       plantillaContenido:
         createDto.tienePlantilla && createDto.tipoPlantilla !== 'PDF_SOLICITUD'
@@ -123,15 +123,18 @@ export class TiposDocumentosService {
       ...(updateDto.aniosAtrasPermitidos !== undefined
         ? { aniosAtrasPermitidos: updateDto.aniosAtrasPermitidos }
         : {}),
-      ...(updateDto.aplicaZonaFranca !== undefined
-        ? { aplicaZonaFranca: updateDto.aplicaZonaFranca }
-        : {}),
       ...(updateDto.estado !== undefined ? { estado: updateDto.estado } : {}),
       ...(updateDto.tienePlantilla !== undefined
         ? { tienePlantilla: updateDto.tienePlantilla }
         : {}),
       ...(updateDto.tipoPlantilla !== undefined
         ? { tipoPlantilla: updateDto.tipoPlantilla }
+        : {}),
+      ...(updateDto.esDiferido !== undefined
+        ? { esDiferido: updateDto.esDiferido }
+        : {}),
+      ...(updateDto.soloDistribuidor !== undefined
+        ? { soloDistribuidor: updateDto.soloDistribuidor }
         : {}),
       ...(updateDto.plantillaContenido !== undefined
         ? { plantillaContenido: updateDto.plantillaContenido }
@@ -168,7 +171,6 @@ export class TiposDocumentosService {
       vigenciaDias: merged.vigenciaDias ?? undefined,
       reglaVigencia: merged.reglaVigencia ?? tipo.reglaVigencia ?? undefined,
       aniosAtrasPermitidos: merged.aniosAtrasPermitidos ?? undefined,
-      aplicaZonaFranca: merged.aplicaZonaFranca ?? tipo.aplicaZonaFranca,
       estado: merged.estado,
       tienePlantilla: merged.tienePlantilla ?? tipo.tienePlantilla,
       tipoPlantilla: merged.tipoPlantilla ?? tipo.tipoPlantilla,
@@ -272,7 +274,6 @@ export class TiposDocumentosService {
     vigenciaDias?: number | null;
     reglaVigencia?: string | null;
     aniosAtrasPermitidos?: number | null;
-    aplicaZonaFranca: boolean;
     estado?: boolean;
     tienePlantilla?: boolean;
     tipoPlantilla?: string | null;
