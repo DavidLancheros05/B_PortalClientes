@@ -32,18 +32,14 @@ export class ModulePermissionGuard implements CanActivate {
     }
 
     const { user } = context.switchToHttp().getRequest();
-    const tienePermiso = await this.permissionsService.tienePermiso(
-      user,
-      meta.ruta,
-      meta.accion,
-    );
-
-    if (!tienePermiso) {
-      throw new ForbiddenException(
-        `No tienes permiso de "${meta.accion}" en ${meta.ruta}`,
-      );
+    for (const ruta of meta.rutas) {
+      if (await this.permissionsService.tienePermiso(user, ruta, meta.accion)) {
+        return true;
+      }
     }
 
-    return true;
+    throw new ForbiddenException(
+      `No tienes permiso de "${meta.accion}" en ${meta.rutas.join(' / ')}`,
+    );
   }
 }

@@ -145,9 +145,21 @@ function main() {
   const baseline = existsSync(BASELINE_PATH)
     ? JSON.parse(readFileSync(BASELINE_PATH, 'utf-8'))
     : [];
-  const clave = (g) => `${g.archivo}:${g.linea}`;
-  const baselineClaves = new Set(baseline.map(clave));
-  const nuevos = gaps.filter((g) => !baselineClaves.has(clave(g)));
+  // Por archivo + decorador, no por número de línea: antes cualquier código
+  // agregado arriba de un endpoint ya conocido corría su línea y el chequeo
+  // lo reportaba como "nuevo". Se cuentan repeticiones (varios @Post() en el
+  // mismo archivo) para que un endpoint nuevo idéntico sí se detecte.
+  const clave = (g) => `${g.archivo}|${g.decorador}`;
+  const disponibles = new Map();
+  for (const b of baseline) {
+    disponibles.set(clave(b), (disponibles.get(clave(b)) ?? 0) + 1);
+  }
+  const nuevos = gaps.filter((g) => {
+    const quedan = disponibles.get(clave(g)) ?? 0;
+    if (quedan === 0) return true;
+    disponibles.set(clave(g), quedan - 1);
+    return false;
+  });
 
   if (modoJson) {
     console.log(JSON.stringify({ totalGaps: gaps.length, nuevos }, null, 2));

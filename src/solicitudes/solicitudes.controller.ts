@@ -51,6 +51,13 @@ type ReqUsuario = Request & {
   };
 };
 
+// Pantallas de gestión que usan SoportesAnalisis (subir/borrar).
+const RUTAS_GESTION_CON_SOPORTES = [
+  '/solicitudes/gestion-oficial-de-cumplimiento',
+  '/solicitudes/gestion-comite-credito-1',
+  '/solicitudes/gestion-comite-credito-2',
+];
+
 @Controller('solicitudes')
 export class SolicitudesController {
   constructor(
@@ -955,8 +962,11 @@ export class SolicitudesController {
   // Soportes de análisis: archivos que sube el personal interno (Oficial de
   // Cumplimiento, etc.) para respaldar su propia revisión — no son
   // documentos del cliente, ver SolicitudesDocumentosService.
+  // Subir/borrar: solo quien gestiona OFC, CC1 o CC2 (antes cualquier rol
+  // interno, ej. un Ejecutivo podía borrar el soporte del Oficial).
   @Post(':id/soportes-analisis')
   @UseGuards(JwtAuthGuard)
+  @RequierePermiso(RUTAS_GESTION_CON_SOPORTES, 'editar')
   @UseInterceptors(FileInterceptor('archivo'))
   async subirSoporteAnalisis(
     @Param('id', ParseIntPipe) solicitudId: number,
@@ -1016,6 +1026,7 @@ export class SolicitudesController {
 
   @Delete(':id/soportes-analisis/:ssaId')
   @UseGuards(JwtAuthGuard)
+  @RequierePermiso(RUTAS_GESTION_CON_SOPORTES, 'editar')
   async eliminarSoporteAnalisis(
     @Param('id', ParseIntPipe) solicitudId: number,
     @Param('ssaId', ParseIntPipe) ssaId: number,
@@ -1062,8 +1073,10 @@ export class SolicitudesController {
 
   // Evidencia por persona (una fila de representante legal/suplentes/
   // accionistas) — ver SolicitudesDocumentosService.subirEvidenciaPersona.
+  // Solo la pantalla de Gestión Oficial de Cumplimiento sube/borra.
   @Post(':id/evidencias-persona')
   @UseGuards(JwtAuthGuard)
+  @RequierePermiso('/solicitudes/gestion-oficial-de-cumplimiento', 'editar')
   @UseInterceptors(FileInterceptor('archivo'))
   async subirEvidenciaPersona(
     @Param('id', ParseIntPipe) solicitudId: number,
@@ -1125,6 +1138,7 @@ export class SolicitudesController {
 
   @Delete(':id/evidencias-persona/:sepId')
   @UseGuards(JwtAuthGuard)
+  @RequierePermiso('/solicitudes/gestion-oficial-de-cumplimiento', 'editar')
   async eliminarEvidenciaPersona(
     @Param('id', ParseIntPipe) solicitudId: number,
     @Param('sepId', ParseIntPipe) sepId: number,
@@ -1172,6 +1186,7 @@ export class SolicitudesController {
   }
 
   @Delete(':id/respuestas/archivo/:saId')
+  @SoloAutenticado()
   @UseGuards(JwtAuthGuard)
   async eliminarRespuestaArchivo(
     @Param('id', ParseIntPipe) solicitudId: number,
@@ -1201,6 +1216,7 @@ export class SolicitudesController {
   }
 
   @Post('respuestas')
+  @SoloAutenticado()
   async guardarRespuesta(@Req() req: ReqUsuario, @Body() dto: any) {
     await this.verificarDuenoSolicitud(Number(dto?.sa_sol_id), req);
     try {
@@ -1252,6 +1268,7 @@ export class SolicitudesController {
   }
 
   @Post('respuestas/archivo')
+  @SoloAutenticado()
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(FileInterceptor('archivo'))
   async guardarRespuestaArchivo(
@@ -1300,6 +1317,7 @@ export class SolicitudesController {
   // diligencia el formulario de nueva solicitud, en vez de volver a subir
   // un documento que ya tiene vigente de una aprobación anterior.
   @Post('respuestas/archivo/reutilizar')
+  @SoloAutenticado()
   @UseGuards(JwtAuthGuard)
   async reutilizarArchivoCliente(
     @Body() dto: { sa_sol_id: number; fp_id: number; ca_id: number },
@@ -1336,6 +1354,7 @@ export class SolicitudesController {
   }
 
   @Patch(':id/respuestas/documento/fecha')
+  @SoloAutenticado()
   @UseGuards(JwtAuthGuard)
   async actualizarFechaDocumento(
     @Param('id', ParseIntPipe) id: number,
@@ -1443,6 +1462,7 @@ export class SolicitudesController {
   }
 
   @Patch(':id/documentos-diferidos/verificar')
+  @SoloAutenticado()
   @UseGuards(JwtAuthGuard)
   async verificarDocumentosDiferidos(
     @Param('id', ParseIntPipe) id: number,
@@ -1741,7 +1761,11 @@ export class SolicitudesController {
     }
   }
 
+  // El permiso se valida dentro de deleteSolicitud porque depende de quién
+  // llama: CLIENTE solo la suya y en borrador; personal interno necesita
+  // "eliminar" en /solicitudes (PermissionsService.tienePermiso).
   @Delete(':id')
+  @SoloAutenticado()
   @UseGuards(JwtAuthGuard)
   async deleteSolicitud(
     @Param('id', ParseIntPipe) id: number,

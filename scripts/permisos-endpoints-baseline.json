@@ -61,122 +61,20 @@
   },
   {
     "archivo": "src/pqrs/pqrs.controller.ts",
-    "linea": 45,
-    "decorador": "@Post()",
-    "rutaParcial": ""
-  },
-  {
-    "archivo": "src/pqrs/pqrs.controller.ts",
-    "linea": 78,
-    "decorador": "@Post(':id/comentarios')",
-    "rutaParcial": ":id/comentarios"
-  },
-  {
-    "archivo": "src/pqrs/pqrs.controller.ts",
-    "linea": 100,
-    "decorador": "@Post(':id/adjuntos')",
-    "rutaParcial": ":id/adjuntos"
-  },
-  {
-    "archivo": "src/solicitudes/solicitudes.controller.ts",
-    "linea": 104,
+    "linea": 46,
     "decorador": "@Post()",
     "rutaParcial": ""
   },
   {
     "archivo": "src/solicitudes/solicitudes.controller.ts",
-    "linea": 943,
-    "decorador": "@Post(':id/soportes-analisis')",
-    "rutaParcial": ":id/soportes-analisis"
-  },
-  {
-    "archivo": "src/solicitudes/solicitudes.controller.ts",
-    "linea": 1000,
-    "decorador": "@Delete(':id/soportes-analisis/:ssaId')",
-    "rutaParcial": ":id/soportes-analisis/:ssaId"
-  },
-  {
-    "archivo": "src/solicitudes/solicitudes.controller.ts",
-    "linea": 1046,
-    "decorador": "@Post(':id/evidencias-persona')",
-    "rutaParcial": ":id/evidencias-persona"
-  },
-  {
-    "archivo": "src/solicitudes/solicitudes.controller.ts",
-    "linea": 1105,
-    "decorador": "@Delete(':id/evidencias-persona/:sepId')",
-    "rutaParcial": ":id/evidencias-persona/:sepId"
-  },
-  {
-    "archivo": "src/solicitudes/solicitudes.controller.ts",
-    "linea": 1151,
-    "decorador": "@Delete(':id/respuestas/archivo/:saId')",
-    "rutaParcial": ":id/respuestas/archivo/:saId"
-  },
-  {
-    "archivo": "src/solicitudes/solicitudes.controller.ts",
-    "linea": 1180,
-    "decorador": "@Post('respuestas')",
-    "rutaParcial": "respuestas"
-  },
-  {
-    "archivo": "src/solicitudes/solicitudes.controller.ts",
-    "linea": 1231,
-    "decorador": "@Post('respuestas/archivo')",
-    "rutaParcial": "respuestas/archivo"
-  },
-  {
-    "archivo": "src/solicitudes/solicitudes.controller.ts",
-    "linea": 1279,
-    "decorador": "@Post('respuestas/archivo/reutilizar')",
-    "rutaParcial": "respuestas/archivo/reutilizar"
-  },
-  {
-    "archivo": "src/solicitudes/solicitudes.controller.ts",
-    "linea": 1315,
-    "decorador": "@Patch(':id/respuestas/documento/fecha')",
-    "rutaParcial": ":id/respuestas/documento/fecha"
-  },
-  {
-    "archivo": "src/solicitudes/solicitudes.controller.ts",
-    "linea": 1420,
-    "decorador": "@Patch(':id/documentos-diferidos/verificar')",
-    "rutaParcial": ":id/documentos-diferidos/verificar"
-  },
-  {
-    "archivo": "src/solicitudes/solicitudes.controller.ts",
-    "linea": 1711,
-    "decorador": "@Delete(':id')",
-    "rutaParcial": ":id"
+    "linea": 111,
+    "decorador": "@Post()",
+    "rutaParcial": ""
   },
   {
     "archivo": "src/usuarios/usuario.controller.ts",
-    "linea": 102,
+    "linea": 97,
     "decorador": "@Patch('change-password')",
     "rutaParcial": "change-password"
-  },
-  {
-    "archivo": "src/usuarios/usuario.controller.ts",
-    "linea": 129,
-    "decorador": "@Post(':userId/centros')",
-    "rutaParcial": ":userId/centros"
-  },
-  {
-    "archivo": "src/usuarios/usuario.controller.ts",
-    "linea": 138,
-    "decorador": "@Post(':userId/centros/multiple')",
-    "rutaParcial": ":userId/centros/multiple"
-  },
-  {
-    "archivo": "src/usuarios/usuario.controller.ts",
-    "linea": 147,
-    "decorador": "@Patch(':userId/centros/default')",
-    "rutaParcial": ":userId/centros/default"
-  },
-  {
-    "archivo": "src/usuarios/usuario.controller.ts",
-    "linea": 156,
-    "decorador": "@Delete(':userId/centros/:centroId')",
-    "rutaParcial": ":userId/centros/:centroId"
   }
 ]

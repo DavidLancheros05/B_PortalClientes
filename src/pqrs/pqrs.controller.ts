@@ -16,6 +16,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RequierePermiso } from '../permissions/requiere-permiso.decorator';
+import { SoloAutenticado } from '../auth/solo-autenticado.decorator';
 import { PQRSService } from './pqrs.service';
 import { CreatePQRSDto, UpdatePQRSDto, CreateComentarioDto } from './dto';
 
@@ -79,6 +80,7 @@ export class PQRSController {
 
   @UseGuards(JwtAuthGuard)
   @Post(':id/comentarios')
+  @SoloAutenticado()
   async addComentario(
     @Param('id') id: number,
     @Body() createComentarioDto: CreateComentarioDto,
@@ -101,6 +103,7 @@ export class PQRSController {
 
   @UseGuards(JwtAuthGuard)
   @Post(':id/adjuntos')
+  @SoloAutenticado()
   @UseInterceptors(FileInterceptor('archivo'))
   async subirAdjunto(
     @Param('id', ParseIntPipe) id: number,
