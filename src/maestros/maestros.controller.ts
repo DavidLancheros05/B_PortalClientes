@@ -3,12 +3,10 @@ import {
   Get,
   Query,
   ParseIntPipe,
-  UseGuards,
   ForbiddenException,
 } from '@nestjs/common';
 import { MaestrosService } from './maestros.service';
-import { RolesGuard } from '../auth/roles.guard';
-import { Roles } from '../auth/roles.decorator';
+import { RequierePermiso } from '../permissions/requiere-permiso.decorator';
 
 @Controller('maestros')
 export class MaestrosController {
@@ -59,15 +57,16 @@ export class MaestrosController {
     return this.maestrosService.getCatalogoDocumentos(mode || 'options');
   }
 
-  // Navegador genérico de esquema de BD (lista bases/tablas/columnas y
-  // ejecuta SELECT arbitrarios vía getCatalogo). Confirmado que ningún
-  // GET /maestros/catalogo-esquema/page.tsx del frontend lo consume — es
-  // herramienta de debug huérfana, no una función de negocio (a diferencia
-  // de getCatalogo, que sí usa el formulario real para preguntas tipo
-  // catálogo). Ver documentacion/Portal Clientes/Login permisos/permisos-endpoints.md.
+  // Navegador genérico de esquema de BD (lista bases/tablas/columnas). Lo usa
+  // el editor de formularios (usePreguntaEditor.ts) para configurar
+  // preguntas tipo catálogo. El editor no tiene módulo propio: se abre desde
+  // Formularios, y Preguntas configura lo mismo. Ver
+  // documentacion/Portal Clientes/Login permisos/permisos-endpoints.md.
   @Get('catalogo-esquema')
-  @UseGuards(RolesGuard)
-  @Roles('ADMIN')
+  @RequierePermiso(
+    ['/parametrizacion/formularios', '/parametrizacion/formulario-preguntas'],
+    'editar',
+  )
   getCatalogoEsquema(
     @Query('mode') mode: 'databases' | 'tables' | 'columns' = 'databases',
     @Query('base_datos') baseDatos?: string,

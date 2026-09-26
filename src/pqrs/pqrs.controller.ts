@@ -43,9 +43,10 @@ export class PQRSController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @RequierePermiso('/pqrs/nueva', 'crear')
   @Post()
   async create(@Body() createPqrsDto: CreatePQRSDto, @Request() req) {
-    return this.pqrsService.create(createPqrsDto, req.user.usr_id);
+    return this.pqrsService.create(createPqrsDto, req.user);
   }
 
   @UseGuards(JwtAuthGuard)

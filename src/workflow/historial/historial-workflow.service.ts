@@ -89,6 +89,11 @@ export class HistorialWorkflowService {
    *
    * Debe llamarse con el queryRunner de la transacción ya abierta por el
    * caller (todos los sitios que cambian de etapa ya abren una).
+   *
+   * usuarioId: usr_id del interno que actúa, o null si actúa el cliente
+   * dueño de la solicitud (regla del portal: usuario NULL = el cliente; ver
+   * documentacion/Portal Clientes/Solicitudes/historial-workflow-pendientes.md).
+   * Nunca pasar null por "no sé quién fue": un interno siempre tiene usr_id.
    */
   async registrarTransicionConSLA(
     queryRunner: QueryRunner,
@@ -96,7 +101,7 @@ export class HistorialWorkflowService {
       solicitudId: number;
       etapaId: number;
       resultadoId: number;
-      usuarioId: number;
+      usuarioId: number | null;
       comentario?: string;
     },
   ): Promise<{ swh_id: number; fechaEstimada: Date | null }> {
@@ -129,7 +134,7 @@ export class HistorialWorkflowService {
       `
       INSERT INTO solicitud_workflow_historial
       (swh_sol_id, swh_etapa_id, swh_resultado_id, swh_usuario_id, swh_comentario, swh_fecha, swh_fecha_estimada)
-      VALUES (@0, @1, @2, @3, @4, GETDATE(), @5);
+      VALUES (@0, @1, @2, @3, @4, dbo.fn_ahora_colombia(), @5);
 
       SELECT SCOPE_IDENTITY() AS swh_id;
     `,
@@ -155,9 +160,11 @@ export class HistorialWorkflowService {
         `
       SELECT
         sol_fecha_creacion,
-        COALESCE(c.cli_razon_social COLLATE SQL_Latin1_General_CP1_CI_AS, 'Cliente') as cliente_nombre
+        -- Creó un interno a nombre del cliente (sol_usr_id_crea) o el cliente.
+        COALESCE(uc.usr_nombre, c.cli_razon_social COLLATE SQL_Latin1_General_CP1_CI_AS, 'Cliente') as creador_nombre
       FROM solicitudes s
       LEFT JOIN Clientes c ON s.sol_cli_id = c.cli_id
+      LEFT JOIN usuarios uc ON uc.usr_id = s.sol_usr_id_crea
       WHERE s.sol_id = @0
     `,
         [solicitudId],
@@ -197,20 +204,15 @@ export class HistorialWorkflowService {
         wr.wee_nombre as resultadoNombre,
         wr.wee_codigo as resultadoCodigo,
         u.usr_id as usuarioId,
-        COALESCE(u.usr_nombre, cli.cli_razon_social) as usuarioNombre,
-        COALESCE(u.usr_correo, cli.cli_correo) as usuarioCorreo
+        -- swh_usuario_id NULL = actuó el cliente dueño de la solicitud.
+        CASE WHEN swh.swh_usuario_id IS NULL THEN cli.cli_razon_social ELSE u.usr_nombre END as usuarioNombre,
+        CASE WHEN swh.swh_usuario_id IS NULL THEN cli.cli_correo ELSE u.usr_correo END as usuarioCorreo
       FROM solicitud_workflow_historial swh
       LEFT JOIN solicitudes s ON s.sol_id = swh.swh_sol_id
       LEFT JOIN workflow_etapas we ON swh.swh_etapa_id = we.wet_id
       LEFT JOIN workflow_estado_etapa wr ON swh.swh_resultado_id = wr.wee_id
-      -- swh_usuario_id mezcla dos espacios de IDs distintos: usr_id
-      -- (personal interno, tabla usuarios) cuando quien actúa es staff, o
-      -- cli_id (tabla Clientes) cuando quien actúa es el cliente mismo
-      -- (enviar formulario, subir documentos diferidos) — sin este segundo
-      -- JOIN, cualquier transición disparada por el cliente queda sin
-      -- nombre en el historial porque usr_id nunca matchea un cli_id.
       LEFT JOIN usuarios u ON swh.swh_usuario_id = u.usr_id
-      LEFT JOIN Clientes cli ON swh.swh_usuario_id = cli.cli_id
+      LEFT JOIN Clientes cli ON cli.cli_id = s.sol_cli_id
       WHERE swh.swh_sol_id = @0
       -- swh_id desempata filas con la misma swh_fecha: el frontend toma la
       -- ÚLTIMA fila como la etapa pendiente, así que el orden debe ser estable.
@@ -225,7 +227,7 @@ export class HistorialWorkflowService {
     // de CLI) y los campos de fecha estimada tienen la misma forma que las
     // filas reales.
     if (solicitud?.[0]?.sol_fecha_creacion) {
-      const clienteName = solicitud[0].cliente_nombre || 'Cliente';
+      const clienteName = solicitud[0].creador_nombre || 'Cliente';
       const etapaCreacion = {
         historialId: 0,
         solicitudId: solicitudId,

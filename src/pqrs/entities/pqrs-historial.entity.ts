@@ -26,9 +26,6 @@ export class PQRSHistorialEntity {
   @Column({ type: 'int', nullable: true })
   ph_usr_id: number;
 
-  @Column({ type: 'int', nullable: true })
-  ph_cliu_id: number;
-
   @Column({ type: 'varchar', length: 255, nullable: true })
   ph_accion: string;
 

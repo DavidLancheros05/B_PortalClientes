@@ -298,7 +298,7 @@ export class SolicitudesWorkflowService {
   async cambiarEstado(
     solicitudId: number,
     estadoId: number,
-    usuarioId: number | null = 1,
+    usuarioId: number | null,
   ) {
     const histCols = await this.resolveHistorialColumns();
     const queryRunner = this.dataSource.createQueryRunner();
@@ -426,7 +426,7 @@ export class SolicitudesWorkflowService {
       let updateSQL = `
         UPDATE solicitudes
         SET sol_ses_id = @0,
-            sol_updated_at = GETDATE(),
+            sol_updated_at = dbo.fn_ahora_colombia(),
             sol_usr_id_modifica = @1
       `;
       const params: any[] = [estadoId, usuarioId];
@@ -434,7 +434,7 @@ export class SolicitudesWorkflowService {
       if (estadoId === 2) {
         // Primera vez que entra a PENDIENTE = fecha real de envío. COALESCE
         // evita pisarla si el cliente es rechazado y reenvía después.
-        updateSQL += `, sol_fecha_envio = COALESCE(sol_fecha_envio, GETDATE())`;
+        updateSQL += `, sol_fecha_envio = COALESCE(sol_fecha_envio, dbo.fn_ahora_colombia())`;
       }
 
       if (etapaId !== null) {
@@ -460,21 +460,17 @@ export class SolicitudesWorkflowService {
 
       await queryRunner.query(updateSQL, params);
 
-      // A diferencia de sol_usr_id_modifica (nullable), tanto
-      // Solicitudes_estados_hist.seh_usr_id como
-      // solicitud_workflow_historial.swh_usuario_id son NOT NULL sin
-      // default — cuando quien actúa es un cliente (usuarioId=null, ver
-      // resolverUsuarioIdParaAuditoria en el controller) hace falta un
-      // valor real igual. Mismo fallback que ya usa
-      // SolicitudesService.crearSolicitud para este mismo caso
-      // ("body.usuario_crea || 1").
-      const usuarioIdParaHistorial = usuarioId ?? 1;
+      // seh_usr_id / swh_usuario_id NULL = actuó el cliente dueño de la
+      // solicitud (usuarioId=null, ver resolverUsuarioIdParaAuditoria en el
+      // controller). Antes se guardaba 1 y la acción quedaba a nombre del
+      // Administrador.
+      const usuarioIdParaHistorial = usuarioId;
 
       // Registrar en historial
       const historialSQL = `
         INSERT INTO Solicitudes_estados_hist
         (${histCols.solicitud_col}, ${histCols.estado_col}, ${histCols.usuario_col}, ${histCols.fecha_col})
-        VALUES (@0, @1, @2, GETDATE())
+        VALUES (@0, @1, @2, dbo.fn_ahora_colombia())
       `;
 
       await queryRunner.query(historialSQL, [
@@ -586,7 +582,7 @@ export class SolicitudesWorkflowService {
    */
   async verificarYAvanzarDocumentosPlantilla(
     solicitudId: number,
-    usuarioId: number | null = 1,
+    usuarioId: number | null,
   ) {
     const faltantes =
       await this.obtenerDocumentosDiferidosFaltantes(solicitudId);
@@ -653,7 +649,7 @@ export class SolicitudesWorkflowService {
         `UPDATE solicitudes
          SET sol_wet_id = @0, sol_wee_id = @1,
              sol_observacion_cliente = @2,
-             sol_usr_id_modifica = @3, sol_updated_at = GETDATE()
+             sol_usr_id_modifica = @3, sol_updated_at = dbo.fn_ahora_colombia()
          WHERE sol_id = @4`,
         [
           etapaEJN.wet_id,
@@ -664,16 +660,14 @@ export class SolicitudesWorkflowService {
         ],
       );
 
-      // solicitud_workflow_historial.swh_usuario_id es NOT NULL sin
-      // default, a diferencia de sol_usr_id_modifica (nullable) — mismo
-      // fallback que cambiarEstado.
+      // usuarioId null = el cliente dueño (ver cambiarEstado).
       await this.historialWorkflowService.registrarTransicionConSLA(
         queryRunner,
         {
           solicitudId,
           etapaId: etapaEJN.wet_id,
           resultadoId: resultadoPendiente.wee_id,
-          usuarioId: usuarioId ?? 1,
+          usuarioId,
           comentario:
             'Cliente subió los documentos firmados pendientes - Solicitud enviada a Ejecutivo de Negocios',
         },
@@ -702,6 +696,19 @@ export class SolicitudesWorkflowService {
     return { ok: true, avanzo: true, documentosDiferidosFaltantes: [] };
   }
 
+  // Flujos que solo ejecuta personal interno: sin usuario, fallar. En el
+  // historial NULL significa "actuó el cliente" (ver cambiarEstado), así que
+  // un usuario faltante no puede caer ahí en silencio (antes caía en 1, el
+  // Administrador).
+  private exigirUsuarioInterno(
+    usuarioId: number | null | undefined,
+    contexto: string,
+  ): asserts usuarioId is number {
+    if (!usuarioId) {
+      throw new Error(`${contexto}: falta el usuario interno que realiza la acción`);
+    }
+  }
+
   async aprobarRechazarSolicitud(
     solicitudId: number,
     aprobado: boolean,
@@ -710,6 +717,7 @@ export class SolicitudesWorkflowService {
     usuario_modifica?: number,
     documentosFaltantes?: number[],
   ) {
+    this.exigirUsuarioInterno(usuario_modifica, 'aprobarRechazarSolicitud');
     const histCols = await this.resolveHistorialColumns();
     const queryRunner = this.dataSource.createQueryRunner();
 
@@ -817,10 +825,10 @@ export class SolicitudesWorkflowService {
           sol_wet_id = ${etapaDestId},
           sol_wee_id = ${resultadoWorkflow.wee_id},
           sol_mrs_id = ${motivoValue},
-          sol_fecha_gest_asc = GETDATE(),
+          sol_fecha_gest_asc = dbo.fn_ahora_colombia(),
           sol_usr_id_modifica = ${usuarioModificaValue},
           sol_observacion_cliente = @0,
-          sol_updated_at = GETDATE()
+          sol_updated_at = dbo.fn_ahora_colombia()
         WHERE sol_id = ${solicitudId}
       `,
         [observacionCliente],
@@ -830,7 +838,7 @@ export class SolicitudesWorkflowService {
       await queryRunner.query(`
         INSERT INTO Solicitudes_estados_hist
         (${histCols.solicitud_col}, ${histCols.estado_col}, ${histCols.usuario_col}, ${histCols.fecha_col})
-        VALUES (${solicitudId}, ${estadoId}, ${usuarioModificaValue}, GETDATE())
+        VALUES (${solicitudId}, ${estadoId}, ${usuarioModificaValue}, dbo.fn_ahora_colombia())
       `);
 
       // Registrar transición en workflow historial (etapa ASC con su resultado)
@@ -840,7 +848,7 @@ export class SolicitudesWorkflowService {
           solicitudId,
           etapaId: etapaSAC.wet_id,
           resultadoId: resultadoWorkflow.wee_id,
-          usuarioId: usuario_modifica || 1,
+          usuarioId: usuario_modifica,
           comentario,
         },
       );
@@ -963,6 +971,7 @@ export class SolicitudesWorkflowService {
     usuario_modifica?: number,
     fecha_real_ejecutivo?: string,
   ) {
+    this.exigirUsuarioInterno(usuario_modifica, 'guardarGestionEjecutivo');
     try {
       const [solicitudActual] = await this.dataSource.query(
         `SELECT we.wet_codigo
@@ -1008,9 +1017,9 @@ export class SolicitudesWorkflowService {
         usuario_modifica,
         'Tu solicitud se encuentra en revisión.',
       ];
-      let updateSQL = `UPDATE solicitudes SET sol_consumo_mensual_proyectado = @0, sol_toneladas_proyectadas = @1, sol_observacion_ejn = @2, sol_ses_id = @3, sol_usr_id_modifica = @4, sol_updated_at = GETDATE(), sol_observacion_cliente = @5`;
+      let updateSQL = `UPDATE solicitudes SET sol_consumo_mensual_proyectado = @0, sol_toneladas_proyectadas = @1, sol_observacion_ejn = @2, sol_ses_id = @3, sol_usr_id_modifica = @4, sol_updated_at = dbo.fn_ahora_colombia(), sol_observacion_cliente = @5`;
 
-      updateSQL += `, sol_fecha_gest_ejn = GETDATE()`;
+      updateSQL += `, sol_fecha_gest_ejn = dbo.fn_ahora_colombia()`;
 
       updateSQL += ` WHERE sol_id = @${updateParams.length}`;
       updateParams.push(sa_sol_id);
@@ -1026,8 +1035,8 @@ export class SolicitudesWorkflowService {
       await this.dataSource.query(
         `INSERT INTO Solicitudes_estados_hist
          (${histCols.solicitud_col}, ${histCols.estado_col}, ${histCols.usuario_col}, ${histCols.fecha_col})
-         VALUES (@0, @1, @2, GETDATE())`,
-        [sa_sol_id, estadoRevisionId, usuario_modifica ?? 1],
+         VALUES (@0, @1, @2, dbo.fn_ahora_colombia())`,
+        [sa_sol_id, estadoRevisionId, usuario_modifica],
       );
 
       try {
@@ -1086,6 +1095,7 @@ export class SolicitudesWorkflowService {
       formaPago?: string;
     },
   ) {
+    this.exigirUsuarioInterno(usuario_modifica, 'guardarConceptoGenerico');
     console.log(
       `💾 [guardarConceptoGenerico] Solicitud ${sa_sol_id}, siguiente: ${etapa_codigo_siguiente}, aprobado: ${aprobado}`,
     );
@@ -1157,7 +1167,7 @@ export class SolicitudesWorkflowService {
       };
       const columnaFecha =
         (etapaActualCodigo && fechaColumna[etapaActualCodigo]
-          ? `, ${fechaColumna[etapaActualCodigo]} = GETDATE()`
+          ? `, ${fechaColumna[etapaActualCodigo]} = dbo.fn_ahora_colombia()`
           : '') +
         // A diferencia de sol_fecha_gest_cc2 (que se pisa
         // también en rechazo), esta solo se escribe cuando de verdad se
@@ -1165,7 +1175,7 @@ export class SolicitudesWorkflowService {
         // de Plantilla, en vez del new Date() que se usaba antes al armar
         // el PDF/correo.
         (aprobado && etapaActualCodigo === 'CC2'
-          ? `, sol_fecha_aprobacion = GETDATE()`
+          ? `, sol_fecha_aprobacion = dbo.fn_ahora_colombia()`
           : '');
 
       const params: any[] = [
@@ -1181,7 +1191,7 @@ export class SolicitudesWorkflowService {
         sol_wet_id = @1,
         sol_wee_id = @2,
         sol_usr_id_modifica = @3,
-        sol_updated_at = GETDATE(),
+        sol_updated_at = dbo.fn_ahora_colombia(),
         sol_observacion_cliente = @4
         ${columnaFecha}`;
 
@@ -1227,7 +1237,7 @@ export class SolicitudesWorkflowService {
             sol_wet_id = @1,
             sol_wee_id = @2,
             sol_usr_id_modifica = @3,
-            sol_updated_at = GETDATE(),
+            sol_updated_at = dbo.fn_ahora_colombia(),
             sol_observacion_cliente = @4
             ${columnaFecha}`;
 
@@ -1337,7 +1347,7 @@ export class SolicitudesWorkflowService {
       await queryRunner.query(
         `INSERT INTO Solicitudes_estados_hist
          (${histCols.solicitud_col}, ${histCols.estado_col}, ${histCols.usuario_col}, ${histCols.fecha_col})
-         VALUES (@0, @1, @2, GETDATE())`,
+         VALUES (@0, @1, @2, dbo.fn_ahora_colombia())`,
         [sa_sol_id, estadoId, usuario_modifica],
       );
 
@@ -1462,7 +1472,7 @@ export class SolicitudesWorkflowService {
     await this.dataSource.query(
       `UPDATE solicitudes
        SET sol_gestion_rechazo_finalizada = 1,
-           sol_fecha_gestion_rechazo = GETDATE(),
+           sol_fecha_gestion_rechazo = dbo.fn_ahora_colombia(),
            sol_usr_id_gest_rechazo = @0
        WHERE sol_id = @1`,
       [usuarioId, solicitudId],
@@ -1499,7 +1509,7 @@ export class SolicitudesWorkflowService {
       await db.query(
         `UPDATE Formulario_respuesta SET
            fr_valor_texto = @0, fr_valor_numero = @1, fr_valor_opcion_id = @2,
-           fr_actualizado_por = @3, fr_updated_at = GETDATE(), fr_completado = 1
+           fr_actualizado_por = @3, fr_updated_at = dbo.fn_ahora_colombia(), fr_completado = 1
          WHERE fr_id = @4`,
         [...params, existente.fr_id],
       );
@@ -1508,7 +1518,7 @@ export class SolicitudesWorkflowService {
         `INSERT INTO Formulario_respuesta
            (fr_sol_id, fr_fp_id, fr_valor_texto, fr_valor_numero,
             fr_valor_opcion_id, fr_actualizado_por, fr_completado, fr_created_at)
-         VALUES (@4, @5, @0, @1, @2, @3, 1, GETDATE())`,
+         VALUES (@4, @5, @0, @1, @2, @3, 1, dbo.fn_ahora_colombia())`,
         [...params, sa_sol_id, fp_id],
       );
     }
@@ -1734,8 +1744,8 @@ export class SolicitudesWorkflowService {
           sol_wet_id = @1,
           sol_wee_id = @2,
           sol_usr_id_modifica = @3,
-          sol_updated_at = GETDATE(),
-          sol_fecha_gest_cc1 = GETDATE(),
+          sol_updated_at = dbo.fn_ahora_colombia(),
+          sol_fecha_gest_cc1 = dbo.fn_ahora_colombia(),
           sol_observacion_cliente = @5
         WHERE sol_id = @4`,
         [
@@ -1792,80 +1802,6 @@ export class SolicitudesWorkflowService {
     }
   }
 
-  async actualizarEstadoFlujoAutomatico(
-    sa_sol_id: number,
-    estadoCodigo: string,
-    etapaCodigo: string,
-    resultadoCodigo: string,
-    usuario_modifica: number,
-  ) {
-    try {
-      const estadoResult =
-        await this.solicitudEstadosService.obtenerEstadoPorCodigo(estadoCodigo);
-      const [etapaResult] = await this.dataSource.query(
-        `SELECT wet_id FROM workflow_etapas WHERE wet_codigo = @0`,
-        [etapaCodigo],
-      );
-      const [resultadoResult] = await this.dataSource.query(
-        `SELECT wee_id FROM workflow_estado_etapa WHERE wee_codigo = @0`,
-        [resultadoCodigo],
-      );
-
-      if (!estadoResult || !etapaResult || !resultadoResult) {
-        throw new Error(
-          `No se encontraron configuraciones: estado=${estadoCodigo}, etapa=${etapaCodigo}, resultado=${resultadoCodigo}`,
-        );
-      }
-
-      return this.actualizarEstadoFlujo(
-        sa_sol_id,
-        estadoResult!.id,
-        etapaResult.wet_id,
-        resultadoResult.wee_id,
-        usuario_modifica,
-      );
-    } catch (error) {
-      console.error(`❌ [actualizarEstadoFlujoAutomatico] Error:`, error);
-      throw error;
-    }
-  }
-
-  async actualizarEstadoFlujo(
-    sa_sol_id: number,
-    estado_id: number,
-    etapa_actual_id: number,
-    resultado_etapa_id: number,
-    usuario_modifica: number,
-  ) {
-    try {
-      await this.dataSource.query(
-        `UPDATE solicitudes SET
-          sol_ses_id = @0,
-          sol_wet_id = @1,
-          sol_wee_id = @2,
-          sol_usr_id_modifica = @3,
-          sol_updated_at = GETDATE()
-         WHERE sol_id = @4`,
-        [
-          estado_id,
-          etapa_actual_id,
-          resultado_etapa_id,
-          usuario_modifica,
-          sa_sol_id,
-        ],
-      );
-
-      return {
-        success: true,
-        sa_sol_id,
-        mensaje: 'Estado de flujo actualizado exitosamente',
-      };
-    } catch (error) {
-      console.error(`❌ [actualizarEstadoFlujo] Error:`, error);
-      throw error;
-    }
-  }
-
   async obtenerWorkflowHistorial(solicitudId: number) {
     try {
       const historial =
@@ -1897,7 +1833,7 @@ export class SolicitudesWorkflowService {
 
   async reiniciarEdicionSolicitud(
     solicitudId: number,
-    usuarioId: number | null = 1,
+    usuarioId: number | null,
   ) {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -1943,7 +1879,7 @@ export class SolicitudesWorkflowService {
       if (archivosDiferidos.length > 0) {
         await queryRunner.query(
           `UPDATE Solicitud_archivo
-           SET sa_estado = 'inactivo', sa_updated_at = GETDATE()
+           SET sa_estado = 'inactivo', sa_updated_at = dbo.fn_ahora_colombia()
            WHERE sa_sol_id = @0
              AND sa_id IN (${archivosDiferidos.map((_: any, index: number) => `@${index + 1}`).join(', ')})`,
           [
@@ -1974,7 +1910,7 @@ export class SolicitudesWorkflowService {
              sol_wet_id = @1,
              sol_wee_id = @2,
              sol_usr_id_modifica = @3,
-             sol_updated_at = GETDATE(),
+             sol_updated_at = dbo.fn_ahora_colombia(),
              sol_observacion_cliente = @5
          WHERE sol_id = @4`,
         [2, etapaId, resultadoId, usuarioId, solicitudId, observacion],
@@ -1986,7 +1922,7 @@ export class SolicitudesWorkflowService {
           solicitudId,
           etapaId,
           resultadoId,
-          usuarioId: usuarioId ?? 1,
+          usuarioId,
           comentario:
             'Cliente editó la solicitud antes de revisión - Debe volver a firmar documentos',
         },
@@ -2030,7 +1966,7 @@ export class SolicitudesWorkflowService {
 
   async actualizarResultadoPendiente(
     solicitudId: number,
-    usuarioId: number | null = 1,
+    usuarioId: number | null,
   ) {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -2043,7 +1979,7 @@ export class SolicitudesWorkflowService {
              sol_wet_id = @1,
              sol_wee_id = @2,
              sol_usr_id_modifica = @3,
-             sol_updated_at = GETDATE(),
+             sol_updated_at = dbo.fn_ahora_colombia(),
              sol_observacion_cliente = @5
          WHERE sol_id = @4`,
         [
@@ -2065,7 +2001,7 @@ export class SolicitudesWorkflowService {
           solicitudId,
           etapaId: 3,
           resultadoId: 1,
-          usuarioId: usuarioId ?? 1,
+          usuarioId,
           comentario:
             'Solicitud corregida por cliente - Resultado actualizado a PENDIENTE',
         },
@@ -2259,7 +2195,7 @@ export class SolicitudesWorkflowService {
               sa_ruta_almacenamiento = @1,
               sa_tipo_mime = @2,
               sa_tamaño_bytes = @3,
-              sa_created_at = GETDATE()
+              sa_created_at = dbo.fn_ahora_colombia()
             WHERE sa_sol_id = @4 AND sa_origen = 'CARTA_VINCULACION'`,
             [
               nombreOriginal,

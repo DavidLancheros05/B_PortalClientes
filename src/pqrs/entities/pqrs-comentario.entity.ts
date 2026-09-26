@@ -9,7 +9,6 @@ import {
 } from 'typeorm';
 import { PQRSEntity } from './pqrs.entity';
 import { UsuarioEntity } from '../../usuarios/entities/usuario.entity';
-import { ClienteEntity } from '../../clientes/entities/clientes.entity';
 
 @Entity('pqrs_comentarios')
 export class PQRSComentarioEntity {
@@ -21,9 +20,6 @@ export class PQRSComentarioEntity {
 
   @Column({ type: 'int', nullable: true })
   pc_usr_id: number;
-
-  @Column({ type: 'int', nullable: true })
-  pc_cliu_id: number;
 
   @Column({ type: 'text' })
   pc_comentario: string;
@@ -48,7 +44,4 @@ export class PQRSComentarioEntity {
   @JoinColumn({ name: 'pc_usr_id' })
   usuario: UsuarioEntity;
 
-  @ManyToOne(() => ClienteEntity, { nullable: true })
-  @JoinColumn({ name: 'pc_cliu_id' })
-  cliente: ClienteEntity;
 }

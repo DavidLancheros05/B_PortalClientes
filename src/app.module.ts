@@ -103,6 +103,9 @@ const resolveDbConfig = () => {
           options: {
             encrypt: true,
             trustServerCertificate: true,
+            // Fechas en hora local del proceso (Colombia, ver main.ts), igual
+            // que Comercial. Con true el driver las escribe/lee como UTC.
+            useUTC: false,
           },
           pool: {
             // Conexiones simultáneas a la BD: es el techo de peticiones por

@@ -65,7 +65,24 @@ export class PQRSService {
     });
   }
 
-  async create(createPqrsDto: CreatePQRSDto, usuarioId: number) {
+  // En el JWT de un cliente usr_id vale el cli_id: nunca se escribe tal cual.
+  // Cliente → pqrs_cliu_id/pqrs_cli_id = su cliente_id (el body no puede
+  // elegir otro). Interno → la PQRS queda a nombre del cliente que mande el
+  // body (o de ninguno). Quién actúa (historial, comentarios, adjuntos):
+  // *_usr_id = el interno; NULL = el cliente dueño (pqrs_cliu_id). Misma
+  // regla que el historial de solicitudes.
+  async create(
+    createPqrsDto: CreatePQRSDto,
+    usuario: { rol?: string; usr_id?: number; cliente_id?: number | null },
+  ) {
+    const isCliente = usuario.rol === 'CLIENTE';
+    const clienteId = isCliente
+      ? usuario.cliente_id
+      : (createPqrsDto.pqrs_cli_id ?? null);
+    if (isCliente && !clienteId) {
+      throw new BadRequestException('Sesión de cliente sin cliente_id');
+    }
+
     // Validar que el tipo existe
     const tipo = await this.tipoRepository.findOne({
       where: { pt_id: createPqrsDto.pqrs_pt_id, pt_estado: true },
@@ -92,7 +109,8 @@ export class PQRSService {
       ...createPqrsDto,
       pqrs_numero: numero,
       pqrs_pe_id: estadoInicial.pe_id,
-      pqrs_cliu_id: usuarioId,
+      pqrs_cli_id: clienteId as number,
+      pqrs_cliu_id: clienteId as number,
     });
 
     const resultado = await this.pqrsRepository.save(pqrs);
@@ -101,7 +119,7 @@ export class PQRSService {
     await this.historialRepository.save({
       ph_pqrs_id: resultado.pqrs_id,
       ph_pe_nuevo_id: estadoInicial.pe_id,
-      ph_usr_id: usuarioId,
+      ...(isCliente ? {} : { ph_usr_id: usuario.usr_id }),
       ph_accion: 'CREAR',
       ph_comentario: 'PQRS creada',
     });
@@ -258,9 +276,8 @@ export class PQRSService {
 
     const comentario = this.comentarioRepository.create({
       pc_pqrs_id: pqrsId,
-      ...(isCliente
-        ? { pc_cliu_id: usuario.cliente_id }
-        : { pc_usr_id: usuario.usr_id }),
+      // pc_usr_id NULL = lo escribió el cliente dueño.
+      ...(isCliente ? {} : { pc_usr_id: usuario.usr_id }),
       ...dto,
     });
 
@@ -314,7 +331,6 @@ export class PQRSService {
           ph_pqrs_id: pqrsId,
           ph_pe_anterior_id: pqrs.pqrs_pe_id,
           ph_pe_nuevo_id: estadoEnRevision.pe_id,
-          ph_cliu_id: usuario.cliente_id,
           ph_accion: 'RESPUESTA_CLIENTE',
           ph_comentario: 'Cliente respondió, PQRS en revisión',
         });
@@ -347,13 +363,26 @@ export class PQRSService {
     pqrsId: number,
     usuario?: { rol?: string; cliente_id?: number },
   ) {
-    await this.getById(pqrsId, usuario);
+    const pqrs = await this.getById(pqrsId, usuario);
 
-    return this.comentarioRepository.find({
+    const comentarios = await this.comentarioRepository.find({
       where: { pc_pqrs_id: pqrsId },
-      relations: ['usuario', 'cliente'],
+      relations: ['usuario'],
       order: { pc_fecha: 'DESC' },
     });
+
+    // pc_usr_id NULL = lo escribió el cliente dueño: se devuelve como
+    // `cliente` (misma forma que antes, cuando salía de pc_cliu_id).
+    const [dueno] = pqrs.pqrs_cliu_id
+      ? await this.comentarioRepository.query(
+          `SELECT cli_id, cli_razon_social FROM Clientes WHERE cli_id = @0`,
+          [pqrs.pqrs_cliu_id],
+        )
+      : [];
+    return comentarios.map((c) => ({
+      ...c,
+      cliente: c.pc_usr_id ? null : (dueno ?? null),
+    }));
   }
 
   async subirAdjunto(
@@ -387,9 +416,7 @@ export class PQRSService {
 
     const adjunto = this.adjuntoRepository.create({
       pa_pqrs_id: pqrsId,
-      ...(isCliente
-        ? { pa_cliu_id: usuario.cliente_id }
-        : { pa_usr_id: usuario.usr_id }),
+      ...(isCliente ? {} : { pa_usr_id: usuario.usr_id }),
       pa_nombre_original: file.originalname,
       pa_nombre_guardado: nombreGuardado,
       pa_ruta: subida.url,
@@ -402,9 +429,7 @@ export class PQRSService {
 
     await this.historialRepository.save({
       ph_pqrs_id: pqrsId,
-      ...(isCliente
-        ? { ph_cliu_id: usuario.cliente_id }
-        : { ph_usr_id: usuario.usr_id }),
+      ...(isCliente ? {} : { ph_usr_id: usuario.usr_id }),
       ph_accion: 'ADJUNTO',
       ph_comentario: `Archivo adjuntado: ${file.originalname}`,
     });

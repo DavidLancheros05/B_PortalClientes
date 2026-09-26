@@ -22,10 +22,11 @@ export function esHashComercial(almacenada: string): boolean {
   return /^[0-9a-f]{64}$/i.test(almacenada);
 }
 
-// Compara contra cualquiera de los formatos que puede tener la columna:
-// SHA-256 del Comercial, bcrypt (`$2a$`/`$2b$`/`$2y$`, clientes) o texto
-// plano (cuentas viejas del portal, antes de cifrar — ver
-// autenticacion-y-seguridad-sesion.md, hallazgo #1).
+// Compara contra los dos formatos que puede tener la columna: SHA-256 del
+// Comercial (usuarios) o bcrypt (`$2a$`/`$2b$`/`$2y$`, clientes). Desde el
+// 2026-09-26 ya NO acepta texto plano: scripts/hash-passwords.mjs cifró las
+// cuentas viejas del portal. En un ambiente nuevo, correr ese script
+// (--apply) ANTES de desplegar este backend, o esas cuentas no entran.
 export async function passwordCoincide(
   passwordIngresada: string,
   almacenada: string | null | undefined,
@@ -40,7 +41,7 @@ export async function passwordCoincide(
       Buffer.from(almacenada.toLowerCase(), 'hex'),
     );
   }
-  return almacenada === passwordIngresada;
+  return false;
 }
 
 export async function hashPassword(password: string): Promise<string> {

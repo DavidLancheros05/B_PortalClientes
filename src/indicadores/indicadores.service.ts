@@ -622,7 +622,7 @@ export class IndicadoresService {
       JOIN solicitud_estados se ON se.ses_id = s.sol_ses_id
       WHERE se.ses_codigo != 'BORRADOR'
         AND s.sol_fecha_envio IS NOT NULL
-        AND s.sol_fecha_envio >= DATEADD(month, -6, GETDATE())
+        AND s.sol_fecha_envio >= DATEADD(month, -6, dbo.fn_ahora_colombia())
       GROUP BY FORMAT(s.sol_fecha_envio, 'yyyy-MM')
       ORDER BY mes
     `;

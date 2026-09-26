@@ -16,11 +16,14 @@ import {
   UpdateTipoConsecutivoDto,
 } from './dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { RolesGuard } from '../auth/roles.guard';
-import { Roles } from '../auth/roles.decorator';
+import { RequierePermiso } from '../permissions/requiere-permiso.decorator';
+
+// Rutas de pc_modulos de las dos pantallas (seguridad/consecutivos/...).
+const RUTA_CONSECUTIVOS = '/seguridad/consecutivos/consecutivos';
+const RUTA_TIPOS = '/seguridad/consecutivos/tipo-consecutivo';
 
 @Controller('consecutivos')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard)
 export class ConsecutivosController {
   constructor(private readonly consecutivosService: ConsecutivosService) {}
 
@@ -31,25 +34,25 @@ export class ConsecutivosController {
 
   // Tipo Consecutivo endpoints (ANTES de rutas genéricas)
   @Get('tipos/all')
-  @Roles('ADMIN', 'ADMINISTRACION')
+  @RequierePermiso(RUTA_TIPOS, 'ver')
   async findAllTipos() {
     return this.consecutivosService.findAllTipos();
   }
 
   @Get('tipos/:id')
-  @Roles('ADMIN', 'ADMINISTRACION')
+  @RequierePermiso(RUTA_TIPOS, 'ver')
   async findTipoById(@Param('id') id: number) {
     return this.consecutivosService.findTipoById(id);
   }
 
   @Post('tipos')
-  @Roles('ADMIN', 'ADMINISTRACION')
+  @RequierePermiso(RUTA_TIPOS, 'crear')
   async createTipo(@Body() dto: CreateTipoConsecutivoDto) {
     return this.consecutivosService.createTipo(dto);
   }
 
   @Put('tipos/:id')
-  @Roles('ADMIN', 'ADMINISTRACION')
+  @RequierePermiso(RUTA_TIPOS, 'editar')
   async updateTipo(
     @Param('id') id: number,
     @Body() dto: UpdateTipoConsecutivoDto,
@@ -58,38 +61,38 @@ export class ConsecutivosController {
   }
 
   @Delete('tipos/:id')
-  @Roles('ADMIN')
+  @RequierePermiso(RUTA_TIPOS, 'eliminar')
   async deleteTipo(@Param('id') id: number) {
     return this.consecutivosService.deleteTipo(id);
   }
 
   // Consecutivo endpoints (DESPUÉS de rutas específicas)
   @Get()
-  @Roles('ADMIN', 'ADMINISTRACION')
+  @RequierePermiso(RUTA_CONSECUTIVOS, 'ver')
   async findAll() {
     return this.consecutivosService.findAll();
   }
 
   @Get(':id')
-  @Roles('ADMIN', 'ADMINISTRACION')
+  @RequierePermiso(RUTA_CONSECUTIVOS, 'ver')
   async findById(@Param('id') id: number) {
     return this.consecutivosService.findById(id);
   }
 
   @Post()
-  @Roles('ADMIN', 'ADMINISTRACION')
+  @RequierePermiso(RUTA_CONSECUTIVOS, 'crear')
   async create(@Body() dto: CreateConsecutivoDto) {
     return this.consecutivosService.create(dto);
   }
 
   @Put(':id')
-  @Roles('ADMIN', 'ADMINISTRACION')
+  @RequierePermiso(RUTA_CONSECUTIVOS, 'editar')
   async update(@Param('id') id: number, @Body() dto: UpdateConsecutivoDto) {
     return this.consecutivosService.update(id, dto);
   }
 
   @Delete(':id')
-  @Roles('ADMIN')
+  @RequierePermiso(RUTA_CONSECUTIVOS, 'eliminar')
   async delete(@Param('id') id: number) {
     return this.consecutivosService.delete(id);
   }

@@ -106,15 +106,6 @@ export class PedidosService {
   }
 
   // Un ejecutivo solo consulta clientes de su cartera (Clientes.ejng_id).
-  async clientePerteneceAEjecutivo(
-    cliId: number,
-    ejngId: number,
-  ): Promise<boolean> {
-    return this.clienteRepo.exists({
-      where: { cli_id: cliId, ejng_id: ejngId },
-    });
-  }
-
   // Deja solo las columnas del cliente (CAMPOS_VISIBLES_CLIENTE).
   soloCamposCliente(
     pedidos: PedidoClienteResponseDto[],

@@ -14,6 +14,6 @@ export class ParamDiasRespuestaEntity {
   @Column('bit', { default: true })
   pdr_estado: boolean;
 
-  @Column('datetime2', { default: () => 'GETDATE()' })
+  @Column('datetime2', { default: () => 'dbo.fn_ahora_colombia()' })
   pdr_created_at: Date;
 }

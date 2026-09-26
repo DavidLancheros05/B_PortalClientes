@@ -120,8 +120,8 @@ export class FormulariosService {
         @0,
         @1,
         1,
-        SYSDATETIME(),
-        SYSDATETIME()
+        dbo.fn_ahora_colombia(),
+        dbo.fn_ahora_colombia()
       )
     `,
       [nombre, descripcion || null],
@@ -141,7 +141,7 @@ export class FormulariosService {
         @0,
         1,
         'Versión inicial',
-        SYSDATETIME()
+        dbo.fn_ahora_colombia()
       )
     `,
       [nuevoFormulario.frs_id],
@@ -440,7 +440,7 @@ export class FormulariosService {
         @0,
         @1,
         @2,
-        SYSDATETIME(),
+        dbo.fn_ahora_colombia(),
         @3
       )
     `;
@@ -544,7 +544,7 @@ export class FormulariosService {
       ];
       const valores: any[] = columnasACopiar.map((c) => pregunta[c]);
       const placeholders = valores.map((_, i) => `@${i}`);
-      placeholders.push(`@${valores.length}`, 'SYSDATETIME()');
+      placeholders.push(`@${valores.length}`, 'dbo.fn_ahora_colombia()');
       valores.push(versionNueva);
 
       const insertResult = await this.dataSource.query(

@@ -126,6 +126,9 @@ export class FormularioSeccionesService {
       `DELETE FROM Formulario_secciones OUTPUT DELETED.fs_id WHERE fs_id = @0`,
       [id],
     );
-    return result.length > 0;
+    // TypeORM (mssql) devuelve [filas, cantidad] cuando la consulta empieza
+    // con DELETE: result.length era siempre 2 y nunca daba "no encontrada".
+    const filas = Array.isArray(result[0]) ? result[0] : result;
+    return filas.length > 0;
   }
 }

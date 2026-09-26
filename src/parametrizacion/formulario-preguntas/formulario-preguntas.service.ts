@@ -324,7 +324,7 @@ export class FormularioPreguntasService {
   // "Preguntas protegidas": fp_codigo anclado a lógica hardcodeada en el
   // backend (flujo del portal) o al envío de datos a SIESA — ver
   // preguntas-protegidas.constant.ts y "Documentos Cartonera/
-  // documentacion/Funcionalidades/preguntas-protegidas-editor.md". Cambiar
+  // documentacion/Portal Clientes/Formularios/preguntas-protegidas-editor.md". Cambiar
   // el tipo de input, o eliminar la pregunta, rompe esa lógica sin aviso
   // (o, para las de SIESA, recién falla semanas después al intentar
   // activar la versión). El resto de campos (etiqueta, sección,

@@ -11,9 +11,19 @@ import {
   HttpException,
   HttpStatus,
   UseGuards,
+  Req,
 } from '@nestjs/common';
+import { Request } from 'express';
 import { FormulariosService } from './formularios.service';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
+import { RequierePermiso } from '../../permissions/requiere-permiso.decorator';
+
+// Pantallas que administran formularios y versiones (el editor no tiene
+// módulo propio: se abre desde Formularios). Hoy solo ADMIN tiene permiso.
+const RUTAS_FORMULARIOS = [
+  '/parametrizacion/formularios',
+  '/parametrizacion/formularios/nuevo',
+];
 
 interface CreateFormularioDto {
   formulario_nombre: string;
@@ -63,6 +73,7 @@ export class FormulariosController {
   }
 
   @Post()
+  @RequierePermiso(RUTAS_FORMULARIOS, 'crear')
   async crear(@Body() dto: CreateFormularioDto) {
     if (!dto.formulario_nombre || !dto.formulario_nombre.trim()) {
       throw new HttpException(
@@ -77,6 +88,7 @@ export class FormulariosController {
   }
 
   @Delete(':id')
+  @RequierePermiso(RUTAS_FORMULARIOS, 'eliminar')
   async eliminar(@Param('id', ParseIntPipe) id: number) {
     try {
       const eliminado = await this.formulariosService.eliminar(id);
@@ -106,6 +118,7 @@ export class FormulariosController {
   }
 
   @Patch(':id/activar-version')
+  @RequierePermiso(RUTAS_FORMULARIOS, 'editar')
   async activarVersion(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { versionNumero: number },
@@ -124,6 +137,7 @@ export class FormulariosController {
   }
 
   @Delete(':id/versiones/:versionNumero')
+  @RequierePermiso(RUTAS_FORMULARIOS, 'eliminar')
   async eliminarVersion(
     @Param('id', ParseIntPipe) id: number,
     @Param('versionNumero', ParseIntPipe) versionNumero: number,
@@ -139,17 +153,24 @@ export class FormulariosController {
   }
 
   @Post(':id/nueva-version')
+  @RequierePermiso(RUTAS_FORMULARIOS, 'crear')
   async crearNuevaVersion(
     @Param('id', ParseIntPipe) id: number,
     @Body()
     body: {
       descripcion?: string;
       copiarDeVersion?: number;
-      usuarioId?: number;
     },
+    @Req() req: Request & { user: { usr_id: number } },
   ) {
     try {
-      return await this.formulariosService.crearNuevaVersion(id, body);
+      // fv_created_by sale de la sesión: antes venía del body y el frontend
+      // mandaba siempre 1.
+      return await this.formulariosService.crearNuevaVersion(id, {
+        descripcion: body.descripcion,
+        copiarDeVersion: body.copiarDeVersion,
+        usuarioId: req.user.usr_id,
+      });
     } catch (error) {
       throw new HttpException(
         error instanceof Error ? error.message : 'Error al crear nueva versión',

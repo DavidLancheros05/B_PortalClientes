@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { UsuarioEntity } from './entities/usuario.entity';
 import { hashComercial, passwordCoincide } from '../common/utils/password.util';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
+import { invalidarSesionesCuenta } from '../auth/invalidar-sesiones';
 
 // Regla del Sistema Comercial (LoginController.Password): mínimo 5.
 const MIN_LONGITUD_PASSWORD = 5;
@@ -99,11 +100,11 @@ export class UsuarioService {
         u.usr_intentos_login AS usr_intentos_login,
         -- Bloqueo temporal vigente por intentos fallidos (solo informativo,
         -- se levanta solo — ver auth.service.ts / pc_bloqueo_login).
-        DATEDIFF(MINUTE, SYSDATETIME(), b.blq_bloqueado_hasta) AS usr_bloqueo_min_restantes
+        DATEDIFF(MINUTE, dbo.fn_ahora_colombia(), b.blq_bloqueado_hasta) AS usr_bloqueo_min_restantes
       FROM usuarios u
       LEFT JOIN dbo.pc_bloqueo_login b
         ON b.blq_tipo = 'usuario' AND b.blq_cuenta_id = u.usr_id
-       AND b.blq_bloqueado_hasta > SYSDATETIME()
+       AND b.blq_bloqueado_hasta > dbo.fn_ahora_colombia()
       ORDER BY u.usr_nombre ASC
     `);
 
@@ -180,7 +181,7 @@ export class UsuarioService {
 
     await this.usuarioRepository.query(
       `INSERT INTO pc_usuario_rol (ur_usuario_id, ur_rol_id, ur_activo, ur_created_at)
-       VALUES (@0, @1, 1, GETDATE())`,
+       VALUES (@0, @1, 1, dbo.fn_ahora_colombia())`,
       [saved.usr_id, dto.usuario_rol_id],
     );
 
@@ -244,6 +245,13 @@ export class UsuarioService {
     usuario.usr_fecha_usr = new Date();
 
     await this.usuarioRepository.save(usuario);
+
+    // Desactivarlo o cambiarle la contraseña cierra sus sesiones abiertas
+    // (antes la sesión vieja seguía viva hasta que venciera el token).
+    if (dto.usuario_activo === false || dto.usuario_password) {
+      await invalidarSesionesCuenta(this.usuarioRepository, 'usuario', usrId);
+    }
+
     return { message: 'Usuario actualizado exitosamente' };
   }
 

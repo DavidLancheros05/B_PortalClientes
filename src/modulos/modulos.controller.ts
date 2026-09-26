@@ -6,7 +6,6 @@ import {
   Put,
   Delete,
   Param,
-  Query,
   ParseIntPipe,
   UseGuards,
 } from '@nestjs/common';
@@ -24,14 +23,6 @@ export class ModulosController {
   @Get()
   async findAll() {
     return this.modulosService.findAll();
-  }
-
-  @Get('por-rol')
-  async findByRol(@Query('rol_id') rolId: string) {
-    if (!rolId) {
-      return { error: 'rol_id es requerido' };
-    }
-    return this.modulosService.findByRol(Number(rolId));
   }
 
   @Get(':id')

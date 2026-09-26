@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DataSource, QueryRunner } from 'typeorm';
+import { invalidarRolesValidos } from '../auth/roles-validos-cache';
 
 // Roles de los que depende la lógica del sistema (login, portal de
 // clientes): inactivarlos dejaría a todos sus usuarios sin acceso.
@@ -153,7 +154,7 @@ export class SeguridadService {
     await runner.query(
       `
         UPDATE pc_rol_modulo
-        SET rm_activo = 0, updated_at = SYSDATETIME()
+        SET rm_activo = 0, updated_at = dbo.fn_ahora_colombia()
         WHERE rm_rol_id = @0 AND rm_activo = 1
           AND rm_mod_id NOT IN (SELECT mod_id FROM OPENJSON(@1) ${esquemaJson})
       `,
@@ -168,10 +169,10 @@ export class SeguridadService {
         WHEN MATCHED THEN UPDATE SET
           rm_ver = origen.ver, rm_crear = origen.crear, rm_editar = origen.editar,
           rm_eliminar = origen.eliminar, rm_aprobar = origen.aprobar,
-          rm_activo = 1, updated_at = SYSDATETIME()
+          rm_activo = 1, updated_at = dbo.fn_ahora_colombia()
         WHEN NOT MATCHED THEN INSERT
           (rm_rol_id, rm_mod_id, rm_ver, rm_crear, rm_editar, rm_eliminar, rm_aprobar, rm_activo, rm_created_at)
-          VALUES (@0, origen.mod_id, origen.ver, origen.crear, origen.editar, origen.eliminar, origen.aprobar, 1, SYSDATETIME());
+          VALUES (@0, origen.mod_id, origen.ver, origen.crear, origen.editar, origen.eliminar, origen.aprobar, 1, dbo.fn_ahora_colombia());
       `,
       [rolId, filas],
     );
@@ -205,7 +206,7 @@ export class SeguridadService {
       throw new BadRequestException('El nombre y el código del rol son obligatorios');
     }
 
-    return this.enTransaccion(async (runner) => {
+    const resultado = await this.enTransaccion(async (runner) => {
       // pc_roles no tiene índice único sobre rol_codigo, y el código es lo
       // que usa la lógica del sistema para reconocer el rol.
       const [existente] = await runner.query(
@@ -220,7 +221,7 @@ export class SeguridadService {
         `
           INSERT INTO pc_roles (rol_nombre, rol_descripcion, rol_codigo, rol_activo, rol_created_at)
           OUTPUT INSERTED.*
-          VALUES (@0, @1, @2, 1, SYSDATETIME())
+          VALUES (@0, @1, @2, 1, dbo.fn_ahora_colombia())
         `,
         [nombre, descripcion || null, codigo],
       );
@@ -229,6 +230,9 @@ export class SeguridadService {
 
       return { message: 'Rol creado correctamente', rol: rolCreado };
     });
+    // JwtAuthGuard acepta solo roles activos de pc_roles (caché en memoria).
+    invalidarRolesValidos();
+    return resultado;
   }
 
   async actualizarRol(id: number, data: any) {
@@ -236,7 +240,7 @@ export class SeguridadService {
       await this.validarPuedeInactivar(id);
     }
 
-    return this.enTransaccion(async (runner) => {
+    const resultado = await this.enTransaccion(async (runner) => {
       // Cada campo solo se toca si vino en el body: un update de solo
       // permisos no debe borrar la descripción ni cambiar el estado.
       const traeDescripcion = data.rol_descripcion !== undefined;
@@ -253,7 +257,7 @@ export class SeguridadService {
           SET rol_nombre = COALESCE(@0, rol_nombre),
               rol_descripcion = CASE WHEN @3 = 1 THEN @1 ELSE rol_descripcion END,
               rol_activo = COALESCE(@4, rol_activo),
-              rol_updated_at = SYSDATETIME()
+              rol_updated_at = dbo.fn_ahora_colombia()
           WHERE rol_id = @2
         `,
         [
@@ -273,6 +277,8 @@ export class SeguridadService {
 
       return { message: 'Rol actualizado correctamente' };
     });
+    invalidarRolesValidos();
+    return resultado;
   }
 
   private async validarPuedeInactivar(id: number) {
@@ -307,11 +313,12 @@ export class SeguridadService {
     await this.dataSource.query(
       `
         UPDATE pc_roles
-        SET rol_activo = 0, rol_updated_at = SYSDATETIME()
+        SET rol_activo = 0, rol_updated_at = dbo.fn_ahora_colombia()
         WHERE rol_id = @0
       `,
       [id],
     );
+    invalidarRolesValidos();
 
     return { message: 'Rol inactivado' };
   }

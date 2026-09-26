@@ -19,15 +19,13 @@ import { RequierePermiso } from '../permissions/requiere-permiso.decorator';
 export class NotificacionesController {
   constructor(private readonly notificacionesService: NotificacionesService) {}
 
-  @UseGuards(RolesGuard)
-  @Roles('ADMIN')
+  @RequierePermiso('/parametrizacion/formato-envio-correos', 'ver')
   @Get('plantillas')
   async listarPlantillas() {
     return this.notificacionesService.listarPlantillas();
   }
 
-  @UseGuards(RolesGuard)
-  @Roles('ADMIN')
+  @RequierePermiso('/parametrizacion/formato-envio-correos', 'editar')
   @Put('plantillas/:codigo')
   async actualizarPlantilla(
     @Param('codigo') codigo: string,

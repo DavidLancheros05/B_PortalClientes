@@ -1,4 +1,8 @@
 // backend/src/main.ts
+// Hora Colombia fija en el código, no en el servidor (su zona es desconocida).
+// Va antes de cualquier import que cree fechas. Ver
+// documentacion/Portal Clientes/contexto general/manejo-fechas-zona-horaria.md.
+process.env.TZ = 'America/Bogota';
 import 'reflect-metadata';
 import { HttpAdapterHost, NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';

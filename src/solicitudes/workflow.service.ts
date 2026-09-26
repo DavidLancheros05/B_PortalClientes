@@ -116,7 +116,7 @@ export class WorkflowService {
         UPDATE solicitudes
         SET sol_wet_id = @0,
             sol_wee_id = @1,
-            sol_updated_at = GETDATE(),
+            sol_updated_at = dbo.fn_ahora_colombia(),
             sol_usr_id_modifica = @2
         WHERE sol_id = @3
       `,

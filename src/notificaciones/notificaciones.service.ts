@@ -47,7 +47,7 @@ export class NotificacionesService {
           destinatarios_to NVARCHAR(MAX) NULL,
           destinatarios_cc NVARCHAR(MAX) NULL,
           activa BIT NOT NULL DEFAULT 1,
-          updated_at DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+          updated_at DATETIME2 NOT NULL DEFAULT dbo.fn_ahora_colombia()
         );
       END
     `);
@@ -207,20 +207,19 @@ export class NotificacionesService {
   // Las columnas SQL `datetime`/`datetime2` llegan como objeto Date crudo
   // desde el driver — sin esto, {{variable}} en la plantilla queda como
   // "Fri Jul 24 2026 22:19:28 GMT-0500 (...)" (Date.toString() de JS).
-  // Las columnas `date` (sin hora real) llegan como medianoche UTC: se leen
-  // en UTC (no en hora de Bogotá) para no desfasarse un día, mismo criterio
-  // que ya usa business-days.util.ts para este mismo problema.
+  // Las columnas `date` (sin hora real) llegan como medianoche en hora local
+  // del proceso (Colombia, ver main.ts): esas se muestran sin hora.
   private formatearValorPlantilla(value: any): string {
     if (value === null || value === undefined) return '';
     if (value instanceof Date) {
       const esFechaSinHora =
-        value.getUTCHours() === 0 &&
-        value.getUTCMinutes() === 0 &&
-        value.getUTCSeconds() === 0 &&
-        value.getUTCMilliseconds() === 0;
+        value.getHours() === 0 &&
+        value.getMinutes() === 0 &&
+        value.getSeconds() === 0 &&
+        value.getMilliseconds() === 0;
 
       return new Intl.DateTimeFormat('es-CO', {
-        timeZone: esFechaSinHora ? 'UTC' : 'America/Bogota',
+        timeZone: 'America/Bogota',
         dateStyle: 'long',
         ...(esFechaSinHora ? {} : { timeStyle: 'short' }),
       }).format(value);
@@ -335,7 +334,7 @@ export class NotificacionesService {
             destinatarios_to = @4,
             destinatarios_cc = @5,
             activa = @6,
-            updated_at = SYSDATETIME()
+            updated_at = dbo.fn_ahora_colombia()
           WHERE codigo_evento = @0
         END
       `,
@@ -826,7 +825,7 @@ export class NotificacionesService {
         sa.sa_nombre_original,
         sa.sa_fecha_vencimiento,
         CASE
-          WHEN sa.sa_fecha_vencimiento < CAST(GETDATE() AS date) THEN 'VENCIDO'
+          WHEN sa.sa_fecha_vencimiento < CAST(dbo.fn_ahora_colombia() AS date) THEN 'VENCIDO'
           ELSE 'POR_VENCER'
         END AS estado
       FROM Solicitud_archivo sa
@@ -835,8 +834,8 @@ export class NotificacionesService {
       WHERE sa.sa_fecha_vencimiento IS NOT NULL
         AND sa.sa_estado = 'activo'
         AND (
-          sa.sa_fecha_vencimiento < CAST(GETDATE() AS date)
-          OR sa.sa_fecha_vencimiento <= DATEADD(day, 7, CAST(GETDATE() AS date))
+          sa.sa_fecha_vencimiento < CAST(dbo.fn_ahora_colombia() AS date)
+          OR sa.sa_fecha_vencimiento <= DATEADD(day, 7, CAST(dbo.fn_ahora_colombia() AS date))
         )
       ORDER BY sa.sa_fecha_vencimiento ASC
     `);
@@ -860,7 +859,7 @@ export class NotificacionesService {
       .join('');
 
     await this.enviarConPlantilla('DOCUMENTOS_VENCIDOS_SEMANAL', {
-      fecha_reporte: new Date().toISOString().slice(0, 10),
+      fecha_reporte: new Date().toLocaleDateString('en-CA'),
       total_vencidos: vencidos.length,
       total_por_vencer: porVencer.length,
       tabla_resumen: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><thead><tr style="background-color:#eef4ff;"><th style="${cabecera}">Solicitud</th><th style="${cabecera}">Cliente</th><th style="${cabecera}">Documento</th><th style="${cabecera}">Vence</th><th style="${cabecera}">Estado</th></tr></thead><tbody>${tabla}</tbody></table>`,

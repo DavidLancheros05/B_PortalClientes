@@ -13,21 +13,11 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { IS_PUBLIC_KEY } from './public.decorator';
 import { guardarVersion, versionEnCache } from './version-sesion-cache';
-
-// Roles válidos para acceder a la API. Un JWT con firma correcta pero un rol
-// fuera de esta lista se rechaza igual (ver también proxy.ts en el
-// frontend, que aplica la misma whitelist en el edge).
-const ROLES_PERMITIDOS = [
-  'CLIENTE',
-  'EJECUTIVO',
-  'COMERCIAL',
-  'ADMINISTRACION',
-  'ADMIN',
-  'ASC',
-  'OC',
-  'CC1',
-  'CC2',
-];
+import {
+  guardarRolesValidos,
+  normalizarCodigoRol,
+  rolesValidosEnCache,
+} from './roles-validos-cache';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -78,7 +68,10 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException('Token inválido');
     }
 
-    if (!ROLES_PERMITIDOS.includes(payload.rol)) {
+    // Un JWT con firma correcta pero con un rol que no está activo en
+    // pc_roles se rechaza igual (ej. 'USUARIO': interno sin rol del portal,
+    // o un rol inactivado después de iniciar sesión).
+    if (!(await this.rolEsValido(payload.rol))) {
       this.logger.warn(`Rol no válido en token: ${payload.rol}`);
       throw new UnauthorizedException('Rol no válido');
     }
@@ -94,6 +87,21 @@ export class JwtAuthGuard implements CanActivate {
 
     request.user = payload;
     return true;
+  }
+
+  // Roles válidos = pc_roles activos (no una lista en el código): un rol
+  // creado desde Seguridad → Roles entra sin desplegar nada.
+  private async rolEsValido(rol: unknown): Promise<boolean> {
+    const codigo = normalizarCodigoRol(rol);
+    if (!codigo) return false;
+    let codigos = rolesValidosEnCache();
+    if (!codigos) {
+      const rows = await this.dataSource.query(
+        `SELECT rol_codigo FROM dbo.pc_roles WHERE rol_activo = 1`,
+      );
+      codigos = guardarRolesValidos(rows.map((r: any) => r.rol_codigo));
+    }
+    return codigos.has(codigo);
   }
 
   private async esVersionVigente(payload: any): Promise<boolean> {

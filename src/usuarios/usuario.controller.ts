@@ -16,6 +16,7 @@ import {
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RequierePermiso } from '../permissions/requiere-permiso.decorator';
+import { SoloAutenticado } from '../auth/solo-autenticado.decorator';
 import { UsuarioService } from './usuario.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import type { Request } from 'express';
@@ -98,6 +99,8 @@ export class UsuarioController {
     return this.usersService.getEjecutivos();
   }
 
+  // Autoservicio: cada interno cambia la suya (rechaza clientes abajo).
+  @SoloAutenticado()
   @Patch('change-password')
   async changePassword(
     @Body() dto: ChangePasswordDto,

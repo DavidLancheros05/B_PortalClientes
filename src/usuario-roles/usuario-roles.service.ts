@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { UsuarioRolEntity } from './entities/usuario-rol.entity';
 import { UsuarioEntity } from '../usuarios/entities/usuario.entity';
 import { RoleEntity } from '../seguridad/entities/role.entity';
+import { invalidarSesionesCuenta } from '../auth/invalidar-sesiones';
 
 @Injectable()
 export class UsuarioRolesService {
@@ -113,6 +114,14 @@ export class UsuarioRolesService {
     usuarioRol.ur_activo = false;
     usuarioRol.ur_updated_at = new Date();
     await this.usuarioRolRepository.save(usuarioRol);
+
+    // Su JWT lleva el rol quitado: sin cerrar la sesión seguiría entrando
+    // con él hasta que el token venza.
+    await invalidarSesionesCuenta(
+      this.usuarioRolRepository,
+      'usuario',
+      usuarioId,
+    );
 
     return { message: 'Rol removido correctamente' };
   }

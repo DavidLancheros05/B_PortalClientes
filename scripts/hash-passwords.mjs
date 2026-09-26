@@ -11,13 +11,11 @@
  * acceso-cliente-al-aprobar-comercial.md.
  *
  * Es IDEMPOTENTE: salta los valores que ya están cifrados (hex de 64 = SHA-256
- * del Comercial; `$2a/**
- * hash-passwords.mjs
-/`$2b/**
- * hash-passwords.mjs
-/`$2y/**
- * hash-passwords.mjs
- = bcrypt), así que no doble-cifra.
+ * del Comercial; `$2a$`/`$2b$`/`$2y$` = bcrypt), así que no doble-cifra.
+ *
+ * Desde 2026-09-26 el login ya no acepta texto plano (password.util.ts): en
+ * un ambiente nuevo hay que correr este script ANTES de desplegar ese backend.
+ * Corrido en DEV el 2026-09-26 (8 usuarios, 4 clientes).
  * Ojo: antes trataba los 64 hex del Comercial como texto plano y los habría
  * cifrado encima, dejando a esos usuarios sin acceso a ambos sistemas.
  *

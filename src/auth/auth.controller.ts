@@ -8,6 +8,7 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { MenuPositionDto } from './dto/menu-position.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { Public } from './public.decorator';
+import { SoloAutenticado } from './solo-autenticado.decorator';
 
 interface AuthRequest extends Request {
   user: { usr_id: number; tipo: 'cliente' | 'usuario' };
@@ -121,6 +122,7 @@ export class AuthController {
   // AuthService.invalidarSesiones. El logout del frontend debe llamar
   // esto antes de limpiar localStorage/cookies, no solo limpiarlas.
   @UseGuards(JwtAuthGuard)
+  @SoloAutenticado()
   @Post('logout')
   async logout(
     @Req() req: AuthRequest,
@@ -148,6 +150,7 @@ export class AuthController {
   // dispositivo (antes vivía solo en localStorage, ver
   // FRONTEND/src/hooks/useMenuPosition.ts).
   @UseGuards(JwtAuthGuard)
+  @SoloAutenticado()
   @Patch('menu-position')
   async actualizarPosicionMenu(
     @Req() req: AuthRequest,

@@ -2,7 +2,6 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { SolicitudListadoGestionDto } from './dto/solicitud-listado-gestion.response.dto';
 import { SolicitudClienteDto } from './dto/solicitud-cliente.response.dto';
-import { SolicitudPendienteDto } from './dto/solicitud-pendiente.response.dto';
 
 @Injectable()
 export class SolicitudesListadosService {
@@ -251,27 +250,6 @@ export class SolicitudesListadosService {
     sql += ` ORDER BY s.sol_fecha_creacion DESC`;
 
     return await this.dataSource.query(sql, params);
-  }
-
-  async getSolicitudesPendientes(): Promise<SolicitudPendienteDto[]> {
-    const sql = `
-    SELECT
-      s.sol_id AS [sol_id],
-      s.sol_numero AS [sol_numero],
-      s.sol_cli_id AS [sol_cli_id],
-      c.cli_razon_social AS [cliente_nombre],
-      s.sol_ses_id AS [sol_ses_id],
-      e.descripcion AS [estado_descripcion],
-      s.sol_fecha_creacion AS [sol_fecha_creacion],
-      s.sol_wet_id AS [sol_wet_id],
-      s.sol_wee_id AS [sol_wee_id]
-    FROM solicitudes s
-    LEFT JOIN clientes c ON s.sol_cli_id = c.cli_id
-    LEFT JOIN solicitud_estados e ON e.est_id = s.sol_ses_id
-    WHERE s.sol_ses_id = 2
-    ORDER BY s.sol_fecha_creacion DESC
-  `;
-    return await this.dataSource.query(sql);
   }
 
   async getSolicitudesPendientesPorEjecutivoId(

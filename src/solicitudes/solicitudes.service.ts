@@ -45,6 +45,19 @@ export class SolicitudesService {
     return result.length > 0;
   }
 
+  // null si la solicitud no existe.
+  async solicitudEsDelEjecutivo(
+    solicitudId: number,
+    ejngId: number,
+  ): Promise<boolean | null> {
+    const [row] = await this.dataSource.query(
+      `SELECT sol_ejng_id FROM solicitudes WHERE sol_id = @0`,
+      [solicitudId],
+    );
+    if (!row) return null;
+    return Number(row.sol_ejng_id) === Number(ejngId);
+  }
+
   // El esquema no cambia en caliente (solo con una migración + redeploy), así
   // que esta introspección solo necesita correr una vez por proceso en vez
   // de en cada crearSolicitud().
@@ -327,11 +340,11 @@ export class SolicitudesService {
       const historialSQL = `
         INSERT INTO Solicitudes_estados_hist
         (${histCols.solicitud_col}, ${histCols.estado_col}, ${histCols.usuario_col}, ${histCols.fecha_col})
-        VALUES (@0, @1, @2, GETDATE())
+        VALUES (@0, @1, @2, dbo.fn_ahora_colombia())
       `;
-      // seh_usr_id / swh_usuario_id son NOT NULL: cuando crea un cliente
-      // (usuario_crea = null) se usa 1, igual que cambiarEstado().
-      const usuarioHistorial = body.usuario_crea ?? 1;
+      // seh_usr_id / swh_usuario_id NULL = la creó el cliente dueño
+      // (usuario_crea = null). Antes se guardaba 1 (Administrador).
+      const usuarioHistorial = body.usuario_crea ?? null;
       await queryRunner.query(historialSQL, [
         solicitudId,
         estadoId,
@@ -528,10 +541,9 @@ export class SolicitudesService {
     const revisionesDocumento = revisionesRows.map((r: any) => ({
       revision: r.tdr_revision,
       descripcionCambio: r.tdr_descripcion_cambio,
-      // Columna `date`: llega como medianoche UTC, formatear en UTC o se
-      // corre un día si el proceso no corre en UTC.
+      // Columna `date`: llega como medianoche en hora Colombia (ver main.ts).
       fecha: new Date(r.tdr_fecha).toLocaleDateString('es-CO', {
-        timeZone: 'UTC',
+        timeZone: 'America/Bogota',
         year: 'numeric',
         month: 'long',
         day: 'numeric',

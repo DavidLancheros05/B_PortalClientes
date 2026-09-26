@@ -9,7 +9,7 @@ export function nombreGuardadoArchivo(
   numeroSolicitud: string | number,
   nombreOriginal: string,
 ): string {
-  const fechaTexto = fecha.toISOString().slice(0, 10).replace(/-/g, '');
+  const fechaTexto = fecha.toLocaleDateString('en-CA').replace(/-/g, '');
   const horaTexto = fecha.toTimeString().slice(0, 8).replace(/:/g, '');
   const nombreLimpio = nombreOriginal
     .replace(/[\\/:*?"<>|]/g, '-')

@@ -130,7 +130,7 @@ export class ClienteArchivoService {
            ca_ruta_almacenamiento = origen.ruta, ca_tipo_mime = origen.mime,
            ca_fecha_emision = origen.emision, ca_fecha_vencimiento = origen.vencimiento,
            ca_id_almacenamiento = origen.id_alm, ca_resource_type = origen.resource_type,
-           ca_created_at = GETDATE()
+           ca_created_at = dbo.fn_ahora_colombia()
          WHEN NOT MATCHED THEN INSERT
            (ca_cli_id, ca_tdo_id, ca_sa_id, ca_nombre_original, ca_ruta_almacenamiento,
             ca_tipo_mime, ca_fecha_emision, ca_fecha_vencimiento,
@@ -224,7 +224,7 @@ export class ClienteArchivoService {
           sa_ruta_almacenamiento, sa_cargado_por, sa_estado, sa_id_almacenamiento,
           sa_resource_type, sa_created_at, sa_fecha_emision, sa_fecha_vencimiento)
        OUTPUT INSERTED.sa_id
-       VALUES (@0, @1, @2, @3, @4, @5, @6, 'activo', @7, @8, GETDATE(), @9, @10)`,
+       VALUES (@0, @1, @2, @3, @4, @5, @6, 'activo', @7, @8, dbo.fn_ahora_colombia(), @9, @10)`,
       [
         solicitudId,
         fpId,
@@ -271,21 +271,16 @@ export class ClienteArchivoService {
 
     if (!filas || filas.length === 0) return true;
 
-    // ca_fecha_vencimiento es `date`: llega como medianoche UTC. Se compara
-    // contra el día de hoy también en UTC; con setHours (hora local) un
-    // proceso en UTC-5 corría el corte un día (ver business-days.util.ts).
-    // Sin fecha de vencimiento = documento que no vence.
-    const ahora = new Date();
-    const hoyUtc = Date.UTC(
-      ahora.getUTCFullYear(),
-      ahora.getUTCMonth(),
-      ahora.getUTCDate(),
-    );
+    // ca_fecha_vencimiento es `date`: llega como medianoche en hora local del
+    // proceso (Colombia, ver main.ts). Se compara contra la medianoche de hoy
+    // en Colombia. Sin fecha de vencimiento = documento que no vence.
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
 
     return filas.some(
       (f: any) =>
         f.ca_fecha_vencimiento &&
-        new Date(f.ca_fecha_vencimiento).getTime() < hoyUtc,
+        new Date(f.ca_fecha_vencimiento).getTime() < hoy.getTime(),
     );
   }
 }

@@ -13,6 +13,14 @@ import {
 } from '@nestjs/common';
 import { FormularioSeccionesService } from './formulario-secciones.service';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
+import { RequierePermiso } from '../../permissions/requiere-permiso.decorator';
+
+// Secciones: su propia pantalla y el editor de formularios (que se abre
+// desde Formularios). Hoy solo ADMIN tiene permiso.
+const RUTAS_SECCIONES = [
+  '/parametrizacion/formulario-secciones',
+  '/parametrizacion/formularios',
+];
 
 interface CreateSeccionDto {
   seccion_nombre: string;
@@ -42,6 +50,7 @@ export class FormularioSeccionesController {
   }
 
   @Post()
+  @RequierePermiso(RUTAS_SECCIONES, 'crear')
   async crear(@Body() dto: CreateSeccionDto) {
     if (!dto.seccion_nombre || !dto.seccion_nombre.trim()) {
       throw new HttpException(
@@ -59,6 +68,7 @@ export class FormularioSeccionesController {
   }
 
   @Put(':id')
+  @RequierePermiso(RUTAS_SECCIONES, 'editar')
   async actualizar(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateSeccionDto,
@@ -67,6 +77,7 @@ export class FormularioSeccionesController {
   }
 
   @Delete(':id')
+  @RequierePermiso(RUTAS_SECCIONES, 'eliminar')
   async eliminar(@Param('id', ParseIntPipe) id: number) {
     const eliminado = await this.formularioSeccionesService.eliminar(id);
     if (!eliminado) {

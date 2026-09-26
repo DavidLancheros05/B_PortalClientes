@@ -12,7 +12,7 @@ import {
   hashPassword,
   passwordCoincide,
 } from '../common/utils/password.util';
-import { olvidarVersion } from './version-sesion-cache';
+import { invalidarSesionesCuenta } from './invalidar-sesiones';
 
 // Minutos mínimos entre dos correos de recuperación para la misma cuenta.
 const RESET_ESPERA_MIN = 2;
@@ -32,8 +32,8 @@ export class AuthService {
 
   // ── Bloqueo temporal por intentos fallidos ──────────────────────────────
   // Ver documentacion/Portal Clientes/Login permisos/bloqueo-temporal-login.md.
-  // blq_bloqueado_hasta se calcula y compara siempre con SYSDATETIME() del
-  // servidor SQL (mismo reloj en ambos lados).
+  // blq_bloqueado_hasta se calcula y compara siempre con
+  // dbo.fn_ahora_colombia() (mismo reloj en ambos lados).
 
   private maxIntentosLogin(): number {
     return Math.max(
@@ -79,10 +79,10 @@ export class AuthService {
     cuentaId: number,
   ): Promise<number | null> {
     const rows = await this.sistemaComercialDb.query(
-      `SELECT DATEDIFF(SECOND, SYSDATETIME(), blq_bloqueado_hasta) AS segundos
+      `SELECT DATEDIFF(SECOND, dbo.fn_ahora_colombia(), blq_bloqueado_hasta) AS segundos
        FROM dbo.pc_bloqueo_login
        WHERE blq_tipo = @0 AND blq_cuenta_id = @1
-         AND blq_bloqueado_hasta > SYSDATETIME()`,
+         AND blq_bloqueado_hasta > dbo.fn_ahora_colombia()`,
       [tipo, cuentaId],
     );
     return rows?.[0]
@@ -107,7 +107,7 @@ export class AuthService {
       const [previo] = await qr.query(
         `SELECT CASE
                   WHEN blq_bloqueado_hasta IS NULL
-                    OR blq_bloqueado_hasta < DATEADD(HOUR, -24, SYSDATETIME())
+                    OR blq_bloqueado_hasta < DATEADD(HOUR, -24, dbo.fn_ahora_colombia())
                   THEN 0 ELSE blq_nivel
                 END AS nivel
          FROM dbo.pc_bloqueo_login WITH (UPDLOCK, HOLDLOCK)
@@ -120,11 +120,11 @@ export class AuthService {
       await qr.query(
         previo
           ? `UPDATE dbo.pc_bloqueo_login
-             SET blq_nivel = @2, blq_bloqueado_hasta = DATEADD(MINUTE, @3, SYSDATETIME())
+             SET blq_nivel = @2, blq_bloqueado_hasta = DATEADD(MINUTE, @3, dbo.fn_ahora_colombia())
              WHERE blq_tipo = @0 AND blq_cuenta_id = @1`
           : `INSERT INTO dbo.pc_bloqueo_login
                (blq_tipo, blq_cuenta_id, blq_nivel, blq_bloqueado_hasta)
-             VALUES (@0, @1, @2, DATEADD(MINUTE, @3, SYSDATETIME()))`,
+             VALUES (@0, @1, @2, DATEADD(MINUTE, @3, dbo.fn_ahora_colombia()))`,
         [tipo, cuentaId, nivel + 1, minutos],
       );
       await qr.commitTransaction();
@@ -233,7 +233,7 @@ export class AuthService {
       const rows = await this.sistemaComercialDb.query(
         `SELECT cli_id, cli_correo, cli_razon_social FROM clientes
          WHERE cli_nro_identificacion = @0 AND cli_acceso_pc = 1
-           AND cli_estado = 'A'`,
+           AND cli_estado = 'A' AND cli_estado_aprobacion = 'A'`,
         [identifier],
       );
       const row = rows?.[0];
@@ -268,10 +268,10 @@ export class AuthService {
       .update(tokenCrudo)
       .digest('hex');
     // La expiración (1 hora) se calcula con el MISMO reloj con el que la
-    // valida resetPassword (SYSDATETIME() del servidor SQL). Antes se
+    // valida resetPassword (dbo.fn_ahora_colombia()). Antes se
     // calculaba en Node (el driver la escribe en UTC) y se comparaba contra
     // el reloj del servidor: según su zona horaria el link duraba 3-8 horas
-    // o nacía vencido. Ver documentacion/manejo-fechas-zona-horaria.md.
+    // o nacía vencido. Ver documentacion/Portal Clientes/contexto general/manejo-fechas-zona-horaria.md.
     //
     // Límite de frecuencia: el endpoint es público y cada llamada manda un
     // correo, así que con solo el NIT se le podía llenar el buzón a un
@@ -287,7 +287,7 @@ export class AuthService {
        IF EXISTS (
          SELECT 1 FROM dbo.param_reset_password_tokens WITH (UPDLOCK, HOLDLOCK)
          WHERE rpt_tipo = @0 AND rpt_usr_id = @1 AND rpt_usado = 0
-           AND rpt_expira_en > DATEADD(MINUTE, 60 - @3, SYSDATETIME())
+           AND rpt_expira_en > DATEADD(MINUTE, 60 - @3, dbo.fn_ahora_colombia())
        )
        BEGIN
          COMMIT TRANSACTION;
@@ -298,10 +298,10 @@ export class AuthService {
          DELETE FROM dbo.param_reset_password_tokens
          WHERE (rpt_tipo = @0 AND rpt_usr_id = @1)
             OR rpt_usado = 1
-            OR rpt_expira_en <= SYSDATETIME();
+            OR rpt_expira_en <= dbo.fn_ahora_colombia();
          INSERT INTO dbo.param_reset_password_tokens
            (rpt_tipo, rpt_usr_id, rpt_token_hash, rpt_expira_en)
-         VALUES (@0, @1, @2, DATEADD(HOUR, 1, SYSDATETIME()));
+         VALUES (@0, @1, @2, DATEADD(HOUR, 1, dbo.fn_ahora_colombia()));
          COMMIT TRANSACTION;
          SELECT CAST(1 AS BIT) AS creado;
        END`,
@@ -343,13 +343,13 @@ export class AuthService {
     // Marcar como usado y leerlo en UNA sola sentencia: antes era SELECT y
     // después UPDATE, y dos peticiones simultáneas con el mismo link pasaban
     // las dos. Ahora solo una logra el UPDATE (rpt_usado = 0 en el WHERE).
-    // SYSDATETIME() debe ser el mismo reloj con el que se calculó
+    // dbo.fn_ahora_colombia() debe ser el mismo reloj con el que se calculó
     // rpt_expira_en al crear el token (ver arriba).
     const rows = await this.sistemaComercialDb.query(
       `UPDATE dbo.param_reset_password_tokens
        SET rpt_usado = 1
        OUTPUT INSERTED.rpt_id, INSERTED.rpt_tipo, INSERTED.rpt_usr_id
-       WHERE rpt_token_hash = @0 AND rpt_usado = 0 AND rpt_expira_en > SYSDATETIME()`,
+       WHERE rpt_token_hash = @0 AND rpt_usado = 0 AND rpt_expira_en > dbo.fn_ahora_colombia()`,
       [tokenHash],
     );
     const row = rows?.[0];
@@ -390,18 +390,7 @@ export class AuthService {
   }
 
   async invalidarSesiones(usrId: number, tipo: 'cliente' | 'usuario') {
-    const tabla = tipo === 'cliente' ? 'Clientes' : 'usuarios';
-    const idColumna = tipo === 'cliente' ? 'cli_id' : 'usr_id';
-    const versionColumna =
-      tipo === 'cliente' ? 'cli_token_version' : 'usr_token_version';
-
-    await this.sistemaComercialDb.query(
-      `UPDATE dbo.${tabla} SET ${versionColumna} = ${versionColumna} + 1 WHERE ${idColumna} = @0`,
-      [usrId],
-    );
-    // Sin esto el token revocado seguiría valiendo hasta que venza la
-    // caché de JwtAuthGuard.
-    olvidarVersion(tipo, usrId);
+    await invalidarSesionesCuenta(this.sistemaComercialDb, tipo, usrId);
   }
 
   async actualizarPosicionMenu(
@@ -430,7 +419,7 @@ export class AuthService {
       `
       SELECT cli_id, cli_razon_social, cli_nro_identificacion, cli_password,
              cli_acceso_pc, cli_intentos_login, cli_token_version,
-             cli_menu_posicion, cli_estado
+             cli_menu_posicion, cli_estado, cli_estado_aprobacion
       FROM clientes
       WHERE cli_nro_identificacion = @0
       -- El NIT solo es único entre clientes activos
@@ -469,6 +458,14 @@ export class AuthService {
     if (cli.cli_estado !== 'A') {
       throw new UnauthorizedException(
         'Cliente inactivo. Solicita la activación al administrador.',
+      );
+    }
+    // Regla de negocio: solo entra un cliente aprobado en el Sistema
+    // Comercial (Clientes.cli_estado_aprobacion = 'A'). El Comercial le crea
+    // la contraseña al aprobarlo; esto cubre contraseñas que ya existían.
+    if (cli.cli_estado_aprobacion !== 'A') {
+      throw new UnauthorizedException(
+        'Cliente pendiente de aprobación. Podrás ingresar cuando sea aprobado.',
       );
     }
 
@@ -535,7 +532,9 @@ export class AuthService {
       -- JWT). Los permisos reales salen de TODOS los roles activos vía
       -- getModulesByUsuario / PermissionsService.resolverRolIds.
       LEFT JOIN pc_usuario_rol ur ON u.usr_id = ur.ur_usuario_id AND ur.ur_activo = 1
-      LEFT JOIN pc_roles r ON ur.ur_rol_id = r.rol_id
+      -- rol_activo: un rol inactivado tampoco debe llegar al JWT (el guard
+      -- lo rechazaría y el usuario quedaría afuera aunque tenga otro rol).
+      LEFT JOIN pc_roles r ON ur.ur_rol_id = r.rol_id AND r.rol_activo = 1
       -- El login es usr_id_usuario, igual que en el Sistema Comercial
       -- (LoginController): es único. Antes se buscaba por usr_usuario, que
       -- en el Comercial es auditoría ("quién creó/editó el registro"), no
@@ -582,8 +581,8 @@ export class AuthService {
     await this.registrarIngresoExitoso('usuario', usr.usr_id, intentosPrevios);
 
     // La contraseña es la misma en el Sistema Comercial, que solo entiende
-    // su SHA-256: si entró con bcrypt o texto plano (cuentas viejas del
-    // portal), se reescribe en ese formato para que también le sirva allá.
+    // su SHA-256: si entró con bcrypt (cuentas viejas del portal), se
+    // reescribe en ese formato para que también le sirva allá.
     if (!esHashComercial(usr.usr_password)) {
       await this.sistemaComercialDb.query(
         `UPDATE usuarios SET usr_password = @0 WHERE usr_id = @1`,

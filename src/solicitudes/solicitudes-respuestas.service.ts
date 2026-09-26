@@ -222,7 +222,7 @@ export class SolicitudesRespuestasService {
         INSERT INTO Formulario_respuesta
           (fr_sol_id, fr_fp_id, fr_valor_texto, fr_valor_numero, fr_valor_fecha,
            fr_valor_opcion_id, fr_es_multiselect, fr_created_at)
-        SELECT @0, fp_id, texto, numero, fecha, opcion_id, multi, GETDATE()
+        SELECT @0, fp_id, texto, numero, fecha, opcion_id, multi, dbo.fn_ahora_colombia()
         FROM OPENJSON(@1) WITH (
           fp_id INT, texto NVARCHAR(MAX), numero NVARCHAR(100),
           fecha NVARCHAR(50), opcion_id BIGINT, multi BIT
@@ -455,7 +455,7 @@ export class SolicitudesRespuestasService {
 
       if (maximoArchivos <= 1 && (activosResult?.length || 0) > 0) {
         await queryRunner.query(
-          `UPDATE Solicitud_archivo SET sa_estado = 'inactivo', sa_updated_at = GETDATE()
+          `UPDATE Solicitud_archivo SET sa_estado = 'inactivo', sa_updated_at = dbo.fn_ahora_colombia()
            WHERE sa_sol_id = @0 AND sa_fp_id = @1 AND sa_estado = 'activo'`,
           [sa_sol_id, fp_id],
         );
@@ -464,7 +464,7 @@ export class SolicitudesRespuestasService {
       const sqlArchivo = `
         INSERT INTO Solicitud_archivo
         (sa_sol_id, sa_fp_id, sa_nombre_original, sa_nombre_guardado, sa_tamaño_bytes, sa_tipo_mime, sa_ruta_almacenamiento, sa_cargado_por, sa_estado, sa_checksum_archivo, sa_id_almacenamiento, sa_resource_type, sa_created_at, sa_fecha_emision, sa_fecha_vencimiento)
-        VALUES (@0, @1, @2, @3, @4, @5, @6, @7, @8, @9, @10, @11, GETDATE(), @12, @13)
+        VALUES (@0, @1, @2, @3, @4, @5, @6, @7, @8, @9, @10, @11, dbo.fn_ahora_colombia(), @12, @13)
       `;
 
       const paramsArchivo = [
@@ -646,7 +646,7 @@ export class SolicitudesRespuestasService {
       // Marcar como inactivo en la base de datos
       const updateSql = `
         UPDATE Solicitud_archivo
-        SET sa_estado = 'inactivo', sa_updated_at = GETDATE()
+        SET sa_estado = 'inactivo', sa_updated_at = dbo.fn_ahora_colombia()
         WHERE sa_id = @0
       `;
 

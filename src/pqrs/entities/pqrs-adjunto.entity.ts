@@ -19,9 +19,6 @@ export class PQRSAdjuntoEntity {
   @Column({ type: 'int', nullable: true })
   pa_usr_id: number;
 
-  @Column({ type: 'int', nullable: true })
-  pa_cliu_id: number;
-
   @Column({ type: 'varchar', length: 255 })
   pa_nombre_original: string;
 

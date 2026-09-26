@@ -37,7 +37,9 @@ export class SolicitudesDocumentosService {
           u_crea.usr_id as usuario_registro_id,
           COALESCE(ejn.ejng_nombre, u_ej.usr_nombre) as ejecutivo_nombre,
           s.sol_observacion_ejn as observacionesComercial,
-          u_rev.usr_nombre as usuario_revision,
+          -- seh_usr_id NULL = la envió el cliente dueño.
+          CASE WHEN seh.seh_sol_id IS NOT NULL AND seh.seh_usr_id IS NULL
+            THEN c.cli_razon_social ELSE u_rev.usr_nombre END as usuario_revision,
           seh.seh_fecha_hora as fecha_revision,
           se.ses_codigo as estado_codigo,
           we.wet_nombre as etapa_nombre,
@@ -396,7 +398,7 @@ export class SolicitudesDocumentosService {
         sa.sa_fecha_vencimiento AS sa_fecha_vencimiento,
         CASE
           WHEN sa.sa_fecha_vencimiento IS NULL THEN 'SIN_VIGENCIA'
-          WHEN CAST(sa.sa_fecha_vencimiento AS DATE) < CAST(GETDATE() AS DATE) THEN 'VENCIDO'
+          WHEN CAST(sa.sa_fecha_vencimiento AS DATE) < CAST(dbo.fn_ahora_colombia() AS DATE) THEN 'VENCIDO'
           ELSE 'VIGENTE'
         END AS estado_vencimiento,
         c.cli_id AS cliente_id,

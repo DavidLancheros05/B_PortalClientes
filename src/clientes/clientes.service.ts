@@ -7,7 +7,11 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { plainToInstance } from 'class-transformer';
-import { hashPassword, passwordCoincide } from '../common/utils/password.util';
+import {
+  generarPasswordAleatoria,
+  hashPassword,
+  passwordCoincide,
+} from '../common/utils/password.util';
 import { ClienteEntity } from './entities/clientes.entity';
 import { CreateClienteDto } from './dto/create-cliente.dto';
 import { UpdateClienteDto } from './dto/update-cliente.dto';
@@ -52,14 +56,14 @@ export class ClientesService {
         c.cli_intentos_login AS [cli_intentos_login],
         -- Bloqueo temporal vigente por intentos fallidos (solo informativo,
         -- se levanta solo — ver auth.service.ts / pc_bloqueo_login).
-        DATEDIFF(MINUTE, SYSDATETIME(), b.blq_bloqueado_hasta) AS [cli_bloqueo_min_restantes],
+        DATEDIFF(MINUTE, dbo.fn_ahora_colombia(), b.blq_bloqueado_hasta) AS [cli_bloqueo_min_restantes],
         c.ejng_id AS [ejng_id],
         e.ejng_nombre AS [ejng_nombre]
       FROM dbo.Clientes c
       LEFT JOIN dbo.Ejecutivo_negocio e ON e.ejng_id = c.ejng_id
       LEFT JOIN dbo.pc_bloqueo_login b
         ON b.blq_tipo = 'cliente' AND b.blq_cuenta_id = c.cli_id
-       AND b.blq_bloqueado_hasta > SYSDATETIME()
+       AND b.blq_bloqueado_hasta > dbo.fn_ahora_colombia()
       ORDER BY c.cli_razon_social ASC
     `);
 
@@ -283,16 +287,10 @@ export class ClientesService {
       );
     }
 
-    const habilitaAcceso = dto.cli_acceso_pc ?? false;
-    const passwordGenerada = habilitaAcceso
-      ? Math.random().toString(36).slice(-8)
-      : null;
-    // Se guarda hasheada con bcrypt; el correo de bienvenida sí manda la
-    // contraseña en texto plano (es la única forma de que el cliente la
-    // conozca) usando `passwordGenerada`, no el hash.
-    const passwordHasheada = passwordGenerada
-      ? await hashPassword(passwordGenerada)
-      : null;
+    // Un cliente nuevo nace pendiente de aprobación (cli_estado_aprobacion
+    // 'P') y no puede entrar al portal hasta que el Sistema Comercial lo
+    // apruebe: ahí el Comercial le crea la contraseña (AprobarCliente). Por
+    // eso el portal ya no genera contraseña ni da acceso al crear.
 
     const entity = plainToInstance(ClienteEntity, {
       cli_razon_social: dto.cli_razon_social,
@@ -300,8 +298,8 @@ export class ClientesService {
       cli_tipo_identificacion: dto.cli_tipo_identificacion,
       cli_direccion: dto.cli_direccion,
       cli_correo: dto.cli_correo,
-      cli_acceso_pc: habilitaAcceso,
-      cli_password: passwordHasheada,
+      cli_acceso_pc: false,
+      cli_password: null,
       cli_es_distribuidor: dto.cli_es_distribuidor ?? false,
       cli_nit_dig_vf: dto.cli_nit_dig_vf ?? null,
       cli_es_extranjero: dto.cli_es_extranjero ?? false,
@@ -325,28 +323,10 @@ export class ClientesService {
       for (const copId of dto.centro_operacion_ids) {
         await this.clienteRepo.query(
           `INSERT INTO dbo.Detalle_cliente_centro (cli_id, cop_id, dclc_estado, dclc_fecha_usr)
-           VALUES (@0, @1, 'A', GETDATE())`,
+           VALUES (@0, @1, 'A', dbo.fn_ahora_colombia())`,
           [saved.cli_id, copId],
         );
       }
-    }
-
-    if (habilitaAcceso && dto.cli_correo && passwordGenerada) {
-      // No debe bloquear la creación del cliente si el correo falla.
-      this.notificacionesService
-        .notificarCredencialesUsuario({
-          nombre: dto.cli_razon_social,
-          usuario_login: dto.cli_nro_identificacion,
-          usuario_email: dto.cli_correo,
-          usuario_password: passwordGenerada,
-          portal_url: process.env.PORTAL_CLIENTES_URL || '',
-        })
-        .catch((error) =>
-          console.error(
-            '[ClientesService] Error enviando correo de credenciales:',
-            error,
-          ),
-        );
     }
 
     return this.findOne(saved.cli_id);
@@ -385,11 +365,18 @@ export class ClientesService {
       dto.cli_acceso_pc === true && !actual?.cli_acceso_pc;
     const correoDestino = dto.cli_correo ?? actual?.cli_correo ?? undefined;
 
+    // Sin aprobación del Sistema Comercial no hay acceso al portal.
+    if (habilitandoAccesoAhora && actual.cli_estado_aprobacion !== 'A') {
+      throw new BadRequestException(
+        'El cliente debe estar aprobado en el sistema comercial para tener acceso al portal',
+      );
+    }
+
     let passwordGenerada: string | null = null;
     if (habilitandoAccesoAhora && correoDestino) {
       // Se genera solo si no tenía acceso antes; si ya lo tenía, se
       // conserva la contraseña existente en vez de invalidarla.
-      passwordGenerada = Math.random().toString(36).slice(-8);
+      passwordGenerada = generarPasswordAleatoria();
     }
     const passwordHasheada = passwordGenerada
       ? await hashPassword(passwordGenerada)
@@ -414,7 +401,7 @@ export class ClientesService {
       for (const copId of centro_operacion_ids) {
         await this.clienteRepo.query(
           `INSERT INTO dbo.Detalle_cliente_centro (cli_id, cop_id, dclc_estado, dclc_fecha_usr)
-           VALUES (@0, @1, 'A', GETDATE())`,
+           VALUES (@0, @1, 'A', dbo.fn_ahora_colombia())`,
           [cli_id, copId],
         );
       }
@@ -472,13 +459,18 @@ export class ClientesService {
     if (!cliente) {
       throw new NotFoundException('Cliente no existe');
     }
+    if (cliente.cli_estado_aprobacion !== 'A') {
+      throw new BadRequestException(
+        'El cliente debe estar aprobado en el sistema comercial para tener acceso al portal',
+      );
+    }
     if (!cliente.cli_correo) {
       throw new BadRequestException(
         'El cliente no tiene correo registrado, no se puede enviar la nueva contraseña',
       );
     }
 
-    const passwordGenerada = Math.random().toString(36).slice(-8);
+    const passwordGenerada = generarPasswordAleatoria();
     const passwordHasheada = await hashPassword(passwordGenerada);
     await this.clienteRepo.update(cli_id, {
       cli_password: passwordHasheada,

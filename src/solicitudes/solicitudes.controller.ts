@@ -17,6 +17,8 @@ import {
   UploadedFile,
   BadRequestException,
   ForbiddenException,
+  NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Request, Response } from 'express';
@@ -28,8 +30,6 @@ import { SolicitudesDocumentosService } from './solicitudes-documentos.service';
 import { FormularioRenderizableService } from './formulario-renderizable.service';
 import { ClienteArchivoService } from '../cliente-archivo/cliente-archivo.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { RolesGuard } from '../auth/roles.guard';
-import { Roles } from '../auth/roles.decorator';
 import { RequierePermiso } from '../permissions/requiere-permiso.decorator';
 import { SoloAutenticado } from '../auth/solo-autenticado.decorator';
 import { SolicitudRespuestaDto } from './dto/solicitud-respuesta.response.dto';
@@ -38,7 +38,6 @@ import { WorkflowEtapaResponseDto } from './dto/workflow-etapa.response.dto';
 import { WorkflowResultadoResponseDto } from './dto/workflow-resultado.response.dto';
 import { SolicitudListadoGestionDto } from './dto/solicitud-listado-gestion.response.dto';
 import { SolicitudClienteDto } from './dto/solicitud-cliente.response.dto';
-import { SolicitudPendienteDto } from './dto/solicitud-pendiente.response.dto';
 
 type ReqUsuario = Request & {
   user: {
@@ -48,6 +47,7 @@ type ReqUsuario = Request & {
     usr_id?: number;
     id?: number;
     tipo?: string;
+    ejng_id?: number | null;
   };
 };
 
@@ -70,11 +70,19 @@ export class SolicitudesController {
     private readonly clienteArchivoService: ClienteArchivoService,
   ) {}
 
+  // Quién actúa, para auditoría e historial: el usr_id de un interno, o
+  // null si actúa el cliente (en el historial, usuario NULL = el cliente
+  // dueño de la solicitud). Un interno sin usr_id es un error, no un
+  // "cliente": antes caía en null y el historial lo guardaba como 1.
   private resolverUsuarioIdParaAuditoria(
     user: { usr_id?: number; id?: number; tipo?: string } | undefined,
   ): number | null {
     if (user?.tipo === 'cliente') return null;
-    return user?.usr_id || user?.id || null;
+    const usrId = user?.usr_id || user?.id;
+    if (!usrId) {
+      throw new UnauthorizedException('Sesión sin usuario');
+    }
+    return usrId;
   }
 
   // Autorización por objeto (IDOR), distinta de @RequierePermiso (por rol):
@@ -107,7 +115,31 @@ export class SolicitudesController {
     }
   }
 
+  // Pantallas del Ejecutivo (gestión y rechazadas): un usuario con ejng_id
+  // solo opera sobre solicitudes de su cartera (sol_ejng_id). Sin ejng_id
+  // (ej. ADMIN) no hay restricción. Mismo criterio que pedidos.controller.ts.
+  private async verificarCarteraEjecutivo(solicitudId: number, req: ReqUsuario) {
+    const ejngId = req.user?.ejng_id;
+    if (!ejngId) return;
+    const esSuya = await this.solicitudesService.solicitudEsDelEjecutivo(
+      solicitudId,
+      ejngId,
+    );
+    if (esSuya === null) {
+      throw new NotFoundException('Solicitud no encontrada');
+    }
+    if (!esSuya) {
+      throw new ForbiddenException('Esta solicitud no pertenece a tu cartera');
+    }
+  }
+
+  // Quién puede crear: rol con 'crear' en /solicitudes/nueva (Seguridad →
+  // Roles). Para un cliente es su propia solicitud; para un interno, crear a
+  // nombre de un cliente (un usuario interno no tiene solicitudes propias).
+  // Adentro se valida para quién: cliente solo para sí, ejecutivo solo su
+  // cartera. Ver Login permisos/permiso-crear-solicitud-para-cliente.md.
   @UseGuards(JwtAuthGuard)
+  @RequierePermiso('/solicitudes/nueva', 'crear')
   @Post()
   async crearSolicitud(
     @Body() dto: any,
@@ -186,22 +218,6 @@ export class SolicitudesController {
   async testConnection(@Req() req: ReqUsuario) {
     this.soloPersonalInterno(req);
     return this.solicitudesService.testConnection();
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @Get('pendientes')
-  async getPendientes(@Req() req: ReqUsuario): Promise<SolicitudPendienteDto[]> {
-    this.soloPersonalInterno(req);
-    try {
-      return await this.listadosService.getSolicitudesPendientes();
-    } catch (error) {
-      if (error instanceof HttpException) throw error;
-      console.error('Error obteniendo pendientes:', error);
-      throw new HttpException(
-        error instanceof Error ? error.message : 'Error obteniendo pendientes',
-        500,
-      );
-    }
   }
 
   @Get('parametros/dias-respuesta')
@@ -439,12 +455,18 @@ export class SolicitudesController {
     return data;
   }
 
+  // `ejecutivoId` es un usr_id (el servicio resuelve su ejng_id). Un usuario
+  // con cartera propia solo puede pedir la suya.
   @Get('ejecutivo/:ejecutivoId/rechazadas')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('EJECUTIVO', 'ADMIN')
+  @UseGuards(JwtAuthGuard)
+  @RequierePermiso('/solicitudes/rechazadas-ejecutivo', 'ver')
   async getRechazadasForEjecutivo(
     @Param('ejecutivoId', ParseIntPipe) ejecutivoId: number,
+    @Req() req: ReqUsuario,
   ) {
+    if (req.user?.ejng_id && Number(req.user.usr_id) !== ejecutivoId) {
+      throw new ForbiddenException('No tienes acceso a este ejecutivo');
+    }
     return this.listadosService.getSolicitudesRechazadasPorEjecutivoId(
       ejecutivoId,
     );
@@ -1294,10 +1316,12 @@ export class SolicitudesController {
         req.user,
       );
 
+      // sa_cargado_por: usr_id si sube un interno; si sube el cliente queda
+      // en 0 (el cliente es sol_cli_id), nunca su cli_id disfrazado de usr_id.
       const resultado = await this.respuestasService.guardarRespuestaArchivo(
         dto,
         file,
-        req.user?.usr_id,
+        this.resolverUsuarioIdParaAuditoria(req.user) ?? undefined,
       );
       return resultado;
     } catch (error) {
@@ -1340,7 +1364,7 @@ export class SolicitudesController {
         Number(dto?.ca_id),
         Number(dto?.sa_sol_id),
         Number(dto?.fp_id),
-        req.user?.usr_id,
+        this.resolverUsuarioIdParaAuditoria(req.user) ?? undefined,
       );
     } catch (error) {
       if (error instanceof ForbiddenException) throw error;
@@ -1543,13 +1567,14 @@ export class SolicitudesController {
   }
 
   @Put(':id/concepto-ejecutivo')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('EJECUTIVO', 'ADMIN')
+  @UseGuards(JwtAuthGuard)
+  @RequierePermiso('/solicitudes/gestion-ejecutivo-negocios', 'editar')
   async guardarGestionEjecutivo(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: any,
-    @Req() req: Request & { user: { usr_id: number } },
+    @Req() req: ReqUsuario & { user: { usr_id: number } },
   ) {
+    await this.verificarCarteraEjecutivo(id, req);
     try {
       console.log(
         `💾 [CONTROLLER] PUT /solicitudes/${id}/concepto-ejecutivo - Body:`,
@@ -1594,19 +1619,24 @@ export class SolicitudesController {
   }
 
   @Get(':id/rechazo-ejecutivo')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('EJECUTIVO', 'ADMIN')
-  async getRechazoEjecutivo(@Param('id', ParseIntPipe) id: number) {
+  @UseGuards(JwtAuthGuard)
+  @RequierePermiso('/solicitudes/rechazadas-ejecutivo', 'ver')
+  async getRechazoEjecutivo(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: ReqUsuario,
+  ) {
+    await this.verificarCarteraEjecutivo(id, req);
     return this.listadosService.getRechazoEjecutivoDetalle(id);
   }
 
   @Patch(':id/gestion-rechazo/finalizar')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('EJECUTIVO', 'ADMIN')
+  @UseGuards(JwtAuthGuard)
+  @RequierePermiso('/solicitudes/rechazadas-ejecutivo', 'editar')
   async finalizarGestionRechazo(
     @Param('id', ParseIntPipe) id: number,
-    @Req() req: Request & { user: { usr_id: number } },
+    @Req() req: ReqUsuario & { user: { usr_id: number } },
   ) {
+    await this.verificarCarteraEjecutivo(id, req);
     try {
       return await this.workflowService.finalizarGestionRechazo(
         id,
@@ -1808,62 +1838,6 @@ export class SolicitudesController {
     }
   }
 
-  @Put(':id/estado-flujo')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('ADMIN')
-  async actualizarEstadoFlujo(
-    @Param('id', ParseIntPipe) id: number,
-    @Body()
-    body: {
-      estado_id: number;
-      etapa_actual_id: number;
-      resultado_etapa_id: number;
-      usuario_modifica: number;
-    },
-  ) {
-    try {
-      return await this.workflowService.actualizarEstadoFlujo(
-        id,
-        body.estado_id,
-        body.etapa_actual_id,
-        body.resultado_etapa_id,
-        body.usuario_modifica,
-      );
-    } catch (error: any) {
-      if (error instanceof HttpException) throw error;
-      const statusCode = error.statusCode || 500;
-      throw new HttpException(error.message || 'Error interno', statusCode);
-    }
-  }
-
-  // Mismo caso que estado-flujo arriba: sin caller real confirmado hoy.
-  @Put(':id/estado-flujo-automatico')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('ADMIN')
-  async actualizarEstadoFlujoAutomatico(
-    @Param('id', ParseIntPipe) id: number,
-    @Body()
-    body: {
-      estadoCodigo: string;
-      etapaCodigo: string;
-      resultadoCodigo: string;
-      usuario_modifica: number;
-    },
-  ) {
-    try {
-      return await this.workflowService.actualizarEstadoFlujoAutomatico(
-        id,
-        body.estadoCodigo,
-        body.etapaCodigo,
-        body.resultadoCodigo,
-        body.usuario_modifica,
-      );
-    } catch (error: any) {
-      if (error instanceof HttpException) throw error;
-      const statusCode = error.statusCode || 500;
-      throw new HttpException(error.message || 'Error interno', statusCode);
-    }
-  }
 
   // ====== RUTA GENÉRICA (DEBE ESTAR DESPUÉS DE TODAS LAS ESPECÍFICAS) ======
 
