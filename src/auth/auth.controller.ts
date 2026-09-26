@@ -44,7 +44,7 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   // Fase 1 de la migración de auth a cookie httpOnly (ver
-  // documentacion/migracion-auth-httponly.md): el login manda el JWT como
+  // documentacion/Portal Clientes/Login permisos/login.md): el login manda el JWT como
   // cookie httpOnly además de en el body — el navegador no puede leerla con
   // JS, a diferencia de localStorage/la cookie que ponía el frontend a mano
   // (AuthContext.tsx::Cookies.set, retirado en Fase 2).

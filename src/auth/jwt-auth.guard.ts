@@ -42,7 +42,7 @@ export class JwtAuthGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    // Ola 1 de documentacion/plan-solucion-autorizacion-endpoints.md: este
+    // Ola 1 de documentacion/Portal Clientes/Login permisos/permisos-endpoints.md: este
     // guard ahora se registra global (APP_GUARD en app.module.ts), así que
     // corre para TODO endpoint salvo que se marque @Public() a propósito.
     const esPublico = this.reflector.getAllAndOverride<boolean>(
@@ -57,7 +57,7 @@ export class JwtAuthGuard implements CanActivate {
     const authHeader = request.headers.authorization;
 
     // Fase 1 de la migración a cookie httpOnly (ver
-    // documentacion/migracion-auth-httponly.md): acepta el header
+    // documentacion/Portal Clientes/Login permisos/login.md): acepta el header
     // Authorization (mecanismo actual — scripts, curl, mint-jwt.mjs siguen
     // funcionando sin cambios) y, si no viene, cae a la cookie httpOnly
     // `pc_token` que el login ya empezó a emitir. Período de transición

@@ -64,7 +64,7 @@ export class MaestrosController {
   // GET /maestros/catalogo-esquema/page.tsx del frontend lo consume — es
   // herramienta de debug huérfana, no una función de negocio (a diferencia
   // de getCatalogo, que sí usa el formulario real para preguntas tipo
-  // catálogo). Ver documentacion/auditoria-permisos-endpoints-backend.md.
+  // catálogo). Ver documentacion/Portal Clientes/Login permisos/permisos-endpoints.md.
   @Get('catalogo-esquema')
   @UseGuards(RolesGuard)
   @Roles('ADMIN')

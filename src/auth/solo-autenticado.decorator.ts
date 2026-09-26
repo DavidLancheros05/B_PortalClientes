@@ -7,7 +7,7 @@ import { SetMetadata } from '@nestjs/common';
 // solicitud), no una acción administrativa que deba restringirse por
 // módulo/rol. Existe para que el chequeo de
 // scripts/check-permisos-endpoints.mjs (Ola 3 de
-// documentacion/plan-solucion-autorizacion-endpoints.md) distinga esto de
+// documentacion/Portal Clientes/Login permisos/permisos-endpoints.md) distinga esto de
 // un endpoint que simplemente nadie revisó todavía.
 export const SOLO_AUTENTICADO_KEY = 'soloAutenticado';
 export const SoloAutenticado = () => SetMetadata(SOLO_AUTENTICADO_KEY, true);

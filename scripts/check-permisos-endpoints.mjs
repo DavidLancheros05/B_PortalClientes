@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Ola 3 de documentacion/plan-solucion-autorizacion-endpoints.md.
+ * Ola 3 de documentacion/Portal Clientes/Login permisos/permisos-endpoints.md.
  *
  * Escanea todos los *.controller.ts de src/ y, para cada método
  * @Post/@Put/@Patch/@Delete, verifica que declare al menos uno de:
@@ -8,7 +8,7 @@
  * (a nivel de método o de clase). Si no declara ninguno, es un endpoint de
  * mutación sin que nadie haya decidido a propósito su autorización — el
  * mismo patrón que dejó a MaestrosController expuesto sin login (ver
- * documentacion/auditoria-permisos-endpoints-backend.md).
+ * documentacion/Portal Clientes/Login permisos/permisos-endpoints.md).
  *
  * No reemplaza revisar el código — es un análisis estático simple por
  * regex sobre los decoradores, no entiende el árbol de sintaxis real. Basta

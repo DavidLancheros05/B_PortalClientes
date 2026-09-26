@@ -153,10 +153,10 @@ const resolveDbConfig = () => {
     PermissionsModule,
   ],
   providers: [
-    // Ola 1 de documentacion/plan-solucion-autorizacion-endpoints.md:
+    // Ola 1 de documentacion/Portal Clientes/Login permisos/permisos-endpoints.md:
     // antes no había NINGÚN guard global — cada controller dependía de
     // acordarse de poner @UseGuards(JwtAuthGuard) a mano (varios no lo
-    // tenían, ver auditoria-permisos-endpoints-backend.md). Ahora aplica a
+    // tenían, ver documentacion/Portal Clientes/Login permisos/permisos-endpoints.md). Ahora aplica a
     // toda la app por defecto; @Public() (auth/public.decorator.ts) es la
     // única forma de excluir un endpoint a propósito.
     { provide: APP_GUARD, useClass: JwtAuthGuard },

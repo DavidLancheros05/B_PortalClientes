@@ -2,8 +2,8 @@
  * hash-passwords.mjs
  * Migración de datos ONE-TIME: hashea con bcrypt cualquier password que
  * todavía esté en texto plano en `usuarios.usr_password` y
- * `Clientes.cli_password` (ver documentacion/autenticacion-y-seguridad-sesion.md,
- * hallazgo #1). El código de login/cambio de contraseña ya acepta ambos
+ * `Clientes.cli_password` (ver documentacion/Portal Clientes/Login permisos/
+ * autenticacion-y-seguridad-sesion.md, hallazgo #1). El código de login/cambio de contraseña ya acepta ambos
  * formatos (bcrypt o texto plano) via common/utils/password.util.ts, así
  * que correr o no este script no rompe nada — solo cierra la ventana en
  * la que las contraseñas quedan legibles directamente en la BD.
