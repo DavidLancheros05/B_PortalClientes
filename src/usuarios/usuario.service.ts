@@ -2,24 +2,25 @@ import { Injectable, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { UsuarioEntity } from './entities/usuario.entity';
-import { UsuariosCentrosEntity } from './entities/usuarios-centros.entity';
-import { CentroOperacionEntity } from '../centros-operacion/entities/centro-operacion.entity';
-import { hashPassword, passwordCoincide } from '../common/utils/password.util';
-import {
-  AssignCentroDto,
-  AssignMultipleCentrosDto,
-} from './dto/assign-centro.dto';
+import { hashComercial, passwordCoincide } from '../common/utils/password.util';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
+
+// Regla del Sistema Comercial (LoginController.Password): mínimo 5.
+const MIN_LONGITUD_PASSWORD = 5;
+
+function validarLongitudPassword(password: string) {
+  if (password.length < MIN_LONGITUD_PASSWORD) {
+    throw new BadRequestException(
+      `La contraseña debe tener al menos ${MIN_LONGITUD_PASSWORD} caracteres`,
+    );
+  }
+}
 
 @Injectable()
 export class UsuarioService {
   constructor(
     @InjectRepository(UsuarioEntity)
     private usuarioRepository: Repository<UsuarioEntity>,
-    @InjectRepository(UsuariosCentrosEntity)
-    private usuariosCentrosRepository: Repository<UsuariosCentrosEntity>,
-    @InjectRepository(CentroOperacionEntity)
-    private centrosRepository: Repository<CentroOperacionEntity>,
     private notificacionesService: NotificacionesService,
   ) {}
 
@@ -49,8 +50,10 @@ export class UsuarioService {
 
     const valid = await this.validatePassword(user, currentPassword);
     if (!valid) throw new Error('Contraseña actual incorrecta');
+    validarLongitudPassword(newPassword);
 
-    user.usr_password = await hashPassword(newPassword);
+    // Formato del Sistema Comercial: la misma contraseña sirve en ambos.
+    user.usr_password = hashComercial(newPassword);
 
     await this.usuarioRepository.save(user);
     return { message: 'Contraseña actualizada correctamente' };
@@ -79,163 +82,6 @@ export class UsuarioService {
     return ejecutivos;
   }
 
-  // Obtener centros asignados a un usuario
-  async getUserCentros(userId: number) {
-    try {
-      console.log('getUserCentros usuario.service.ts: ', userId); // Verificar el parámetro recibido
-      const centros = await this.usuariosCentrosRepository
-        .createQueryBuilder('uc')
-        .leftJoinAndSelect('uc.uco_co_id', 'centro')
-        .where('uc.uco_usr_id = :userId', { userId })
-        .orderBy('uc.es_default', 'DESC')
-        .addOrderBy('uc.uco_id', 'ASC')
-        .getMany();
-
-      return centros.map((uc) => ({
-        uco_id: uc.uco_id,
-        co_id: uc.uco_co_id.cop_id,
-        nombre: uc.uco_co_id.cop_nombre,
-        activo: uc.uco_co_id.cop_estado,
-        es_default: uc.es_default,
-        created_at: uc.created_at,
-      }));
-    } catch (error) {
-      console.error('Error en getUserCentros:', error);
-      throw error;
-    }
-  }
-
-  // Asignar un centro a un usuario
-  async assignCentro(userId: number, dto: AssignCentroDto) {
-    console.log(
-      'assignCentro usuario.service.ts DAVID ASSIGNING CENTRO DTO: ',
-      dto,
-    ); // Verificar el DTO recibido
-    const usuario = await this.usuarioRepository.findOne({
-      where: { usr_id: userId },
-    });
-    if (!usuario) throw new Error('Usuario no encontrado');
-
-    const centro = await this.centrosRepository.findOne({
-      where: { cop_id: dto.co_id },
-    });
-    if (!centro) throw new Error('Centro de operación no encontrado');
-
-    // Verificar si ya existe
-    const existing = await this.usuariosCentrosRepository
-      .createQueryBuilder('uc')
-      .where('uco_usr_id = :userId', { userId })
-      .andWhere('uco_co_id = :centroId', {
-        centroId: dto.co_id,
-      })
-      .getOne();
-
-    if (existing) throw new BadRequestException('Este centro ya está asignado');
-
-    // Si es default, remover default de otros
-    if (dto.es_default) {
-      await this.usuariosCentrosRepository
-        .createQueryBuilder('uc')
-        .update()
-        .set({ es_default: false })
-        .where('uco_usr_id = :userId', { userId })
-        .execute();
-    }
-
-    const newAssignment = this.usuariosCentrosRepository.create({
-      uco_usr_id: usuario,
-      uco_co_id: centro,
-      es_default: dto.es_default ?? false,
-    });
-
-    await this.usuariosCentrosRepository.save(newAssignment);
-    return { message: 'Centro asignado correctamente' };
-  }
-
-  // Asignar múltiples centros
-  async assignMultipleCentros(userId: number, dto: AssignMultipleCentrosDto) {
-    console.log('DAVID ASSIGNING MULTIPLE CENTROS DTO: ', dto); // Verificar el DTO recibido
-    const usuario = await this.usuarioRepository.findOne({
-      where: { usr_id: userId },
-    });
-    if (!usuario) throw new Error('Usuario no encontrado');
-
-    // Eliminar centros anteriores
-    await this.usuariosCentrosRepository
-      .createQueryBuilder('uc')
-      .delete()
-      .where('uco_usr_id = :userId', { userId })
-      .execute();
-
-    // Asignar nuevos centros
-    for (const centroDto of dto.centros) {
-      const centro = await this.centrosRepository.findOne({
-        where: { cop_id: centroDto.co_id },
-      });
-      if (!centro) continue;
-
-      const assignment = this.usuariosCentrosRepository.create({
-        uco_usr_id: usuario,
-        uco_co_id: centro,
-        es_default: centroDto.es_default ?? false,
-      });
-
-      await this.usuariosCentrosRepository.save(assignment);
-    }
-
-    return { message: 'Centros asignados correctamente' };
-  }
-
-  // Actualizar centro por defecto
-  async setDefaultCentro(userId: number, centroId: number) {
-    console.log('setDefaultCentro usuario.service.ts: ', userId, centroId);
-    const usuario = await this.usuarioRepository.findOne({
-      where: { usr_id: userId },
-    });
-    if (!usuario) throw new Error('Usuario no encontrado');
-
-    const assignment = await this.usuariosCentrosRepository.findOne({
-      where: {
-        uco_usr_id: { usr_id: userId },
-        uco_co_id: { cop_id: centroId },
-      },
-    });
-
-    if (!assignment) throw new Error('Centro no asignado al usuario');
-
-    // Remover default de otros
-    await this.usuariosCentrosRepository
-      .createQueryBuilder('uc')
-      .update()
-      .set({ es_default: false })
-      .where('uco_usr_id = :userId', { userId })
-      .execute();
-
-    // Establecer como default
-    await this.usuariosCentrosRepository
-      .createQueryBuilder('uc')
-      .update()
-      .set({ es_default: true })
-      .where('uco_id = :uco_id', { uco_id: assignment.uco_id })
-      .execute();
-
-    return { message: 'Centro por defecto actualizado' };
-  }
-
-  // Remover un centro de un usuario
-  async removeCentro(userId: number, centroId: number) {
-    const result = await this.usuariosCentrosRepository
-      .createQueryBuilder()
-      .delete()
-      .where('uco_usr_id = :userId', { userId })
-      .andWhere('uco_co_id = :centroId', { centroId })
-      .execute();
-
-    if (result.affected === 0) throw new Error('Centro no asignado al usuario');
-
-    return { message: 'Centro removido correctamente' };
-  }
-
   async findAll() {
     // El rol vive en la tabla puente pc_usuario_rol (many-to-many real: un
     // usuario puede tener varios roles activos, ver /usuario-roles) — este
@@ -246,7 +92,7 @@ export class UsuarioService {
       SELECT
         u.usr_id AS usr_id,
         u.usr_nombre AS nombre,
-        u.usr_usuario AS usuario_login,
+        u.usr_id_usuario AS usuario_login,
         u.usr_correo AS usuario_email,
         u.usr_inactivar AS usr_inactivar,
         u.usr_fecha_usr AS usuario_created_at,
@@ -277,34 +123,48 @@ export class UsuarioService {
     }));
   }
 
-  async createUser(dto: {
-    usr_nombre: string;
-    usr_correo?: string;
-    usuario_password: string;
-    usr_usuario: string;
-    usuario_rol_id: number;
-    ejng_id?: number;
-  }) {
+  // Nombre de login (usr_id_usuario) de quien hace el cambio, para
+  // usr_usuario: en el Sistema Comercial esa columna es auditoría ("quién
+  // creó/editó"), no el login.
+  private async loginDe(usrId?: number): Promise<string | null> {
+    if (!usrId) return null;
+    const autor = await this.usuarioRepository.findOne({
+      where: { usr_id: usrId },
+      select: ['usr_id_usuario'],
+    });
+    return autor?.usr_id_usuario ?? null;
+  }
+
+  async createUser(
+    dto: {
+      usr_nombre: string;
+      usr_correo?: string;
+      usuario_password: string;
+      usr_id_usuario: string;
+      usuario_rol_id: number;
+      ejng_id?: number;
+    },
+    autorUsrId?: number,
+  ) {
+    // usr_id_usuario es el login en ambos sistemas y es único (el Comercial
+    // valida lo mismo en GuardarUsuario).
     const existente = await this.usuarioRepository.findOne({
-      where: { usr_usuario: dto.usr_usuario },
+      where: { usr_id_usuario: dto.usr_id_usuario },
     });
     if (existente) {
       throw new BadRequestException(
-        `El nombre de usuario "${dto.usr_usuario}" ya está en uso`,
+        `El nombre de usuario "${dto.usr_id_usuario}" ya está en uso`,
       );
     }
-
-    // Hasheado con bcrypt, igual que updateUser/changePassword — el login
-    // (auth.service.ts) acepta tanto hash bcrypt como texto plano legado,
-    // así que esto no rompe cuentas creadas antes de esta migración.
-    const passwordHasheada = await hashPassword(dto.usuario_password);
+    validarLongitudPassword(dto.usuario_password);
 
     const usuario = this.usuarioRepository.create({
-      usr_id_usuario: dto.usr_usuario,
-      usr_usuario: dto.usr_usuario,
+      usr_id_usuario: dto.usr_id_usuario,
+      usr_usuario: (await this.loginDe(autorUsrId)) ?? dto.usr_id_usuario,
       usr_nombre: dto.usr_nombre,
       usr_correo: dto.usr_correo,
-      usr_password: passwordHasheada,
+      // Formato del Sistema Comercial: la misma contraseña sirve en ambos.
+      usr_password: hashComercial(dto.usuario_password),
       usr_inactivar: false,
       usr_estado: 'A',
       usr_fecha_usr: new Date(),
@@ -329,7 +189,7 @@ export class UsuarioService {
       this.notificacionesService
         .notificarCredencialesUsuario({
           nombre: dto.usr_nombre,
-          usuario_login: dto.usr_usuario,
+          usuario_login: dto.usr_id_usuario,
           usuario_email: dto.usr_correo,
           usuario_password: dto.usuario_password,
           portal_url: process.env.PORTAL_CLIENTES_URL || '',
@@ -353,6 +213,7 @@ export class UsuarioService {
       usuario_password?: string;
       usuario_activo?: boolean;
     },
+    autorUsrId?: number,
   ) {
     const usuario = await this.usuarioRepository.findOne({
       where: { usr_id: usrId },
@@ -369,12 +230,18 @@ export class UsuarioService {
     }
 
     if (dto.usuario_password) {
-      usuario.usr_password = await hashPassword(dto.usuario_password);
+      validarLongitudPassword(dto.usuario_password);
+      usuario.usr_password = hashComercial(dto.usuario_password);
     }
 
     if (dto.usuario_activo !== undefined) {
       usuario.usr_inactivar = !dto.usuario_activo;
     }
+
+    // Auditoría igual que el Comercial (EditarUsuario): quién lo editó.
+    const autor = await this.loginDe(autorUsrId);
+    if (autor) usuario.usr_usuario = autor;
+    usuario.usr_fecha_usr = new Date();
 
     await this.usuarioRepository.save(usuario);
     return { message: 'Usuario actualizado exitosamente' };

@@ -26,7 +26,9 @@ export class UsuarioRolesService {
       usr_id: u.usr_id,
       usr_nombre: u.usr_nombre,
       usr_correo: u.usr_correo,
-      usr_usuario: u.usr_usuario,
+      // Clave usr_usuario por compatibilidad con el frontend, pero el valor
+      // es el login real (usr_id_usuario); usr_usuario es auditoría.
+      usr_usuario: u.usr_id_usuario,
     }));
   }
 
@@ -57,7 +59,7 @@ export class UsuarioRolesService {
       usuarioId: ur.ur_usuario_id,
       usuarioNombre: ur.usuario?.usr_nombre,
       usuarioCorreo: ur.usuario?.usr_correo,
-      usuarioLogin: ur.usuario?.usr_usuario,
+      usuarioLogin: ur.usuario?.usr_id_usuario,
       rolId: ur.ur_rol_id,
       rolNombre: ur.rol?.rolNombre,
       rolCodigo: ur.rol?.rolCodigo,

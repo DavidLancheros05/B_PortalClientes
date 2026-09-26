@@ -6,7 +6,12 @@ import axios from 'axios';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { PermissionsService } from '../permissions/permissions.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
-import { passwordCoincide, hashPassword } from '../common/utils/password.util';
+import {
+  esHashComercial,
+  hashComercial,
+  hashPassword,
+  passwordCoincide,
+} from '../common/utils/password.util';
 import { olvidarVersion } from './version-sesion-cache';
 
 // Minutos mínimos entre dos correos de recuperación para la misma cuenta.
@@ -242,7 +247,7 @@ export class AuthService {
     } else {
       const rows = await this.sistemaComercialDb.query(
         `SELECT usr_id, usr_correo, usr_nombre FROM usuarios
-         WHERE usr_usuario = @0 AND usr_acceso_pc = 1`,
+         WHERE usr_id_usuario = @0 AND usr_acceso_pc = 1`,
         [identifier],
       );
       const row = rows?.[0];
@@ -361,7 +366,12 @@ export class AuthService {
     const passColumna = tipo === 'cliente' ? 'cli_password' : 'usr_password';
     const prefijo = tipo === 'cliente' ? 'cli' : 'usr';
 
-    const nuevaHash = await hashPassword(newPassword);
+    // Usuarios internos: formato del Sistema Comercial (misma contraseña en
+    // ambos). Clientes: bcrypt (el Comercial no tiene login de clientes).
+    const nuevaHash =
+      tipo === 'usuario'
+        ? hashComercial(newPassword)
+        : await hashPassword(newPassword);
 
     // Usar el link del correo demuestra que es el dueño de la cuenta, así
     // que también la desbloquea: antes cambiaba la contraseña pero la cuenta
@@ -514,7 +524,7 @@ export class AuthService {
   private async loginUsuarioInterno(usuario: string, password: string) {
     const usuarioData = await this.sistemaComercialDb.query(
       `
-      SELECT u.usr_id, u.usr_usuario, u.usr_password, u.usr_acceso_pc,
+      SELECT u.usr_id, u.usr_id_usuario, u.usr_password, u.usr_acceso_pc,
              u.usr_inactivar, u.usr_nombre, u.usr_correo, u.ejng_id,
              u.usr_token_version, u.usr_intentos_login,
              u.usr_menu_posicion,
@@ -526,18 +536,17 @@ export class AuthService {
       -- getModulesByUsuario / PermissionsService.resolverRolIds.
       LEFT JOIN pc_usuario_rol ur ON u.usr_id = ur.ur_usuario_id AND ur.ur_activo = 1
       LEFT JOIN pc_roles r ON ur.ur_rol_id = r.rol_id
-      WHERE u.usr_usuario = @0
-      -- usr_usuario NO es único: la tabla la comparte otro sistema y hay
-      -- logins repetidos (ej. dos "Administrador", uno sin acceso al
-      -- portal). Se toma primero el que tiene acceso al portal, luego el
-      -- que tiene rol, y el rol de menor id. Ojo: un ORDER BY r.rol_id a
-      -- secas ponía primero las filas SIN rol (NULL va primero en SQL
-      -- Server) y dejó al admin real sin poder entrar.
+      -- El login es usr_id_usuario, igual que en el Sistema Comercial
+      -- (LoginController): es único. Antes se buscaba por usr_usuario, que
+      -- en el Comercial es auditoría ("quién creó/editó el registro"), no
+      -- el login: no encontraba a los usuarios creados allá y devolvía
+      -- varias filas para quien había creado a otros.
+      WHERE u.usr_id_usuario = @0
+      -- Una fila por rol activo: primero la que tiene rol, y el de menor id
+      -- (NULL va primero en SQL Server, por eso el CASE).
       ORDER BY
-        CASE WHEN u.usr_acceso_pc = 1 THEN 0 ELSE 1 END,
         CASE WHEN r.rol_id IS NULL THEN 1 ELSE 0 END,
-        r.rol_id,
-        u.usr_id
+        r.rol_id
       `,
       [usuario],
     );
@@ -572,6 +581,16 @@ export class AuthService {
 
     await this.registrarIngresoExitoso('usuario', usr.usr_id, intentosPrevios);
 
+    // La contraseña es la misma en el Sistema Comercial, que solo entiende
+    // su SHA-256: si entró con bcrypt o texto plano (cuentas viejas del
+    // portal), se reescribe en ese formato para que también le sirva allá.
+    if (!esHashComercial(usr.usr_password)) {
+      await this.sistemaComercialDb.query(
+        `UPDATE usuarios SET usr_password = @0 WHERE usr_id = @1`,
+        [hashComercial(password), usr.usr_id],
+      );
+    }
+
     const modulos = await this.permissionsService.getModulesByUsuario(
       usr.usr_id,
     );
@@ -582,7 +601,7 @@ export class AuthService {
       rol: usr.rol_codigo || 'USUARIO',
       cliente_id: null,
       ejng_id: usr.ejng_id || null,
-      usuario: usr.usr_usuario,
+      usuario: usr.usr_id_usuario,
       tipo: 'usuario',
       tv: usr.usr_token_version ?? 0,
     };
@@ -591,7 +610,7 @@ export class AuthService {
       token: this.jwtService.sign(payload),
       user: {
         usr_id: usr.usr_id,
-        nombre: usr.usr_nombre || usr.usr_usuario,
+        nombre: usr.usr_nombre || usr.usr_id_usuario,
         usuario_email: usr.usr_correo || '',
         usuario_activo: usr.ur_activo !== 0 && usr.ur_activo !== false,
         tipo: 'usuario',

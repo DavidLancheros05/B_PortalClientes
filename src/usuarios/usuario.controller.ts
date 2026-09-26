@@ -18,11 +18,6 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RequierePermiso } from '../permissions/requiere-permiso.decorator';
 import { UsuarioService } from './usuario.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
-import {
-  AssignCentroDto,
-  AssignMultipleCentrosDto,
-  UpdateCentroDefaultDto,
-} from './dto/assign-centro.dto';
 import type { Request } from 'express';
 
 interface AuthRequest extends Request {
@@ -53,6 +48,7 @@ export class UsuarioController {
       ejng_id?: number;
       cliente_id?: number;
     },
+    @Req() req: AuthRequest,
   ) {
     try {
       if (
@@ -72,14 +68,17 @@ export class UsuarioController {
           HttpStatus.BAD_REQUEST,
         );
       }
-      return await this.usersService.createUser({
-        usr_nombre: body.nombre,
-        usr_usuario: body.usuario_login,
-        usr_correo: body.usuario_email,
-        usuario_password: body.usuario_password,
-        usuario_rol_id: body.usuario_rol_id,
-        ejng_id: body.ejng_id,
-      });
+      return await this.usersService.createUser(
+        {
+          usr_nombre: body.nombre,
+          usr_id_usuario: body.usuario_login,
+          usr_correo: body.usuario_email,
+          usuario_password: body.usuario_password,
+          usuario_rol_id: body.usuario_rol_id,
+          ejng_id: body.ejng_id,
+        },
+        req.user.usr_id,
+      );
     } catch (error: any) {
       if (error instanceof HttpException) {
         throw error;
@@ -127,56 +126,6 @@ export class UsuarioController {
     return { message: 'Contraseña actualizada correctamente' };
   }
 
-  // Centros de operación de un usuario: solo el modal de Seguridad →
-  // Usuarios. Antes bastaba con sesión y cualquier rol (incluido CLIENTE)
-  // podía asignar/quitar centros a cualquier usuario cambiando :userId.
-  @UseGuards(JwtAuthGuard)
-  @Get(':userId/centros')
-  @RequierePermiso('/seguridad/usuarios', 'ver')
-  async getUserCentros(@Param('userId', ParseIntPipe) userId: number) {
-    return this.usersService.getUserCentros(userId);
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @Post(':userId/centros')
-  @RequierePermiso('/seguridad/usuarios', 'editar')
-  async assignCentro(
-    @Param('userId', ParseIntPipe) userId: number,
-    @Body() dto: AssignCentroDto,
-  ) {
-    return this.usersService.assignCentro(userId, dto);
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @Post(':userId/centros/multiple')
-  @RequierePermiso('/seguridad/usuarios', 'editar')
-  async assignMultipleCentros(
-    @Param('userId', ParseIntPipe) userId: number,
-    @Body() dto: AssignMultipleCentrosDto,
-  ) {
-    return this.usersService.assignMultipleCentros(userId, dto);
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @Patch(':userId/centros/default')
-  @RequierePermiso('/seguridad/usuarios', 'editar')
-  async setDefaultCentro(
-    @Param('userId', ParseIntPipe) userId: number,
-    @Body() dto: UpdateCentroDefaultDto,
-  ) {
-    return this.usersService.setDefaultCentro(userId, dto.co_id);
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @Delete(':userId/centros/:centroId')
-  @RequierePermiso('/seguridad/usuarios', 'editar')
-  async removeCentro(
-    @Param('userId', ParseIntPipe) userId: number,
-    @Param('centroId', ParseIntPipe) centroId: number,
-  ) {
-    return this.usersService.removeCentro(userId, centroId);
-  }
-
   @Get(':usr_id')
   @RequierePermiso('/seguridad/usuarios', 'ver')
   async findOne(@Param('usr_id', ParseIntPipe) usr_id: number) {
@@ -195,8 +144,20 @@ export class UsuarioController {
       usuario_rol_id: number;
       usuario_activo: boolean;
     },
+    @Req() req: AuthRequest,
   ) {
-    return this.usersService.updateUser(usr_id, body);
+    // Antes se pasaba `body` tal cual y el servicio lee usr_nombre/
+    // usr_correo: editar nombre o correo nunca se guardaba.
+    return this.usersService.updateUser(
+      usr_id,
+      {
+        usr_nombre: body.nombre,
+        usr_correo: body.usuario_email,
+        usuario_password: body.usuario_password,
+        usuario_activo: body.usuario_activo,
+      },
+      req.user.usr_id,
+    );
   }
 
   @Delete(':usr_id')

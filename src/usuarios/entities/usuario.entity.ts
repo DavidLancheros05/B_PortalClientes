@@ -1,6 +1,5 @@
 // src/users/usuario.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, OneToMany } from 'typeorm';
-import { UsuariosCentrosEntity } from './usuarios-centros.entity';
+import { Entity, PrimaryGeneratedColumn, Column } from 'typeorm';
 
 @Entity('usuarios')
 export class UsuarioEntity {
@@ -48,7 +47,4 @@ export class UsuarioEntity {
 
   @Column({ name: 'ejng_id', type: 'int', nullable: true })
   ejng_id: number;
-
-  @OneToMany(() => UsuariosCentrosEntity, (uc) => uc.uco_usr_id)
-  centros: UsuariosCentrosEntity[];
 }
