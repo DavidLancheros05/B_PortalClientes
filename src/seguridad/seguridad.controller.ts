@@ -28,7 +28,11 @@ const relanzar = (error: any, mensaje: string): never => {
 export class SeguridadController {
   constructor(private readonly seguridadService: SeguridadService) {}
 
+  // Lo usan solo pantallas de Seguridad (roles, usuarios, usuario-roles,
+  // permisos por página). Antes bastaba con sesión: un CLIENTE veía todos
+  // los roles con su árbol de permisos.
   @Get('roles')
+  @RequierePermiso('/seguridad/roles', 'ver')
   async getRoles(@Query('incluirInactivos') incluirInactivos?: string) {
     try {
       return await this.seguridadService.getRoles(

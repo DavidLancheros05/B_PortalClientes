@@ -127,14 +127,19 @@ export class UsuarioController {
     return { message: 'Contraseña actualizada correctamente' };
   }
 
+  // Centros de operación de un usuario: solo el modal de Seguridad →
+  // Usuarios. Antes bastaba con sesión y cualquier rol (incluido CLIENTE)
+  // podía asignar/quitar centros a cualquier usuario cambiando :userId.
   @UseGuards(JwtAuthGuard)
   @Get(':userId/centros')
+  @RequierePermiso('/seguridad/usuarios', 'ver')
   async getUserCentros(@Param('userId', ParseIntPipe) userId: number) {
     return this.usersService.getUserCentros(userId);
   }
 
   @UseGuards(JwtAuthGuard)
   @Post(':userId/centros')
+  @RequierePermiso('/seguridad/usuarios', 'editar')
   async assignCentro(
     @Param('userId', ParseIntPipe) userId: number,
     @Body() dto: AssignCentroDto,
@@ -144,6 +149,7 @@ export class UsuarioController {
 
   @UseGuards(JwtAuthGuard)
   @Post(':userId/centros/multiple')
+  @RequierePermiso('/seguridad/usuarios', 'editar')
   async assignMultipleCentros(
     @Param('userId', ParseIntPipe) userId: number,
     @Body() dto: AssignMultipleCentrosDto,
@@ -153,6 +159,7 @@ export class UsuarioController {
 
   @UseGuards(JwtAuthGuard)
   @Patch(':userId/centros/default')
+  @RequierePermiso('/seguridad/usuarios', 'editar')
   async setDefaultCentro(
     @Param('userId', ParseIntPipe) userId: number,
     @Body() dto: UpdateCentroDefaultDto,
@@ -162,6 +169,7 @@ export class UsuarioController {
 
   @UseGuards(JwtAuthGuard)
   @Delete(':userId/centros/:centroId')
+  @RequierePermiso('/seguridad/usuarios', 'editar')
   async removeCentro(
     @Param('userId', ParseIntPipe) userId: number,
     @Param('centroId', ParseIntPipe) centroId: number,
