@@ -12,6 +12,9 @@ import { olvidarVersion } from './version-sesion-cache';
 // Minutos mínimos entre dos correos de recuperación para la misma cuenta.
 const RESET_ESPERA_MIN = 2;
 
+// Tiempo mínimo de respuesta de un login fallido (ver loginWithAccessType).
+const LOGIN_FALLIDO_MIN_MS = 1500;
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -44,12 +47,25 @@ export class AuthService {
     return minutos.length ? minutos : [15, 60, 1440];
   }
 
-  private mensajeBloqueo(minutos: number): string {
-    const tiempo =
-      minutos >= 60
-        ? `${Math.ceil(minutos / 60)} hora(s)`
-        : `${minutos} minuto(s)`;
-    return `Cuenta bloqueada temporalmente por demasiados intentos fallidos. Intenta de nuevo en ${tiempo} o usa "¿Olvidaste tu contraseña?" para desbloquearla ya.`;
+  // Mismo mensaje para TODO login fallido: cuenta inexistente, contraseña
+  // mala y cuenta bloqueada. Antes cada caso tenía su texto ("El cliente no
+  // existe", "Te quedan N intentos", "Cuenta bloqueada...") y con eso se
+  // podía averiguar qué NIT/usuario tiene cuenta en el portal. El aviso de
+  // bloqueo va siempre, exista o no la cuenta.
+  private errorLoginFallido(tipo: 'cliente' | 'usuario') {
+    const campo = tipo === 'cliente' ? 'Identificación' : 'Usuario';
+    return new UnauthorizedException(
+      `${campo} o contraseña incorrectos. Después de ${this.maxIntentosLogin()} intentos fallidos la cuenta se bloquea temporalmente; si la olvidaste usa "¿Olvidaste tu contraseña?".`,
+    );
+  }
+
+  // Si la cuenta no existe igual se compara contra un hash bcrypt, para que
+  // el tiempo de respuesta no delate si existe (sin esto respondía mucho más
+  // rápido, sin pasar por bcrypt).
+  private hashFicticio?: Promise<string>;
+  private async compararContraHashFicticio(password: string) {
+    this.hashFicticio ??= hashPassword(crypto.randomBytes(16).toString('hex'));
+    await passwordCoincide(password, await this.hashFicticio);
   }
 
   // Minutos que faltan si la cuenta tiene un bloqueo temporal vigente.
@@ -135,14 +151,17 @@ export class AuthService {
   // Antes de mirar la contraseña: durante un bloqueo no se revela si es
   // correcta. Solo existe el bloqueo temporal (pc_bloqueo_login); las columnas
   // cli_bloqueado/usr_bloqueado del bloqueo permanente anterior se eliminaron
-  // (migración 20260925_eliminar_columnas_bloqueado.sql).
+  // (migración 20260925_eliminar_columnas_bloqueado.sql). Responde igual que
+  // una contraseña mala (mensaje y tiempo) para no delatar la cuenta.
   private async verificarCuentaNoBloqueada(
     tipo: 'cliente' | 'usuario',
     cuentaId: number,
+    password: string,
   ) {
     const restantes = await this.minutosBloqueoRestantes(tipo, cuentaId);
     if (restantes) {
-      throw new UnauthorizedException(this.mensajeBloqueo(restantes));
+      await this.compararContraHashFicticio(password);
+      throw this.errorLoginFallido(tipo);
     }
   }
 
@@ -175,14 +194,9 @@ export class AuthService {
     const intentos = Number(fila?.previos ?? 0) + 1;
 
     if (intentos >= maxIntentos) {
-      const minutos = await this.bloquearTemporalmente(tipo, cuentaId);
-      throw new UnauthorizedException(this.mensajeBloqueo(minutos));
+      await this.bloquearTemporalmente(tipo, cuentaId);
     }
-
-    const quedan = maxIntentos - intentos;
-    throw new UnauthorizedException(
-      `La contraseña es incorrecta. Te queda(n) ${quedan} intento(s) antes de un bloqueo temporal.`,
-    );
+    throw this.errorLoginFallido(tipo);
   }
 
   // Ingreso correcto: reinicia intentos y el escalón de bloqueos.
@@ -199,17 +213,6 @@ export class AuthService {
       );
     }
     await this.limpiarBloqueoTemporal(tipo, cuentaId);
-  }
-
-  private enmascararCorreo(email: string): string {
-    const [usuario, dominio] = email.split('@');
-    if (!usuario || !dominio) return email;
-    if (usuario.length <= 4) {
-      return `${usuario[0]}***@${dominio}`;
-    }
-    const inicio = usuario.slice(0, 2);
-    const fin = usuario.slice(-2);
-    return `${inicio}***${fin}@${dominio}`;
   }
 
   async forgotPassword(identifier: string, accessType: 'cliente' | 'usuario') {
@@ -300,12 +303,7 @@ export class AuthService {
       [accessType, cuenta.id, tokenHash, RESET_ESPERA_MIN],
     );
 
-    if (!resultado?.creado) {
-      return {
-        ...RESPUESTA_GENERICA,
-        correoEnmascarado: this.enmascararCorreo(cuenta.email),
-      };
-    }
+    if (!resultado?.creado) return RESPUESTA_GENERICA;
 
     // Sin default: sin esta variable el correo saldría con un link relativo
     // ("/reset-password?...") que no abre desde el cliente de correo.
@@ -318,16 +316,20 @@ export class AuthService {
     const base = portalUrl.replace(/\/login\/?$/, '').replace(/\/$/, '');
     const resetUrl = `${base}/reset-password?token=${tokenCrudo}`;
 
-    await this.notificacionesService.notificarResetPassword({
-      nombre: cuenta.nombre,
-      email: cuenta.email,
-      reset_url: resetUrl,
-    });
+    // Respuesta idéntica exista o no la cuenta: antes se devolvía el correo
+    // enmascarado solo si existía (delataba la cuenta y parte del correo), y
+    // se esperaba el envío (varios segundos más, también la delataba). El
+    // correo sale en segundo plano; notificarResetPassword ya atrapa y
+    // registra sus propios errores.
+    void this.notificacionesService
+      .notificarResetPassword({
+        nombre: cuenta.nombre,
+        email: cuenta.email,
+        reset_url: resetUrl,
+      })
+      .catch(() => undefined);
 
-    return {
-      ...RESPUESTA_GENERICA,
-      correoEnmascarado: this.enmascararCorreo(cuenta.email),
-    };
+    return RESPUESTA_GENERICA;
   }
 
   async resetPassword(token: string, newPassword: string) {
@@ -429,32 +431,37 @@ export class AuthService {
       [identificacion],
     );
 
-    if (!cliente || cliente.length === 0) {
-      throw new UnauthorizedException('El cliente no existe');
+    const cli = cliente?.[0];
+
+    // Sin cuenta o sin contraseña asignada: misma respuesta que una
+    // contraseña mala, sin tocar la BD.
+    if (!cli?.cli_password) {
+      await this.compararContraHashFicticio(password);
+      throw this.errorLoginFallido('cliente');
     }
 
-    const cli = cliente[0];
+    await this.verificarCuentaNoBloqueada('cliente', cli.cli_id, password);
 
+    const intentosPrevios = Number(cli.cli_intentos_login ?? 0);
+    if (!(await passwordCoincide(password, cli.cli_password))) {
+      await this.registrarIntentoFallido('cliente', cli.cli_id);
+    }
+
+    // Acceso y estado se revisan DESPUÉS de la contraseña: quien la conoce es
+    // el dueño y puede saber por qué no entra; antes de eso responderlo
+    // delataba que la cuenta existe. Antes solo se miraba cli_acceso_pc y un
+    // cliente inactivo con acceso podía entrar.
     if (!cli.cli_acceso_pc) {
       throw new UnauthorizedException(
         'Cliente no tiene acceso al portal habilitado',
       );
     }
-
-    // Antes solo se miraba cli_acceso_pc y un cliente inactivo con acceso
-    // podía entrar.
     if (cli.cli_estado !== 'A') {
       throw new UnauthorizedException(
         'Cliente inactivo. Solicita la activación al administrador.',
       );
     }
 
-    await this.verificarCuentaNoBloqueada('cliente', cli.cli_id);
-
-    const intentosPrevios = Number(cli.cli_intentos_login ?? 0);
-    if (!(await passwordCoincide(password, cli.cli_password))) {
-      await this.registrarIntentoFallido('cliente', cli.cli_id);
-    }
     await this.registrarIngresoExitoso('cliente', cli.cli_id, intentosPrevios);
 
     // Obtener módulos del rol CLIENTE
@@ -535,30 +542,34 @@ export class AuthService {
       [usuario],
     );
 
-    if (!usuarioData || usuarioData.length === 0) {
-      throw new UnauthorizedException('El usuario no existe');
+    const usr = usuarioData?.[0];
+
+    // Mismo criterio que loginCliente: sin cuenta o sin contraseña, misma
+    // respuesta que una contraseña mala.
+    if (!usr?.usr_password) {
+      await this.compararContraHashFicticio(password);
+      throw this.errorLoginFallido('usuario');
     }
 
-    const usr = usuarioData[0];
+    await this.verificarCuentaNoBloqueada('usuario', usr.usr_id, password);
 
+    const intentosPrevios = Number(usr.usr_intentos_login ?? 0);
+    if (!(await passwordCoincide(password, usr.usr_password))) {
+      await this.registrarIntentoFallido('usuario', usr.usr_id);
+    }
+
+    // Después de la contraseña, igual que en loginCliente.
     if (!usr.usr_acceso_pc) {
       throw new UnauthorizedException(
         'Usuario no tiene acceso al portal habilitado',
       );
     }
-
     if (usr.usr_inactivar) {
       throw new UnauthorizedException(
         'Usuario inactivo. Solicita la activación al administrador.',
       );
     }
 
-    await this.verificarCuentaNoBloqueada('usuario', usr.usr_id);
-
-    const intentosPrevios = Number(usr.usr_intentos_login ?? 0);
-    if (!(await passwordCoincide(password, usr.usr_password))) {
-      await this.registrarIntentoFallido('usuario', usr.usr_id);
-    }
     await this.registrarIngresoExitoso('usuario', usr.usr_id, intentosPrevios);
 
     const modulos = await this.permissionsService.getModulesByUsuario(
@@ -624,13 +635,24 @@ export class AuthService {
     accessType: 'cliente' | 'usuario',
     captchaToken?: string,
   ) {
-    await this.verificarCaptcha(captchaToken);
-    if (accessType === 'cliente') {
-      return this.loginCliente(identifier, password);
-    } else if (accessType === 'usuario') {
-      return this.loginUsuarioInterno(identifier, password);
-    } else {
-      throw new UnauthorizedException('Tipo de acceso inválido');
+    const inicio = Date.now();
+    try {
+      await this.verificarCaptcha(captchaToken);
+      if (accessType === 'cliente') {
+        return await this.loginCliente(identifier, password);
+      } else if (accessType === 'usuario') {
+        return await this.loginUsuarioInterno(identifier, password);
+      } else {
+        throw new UnauthorizedException('Tipo de acceso inválido');
+      }
+    } catch (error) {
+      // Todo login fallido tarda al menos LOGIN_FALLIDO_MIN_MS: una cuenta
+      // existente hace más viajes a la BD (intentos, bloqueo) que una
+      // inexistente, y la diferencia de tiempo (~0.5 s) delataba si existe
+      // aunque el mensaje sea el mismo.
+      const espera = LOGIN_FALLIDO_MIN_MS - (Date.now() - inicio);
+      if (espera > 0) await new Promise((r) => setTimeout(r, espera));
+      throw error;
     }
   }
 }
