@@ -342,6 +342,46 @@ export class SolicitudesDocumentosService {
     );
   }
 
+  // Única fuente de la regla "quién puede subir, reemplazar o borrar
+  // documentos según dónde está la solicitud" (estado/etapa/resultado, ver
+  // FLUJO_ETAPAS.md). La usan getMisDocumentos (qué muestra la pantalla) y
+  // los endpoints que modifican archivos (que la hacen cumplir), para que no
+  // se desincronicen.
+  // - Cliente: BORRADOR o PENDIENTE — llenando (1/1/1), subiendo firmados
+  //   (2/1/5), con el Ejecutivo de Negocios (2/2/1, permitido por decisión de
+  //   negocio 2026-09-26) o devuelta por el Auxiliar (2/3/3).
+  // - Personal interno: solo 3/3/3 (el Auxiliar rechazó y corrige él mismo).
+  puedeModificarDocumentos(
+    solicitud: { sol_ses_id: number; sol_wet_id: number; sol_wee_id: number },
+    user: { rol?: string },
+  ): boolean {
+    const ses = Number(solicitud.sol_ses_id);
+    if (user?.rol && user.rol !== 'CLIENTE') {
+      return (
+        ses === 3 &&
+        Number(solicitud.sol_wet_id) === 3 &&
+        Number(solicitud.sol_wee_id) === 3
+      );
+    }
+    return ses === 1 || ses === 2;
+  }
+
+  async verificarPuedeModificarDocumentos(
+    solicitudId: number,
+    user: { rol?: string; cliente_id?: number; cli_id?: number },
+  ): Promise<void> {
+    await this.verificarAccesoSolicitud(solicitudId, user);
+    const [solicitud] = await this.dataSource.query(
+      `SELECT sol_ses_id, sol_wet_id, sol_wee_id FROM solicitudes WHERE sol_id = @0`,
+      [solicitudId],
+    );
+    if (!solicitud || !this.puedeModificarDocumentos(solicitud, user)) {
+      throw new ForbiddenException(
+        'La solicitud no admite cambios de documentos en su estado actual',
+      );
+    }
+  }
+
   async verificarAccesoSolicitud(
     solicitudId: number,
     user: { rol?: string; cliente_id?: number; cli_id?: number },

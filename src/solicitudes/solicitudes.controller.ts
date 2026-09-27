@@ -559,13 +559,16 @@ export class SolicitudesController {
         Number(solicitud.sol_wet_id) === 3 &&
         Number(solicitud.sol_wee_id) === 3;
 
-      const puedeCorregir = esStaff
-        ? enRechazoASC
-        : [1, 2].includes(Number(solicitud.sol_ses_id));
+      const puedeCorregir = this.documentosService.puedeModificarDocumentos(
+        solicitud,
+        req.user,
+      );
 
-      const rechazadoPorAuxiliar = esStaff
-        ? enRechazoASC
-        : Number(solicitud.sol_ses_id) === 2 && enRechazoASC;
+      // Rechazo del Auxiliar en el modo que le toca a quien consulta: 3/3/3
+      // para el personal interno, 2/3/3 para el cliente.
+      const rechazadoPorAuxiliar =
+        enRechazoASC &&
+        Number(solicitud.sol_ses_id) === (esStaff ? 3 : 2);
 
       // La sección debe seguir mostrando los documentos generados ya
       // guardados, incluso después de que la solicitud deje de estar en
@@ -1219,7 +1222,7 @@ export class SolicitudesController {
     },
   ) {
     try {
-      await this.documentosService.verificarAccesoSolicitud(
+      await this.documentosService.verificarPuedeModificarDocumentos(
         solicitudId,
         req.user,
       );
@@ -1311,7 +1314,7 @@ export class SolicitudesController {
         throw new BadRequestException('No se proporcionó ningún archivo');
       }
 
-      await this.documentosService.verificarAccesoSolicitud(
+      await this.documentosService.verificarPuedeModificarDocumentos(
         Number(dto?.sa_sol_id),
         req.user,
       );
@@ -1356,7 +1359,7 @@ export class SolicitudesController {
     },
   ) {
     try {
-      await this.documentosService.verificarAccesoSolicitud(
+      await this.documentosService.verificarPuedeModificarDocumentos(
         Number(dto?.sa_sol_id),
         req.user,
       );
