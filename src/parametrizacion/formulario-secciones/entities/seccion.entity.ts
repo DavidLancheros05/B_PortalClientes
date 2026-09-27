@@ -10,7 +10,7 @@ export class Seccion {
 
   @Column({
     type: 'nvarchar',
-    length: 500,
+    length: 'MAX',
     nullable: true,
     name: 'fs_descripcion',
   })
@@ -29,6 +29,6 @@ export class Seccion {
   fs_created_at: Date;
 
   // Versión del formulario a la que pertenece (FK a Formulario_versiones).
-  @Column({ type: 'int', name: 'fs_fv_id', nullable: true })
-  fs_fv_id: number | null;
+  @Column({ type: 'int', name: 'fs_fv_id' })
+  fs_fv_id: number;
 }

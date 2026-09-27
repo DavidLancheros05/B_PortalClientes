@@ -28,8 +28,8 @@ export async function contarSolicitudesQueBloqueanVersion(
 }
 
 // La API y las pantallas siguen hablando de "formulario X, versión N"
-// (fv_numero, lo que ve el usuario); por dentro todo se amarra por fv_id
-// (plan-correccion-modelo-datos-formulario.md, Fase 2). La pareja
+// (fv_numero, lo que ve el usuario); por dentro todo se amarra por fv_id.
+// La pareja
 // (fv_frs_id, fv_numero) es única (UQ_Formulario_versiones_frs_numero).
 export async function resolverFvId(
   queryable: Queryable,

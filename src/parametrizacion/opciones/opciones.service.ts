@@ -62,9 +62,8 @@ export class OpcionesService {
     return resultado;
   }
 
-  // Las condiciones van por fpo_codigo (Fase 5,
-  // plan-correccion-modelo-datos-formulario.md), así que renombrar la opción
-  // ya no las rompe. Igual se actualiza el texto guardado junto al código
+  // Las condiciones van por fpo_codigo, así que renombrar la opción ya
+  // no las rompe. Igual se actualiza el texto guardado junto al código
   // (fp_valor_padre_disparador y "valor" de las reglas) para que el editor
   // siga mostrando la opción correcta.
   private async sincronizarTextoEnDependientes(fpoId: number, valor: string) {

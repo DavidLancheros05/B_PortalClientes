@@ -45,8 +45,8 @@ export class SolicitudEntity {
   sol_version: number;
 
   // Versión del formulario con la que se creó (FK a Formulario_versiones).
-  @Column({ name: 'sol_fv_id', type: 'int', nullable: true })
-  sol_fv_id: number | null;
+  @Column({ name: 'sol_fv_id', type: 'int' })
+  sol_fv_id: number;
 
   @Column({ name: 'sol_usr_id_crea', type: 'int', nullable: true })
   sol_usr_id_crea: number | null;

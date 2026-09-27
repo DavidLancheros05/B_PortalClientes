@@ -10,18 +10,18 @@ import {
 import { FormularioPreguntaOpcion } from '../../opciones/entities/formulario-pregunta-opcion.entity';
 import { Seccion } from '../../formulario-secciones/entities/seccion.entity';
 
+// Debe coincidir con Formulario_tipo_input.fti_codigo (FK de fp_tipo): un
+// valor que no esté allá pasa la validación del DTO y revienta en la BD.
 export enum TipoPregunta {
   NOTA = 'NOTA',
   FECHA_HORA_ACTUAL = 'FECHA_HORA_ACTUAL',
   TEXTO = 'TEXTO',
   NUMERO = 'NUMERO',
   FECHA = 'FECHA',
-  LISTA = 'LISTA',
   SELECT = 'SELECT',
   SELECT_TABLA = 'SELECT_TABLA',
   DOCUMENTOS_TABLA = 'DOCUMENTOS_TABLA',
   MULTISELECT = 'MULTISELECT',
-  SELECT_CONDICIONAL = 'SELECT_CONDICIONAL',
   ARCHIVO = 'ARCHIVO',
   TABLA = 'TABLA',
   IMAGEN = 'IMAGEN',
@@ -39,7 +39,7 @@ export class FormularioPregunta {
   @Column({ type: 'nvarchar', length: 100, nullable: true })
   fp_codigo: string | null;
 
-  @Column({ type: 'varchar', length: 20 })
+  @Column({ type: 'varchar', length: 50 })
   fp_tipo: TipoPregunta;
 
   @Column({ type: 'bit', default: true })
@@ -49,8 +49,8 @@ export class FormularioPregunta {
   fp_orden: number;
 
   // Versión a la que pertenece la pregunta (FK a Formulario_versiones).
-  @Column({ type: 'int', nullable: true })
-  fp_fv_id: number | null;
+  @Column({ type: 'int' })
+  fp_fv_id: number;
 
   @CreateDateColumn({ type: 'datetime2' })
   fp_created_at: Date;
@@ -61,11 +61,8 @@ export class FormularioPregunta {
   @Column({ type: 'varchar', length: 100, nullable: true })
   fp_precarga_campo_cliente: string | null;
 
-  @Column({ type: 'int', nullable: true })
-  fp_frs_id: number | null;
-
-  @Column({ type: 'int', nullable: true })
-  fp_fs_id: number | null;
+  @Column({ type: 'int' })
+  fp_fs_id: number;
 
   @Column({ type: 'bit', default: false })
   fp_requerida: boolean;
@@ -105,8 +102,7 @@ export class FormularioPregunta {
 
   // fpo_codigo de la opción del padre que muestra esta pregunta. Cuando está,
   // manda sobre fp_valor_padre_disparador (que queda como texto visible y
-  // respaldo para padres sin opciones). Ver Fase 5 de
-  // plan-correccion-modelo-datos-formulario.md.
+  // respaldo para padres sin opciones).
   @Column({ type: 'nvarchar', length: 200, nullable: true })
   fp_fpo_codigo_disparador: string | null;
 

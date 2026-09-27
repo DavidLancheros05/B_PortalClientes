@@ -720,23 +720,22 @@ export class MaestrosService {
       throw new BadRequestException('Nombre de tabla inválido');
     }
 
-    if (mode === 'databases') {
-      const result = await this.dataSource.query(
-        `
-        SELECT name
-        FROM sys.databases
-        WHERE state = 0
-          AND (@0 = '' OR name LIKE '%' + @0 + '%')
-        ORDER BY name
-      `,
-        [query],
-      );
+    const currentDb = await this.obtenerNombreBaseActual();
 
-      return result.map((row: any) => String(row.name));
+    // Los catálogos del formulario siempre se leen de la base actual (no se
+    // guarda nombre de base, ver FormularioPreguntasService.create): no se
+    // listan las demás bases del servidor (master, tempdb, otras apps) ni se
+    // navegan sus tablas.
+    if (mode === 'databases') {
+      return currentDb ? [String(currentDb)] : [];
+    }
+    if (baseDatos && baseDatos.toLowerCase() !== String(currentDb).toLowerCase()) {
+      throw new BadRequestException(
+        'Solo se pueden consultar tablas de la base de datos actual',
+      );
     }
 
-    const currentDb = await this.obtenerNombreBaseActual();
-    const targetDb = baseDatos || currentDb;
+    const targetDb = currentDb;
 
     if (!targetDb || !this.isSafeIdentifier(targetDb)) {
       throw new BadRequestException('Base de datos objetivo inválida');

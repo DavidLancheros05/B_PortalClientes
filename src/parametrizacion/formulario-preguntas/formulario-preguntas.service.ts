@@ -26,9 +26,8 @@ export class FormularioPreguntasService {
 
   async create(dto: CreateFormularioPreguntaDto) {
     const { frs_id, fv_numero, ...dtoSinFormularioId } = dto;
-    // La pregunta se amarra a su versión por fv_id (Fase 2,
-    // plan-correccion-modelo-datos-formulario.md); la API manda formulario +
-    // número de versión.
+    // La pregunta se amarra a su versión por fv_id; la API manda
+    // formulario + número de versión.
     const versionNumero = fv_numero ?? 1;
     const fvId = frs_id
       ? await resolverFvId(
@@ -45,7 +44,6 @@ export class FormularioPreguntasService {
     await this.assertSeccionDeLaVersion(dto.fp_fs_id, fvId);
     const normalizedDto = {
       ...dtoSinFormularioId,
-      fp_frs_id: frs_id,
       fp_fv_id: fvId,
       fp_descripcion: dto.fp_descripcion
         ? normalizeMojibake(dto.fp_descripcion)
@@ -53,6 +51,10 @@ export class FormularioPreguntasService {
       fp_tabla_columnas: this.asegurarCodigosColumnasTabla(
         dto.fp_tabla_columnas,
       ),
+      // Nunca se guarda el nombre de la base: el catálogo siempre se lee de
+      // la base actual. Un nombre quemado rompió /maestros/catalogo al
+      // cambiar de servidor.
+      fp_catalogo_base_datos: null,
       fp_created_at: new Date(),
       ...(await this.derivarCondiciones(dto, null)),
     };
@@ -108,8 +110,16 @@ export class FormularioPreguntasService {
     // sin JOIN no hay multiplicación de filas, y cada consulta es simple.
     const where: Record<string, unknown> = {};
 
-    if (formularioId) {
-      where.fp_frs_id = formularioId;
+    // La pregunta no guarda el formulario (fp_frs_id se eliminó): se llega
+    // a él por su versión.
+    if (formularioId && !version) {
+      const versiones: { fv_id: number }[] =
+        await this.formularioPreguntaRepository.manager.query(
+          `SELECT fv_id FROM Formulario_versiones WHERE fv_frs_id = @0`,
+          [formularioId],
+        );
+      if (versiones.length === 0) return [];
+      where.fp_fv_id = In(versiones.map((v) => v.fv_id));
     }
 
     if (version) {
@@ -149,7 +159,8 @@ export class FormularioPreguntasService {
       ),
     ];
 
-    const [opciones, secciones] = await Promise.all([
+    const fvIds = [...new Set(preguntas.map((p) => p.fp_fv_id))];
+    const [opciones, secciones, versiones] = await Promise.all([
       this.formularioPreguntaRepository.manager
         .getRepository(FormularioPreguntaOpcion)
         .find({ where: { fpo_fp_id: In(fpIds) } }),
@@ -158,7 +169,15 @@ export class FormularioPreguntasService {
             .getRepository(Seccion)
             .find({ where: { fs_id: In(seccionIds) } })
         : Promise.resolve([]),
+      this.formularioPreguntaRepository.manager.query(
+        `SELECT fv_id, fv_frs_id FROM Formulario_versiones
+         WHERE fv_id IN (${fvIds.map((_, i) => `@${i}`).join(', ')})`,
+        fvIds,
+      ) as Promise<{ fv_id: number; fv_frs_id: number }[]>,
     ]);
+    const formularioPorVersion = new Map(
+      versiones.map((v) => [v.fv_id, v.fv_frs_id]),
+    );
 
     const opcionesPorPregunta = new Map<number, FormularioPreguntaOpcion[]>();
     for (const opcion of opciones) {
@@ -180,8 +199,8 @@ export class FormularioPreguntasService {
 
       return {
         ...p,
-        // Keep the legacy API field while the database uses fp_frs_id.
-        frs_id: p.fp_frs_id,
+        // Campo de la API que usa el frontend; sale de la versión.
+        frs_id: formularioPorVersion.get(p.fp_fv_id) ?? null,
         fp_protegida: motivoProteccion !== null,
         fp_protegida_motivo: motivoProteccion,
         seccion_nombre: seccion?.fs_nombre ?? null,
@@ -274,7 +293,8 @@ export class FormularioPreguntasService {
        FROM Formulario_pregunta WHERE fp_id = @0`,
       [id],
     );
-    if (dto.fp_fs_id != null && actual) {
+    // undefined = no cambia de sección; null explícito se rechaza.
+    if (dto.fp_fs_id !== undefined && actual) {
       await this.assertSeccionDeLaVersion(dto.fp_fs_id, actual.fp_fv_id);
     }
     const normalizedDto = {
@@ -285,6 +305,8 @@ export class FormularioPreguntasService {
       fp_tabla_columnas: this.asegurarCodigosColumnasTabla(
         dto.fp_tabla_columnas,
       ),
+      // Igual que en create: el catálogo siempre se lee de la base actual.
+      fp_catalogo_base_datos: null,
       ...(await this.derivarCondiciones(dto, actual ?? null)),
     };
 
@@ -295,10 +317,10 @@ export class FormularioPreguntasService {
   // fp_codigo a nivel de pregunta — ver "Documentos Cartonera/
   // documentacion/Funcionalidades/codigo-estable-columnas-tabla.md".
   // fp_tabla_columnas es un JSON de texto editable libremente desde
-  // Parametrización (etiqueta de columna, tipo, catálogo); sin esto,
-  // ClienteDatosNormalizadosService (BACKEND/src/cliente-datos-
-  // normalizados) solo puede anclar cada columna por su etiqueta de texto,
-  // y un simple renombrado rompe el mapeo en silencio. El editor no tiene
+  // Parametrización (etiqueta de columna, tipo, catálogo); sin esto, quien
+  // lea las celdas de la respuesta solo puede anclar cada columna por su
+  // etiqueta de texto, y un simple renombrado rompe la lectura en silencio.
+  // Las celdas de la respuesta se guardan por este codigo. El editor no tiene
   // (ni necesita) un campo para asignar este código a mano — se genera
   // solo, igual que fp_codigo.
   private asegurarCodigosColumnasTabla(
@@ -339,12 +361,14 @@ export class FormularioPreguntasService {
         consecutivo += 1;
         columna.codigo = String(consecutivo);
       }
+      // Las columnas tipo catálogo tampoco guardan base de datos (ver
+      // fp_catalogo_base_datos en create).
+      delete columna.catalogo_base_datos;
       return columna;
     });
 
-    // Las celdas de la respuesta se guardan por codigo (Fase 4,
-    // plan-correccion-modelo-datos-formulario.md): dos columnas con el mismo
-    // codigo compartirían la misma celda.
+    // Las celdas de la respuesta se guardan por codigo: dos columnas con
+    // el mismo codigo compartirían la misma celda.
     const vistos = new Set<string>();
     for (const columna of conCodigo) {
       const codigo = String(columna.codigo);
@@ -378,7 +402,7 @@ export class FormularioPreguntasService {
   }
 
   // Condiciones entre preguntas amarradas al código de la opción, no a su
-  // texto (Fase 5, plan-correccion-modelo-datos-formulario.md). El editor
+  // texto. El editor
   // sigue mandando el texto (fp_valor_padre_disparador, "valor" de cada
   // regla): acá se deriva el fpo_codigo de la opción del padre con ese texto.
   // Si el texto no coincide con ninguna opción (p. ej. quedó viejo tras un
@@ -524,14 +548,16 @@ export class FormularioPreguntasService {
     return JSON.stringify(conCodigo);
   }
 
-  // Las secciones son de cada versión (Fase 3,
-  // plan-correccion-modelo-datos-formulario.md): una pregunta no puede
-  // quedar en la sección de otra versión.
+  // Las secciones son de cada versión: una pregunta no puede quedar en
+  // la sección de otra versión, ni sin sección (fp_fs_id es NOT NULL y la
+  // FK (fp_fs_id, fp_fv_id) lo exige también en la BD).
   private async assertSeccionDeLaVersion(
     seccionId: number | null | undefined,
     fvId: number,
   ) {
-    if (seccionId == null) return;
+    if (seccionId == null) {
+      throw new BadRequestException('La pregunta debe pertenecer a una sección.');
+    }
     const [seccion] = await this.formularioPreguntaRepository.manager.query(
       `SELECT fs_fv_id FROM Formulario_secciones WHERE fs_id = @0`,
       [seccionId],

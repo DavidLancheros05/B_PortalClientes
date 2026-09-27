@@ -9,7 +9,8 @@
 // TypeScript), no lo hace "editable sin tocar código". El motivo de que un
 // fp_codigo esté protegido es que hay código en otro archivo
 // (ampliacion-cupo.service.ts, solicitudes-workflow.service.ts,
-// cliente-datos-normalizados.service.ts, etc.) que lo busca a mano — agregar
+// cliente-datos-normalizados.service.ts, clientes-siesa.service.ts, etc.)
+// que lo busca a mano — agregar
 // o Eliminar una fila de la tabla sin tocar ese código (o viceversa) deja la
 // protección desincronizada de la realidad.
 //

@@ -10,18 +10,17 @@ export class FormularioService {
       `SELECT
         s.fs_id,
         s.fs_nombre,
-        CAST(s.fs_descripcion AS VARCHAR(MAX)) AS fs_descripcion,
+        s.fs_descripcion,
         s.fs_orden
       FROM Formulario_secciones s
       INNER JOIN Formulario_pregunta fp ON fp.fp_fs_id = s.fs_id
-      WHERE fp.fp_frs_id = @0
-        AND fp.fp_fv_id = (SELECT frs_fv_id_activa FROM Formularios_solicitudes WHERE frs_id = @0)
+      WHERE fp.fp_fv_id = (SELECT frs_fv_id_activa FROM Formularios_solicitudes WHERE frs_id = @0)
         AND s.fs_activo = 1
         AND fp.fp_estado = 1
       GROUP BY
         s.fs_id,
         s.fs_nombre,
-        CAST(s.fs_descripcion AS VARCHAR(MAX)),
+        s.fs_descripcion,
         s.fs_orden
       ORDER BY s.fs_orden`,
       [formularioId],
@@ -57,8 +56,7 @@ export class FormularioService {
         fp.fp_precarga_campo_cliente,
         fp.fp_fv_id
        FROM Formulario_pregunta fp
-      WHERE fp.fp_frs_id = @0
-         AND fp.fp_fv_id = (SELECT frs_fv_id_activa FROM Formularios_solicitudes WHERE frs_id = @0)
+      WHERE fp.fp_fv_id = (SELECT frs_fv_id_activa FROM Formularios_solicitudes WHERE frs_id = @0)
          AND fp.fp_estado = 1
        ORDER BY fp.fp_fs_id, fp.fp_orden`,
       [formularioId],

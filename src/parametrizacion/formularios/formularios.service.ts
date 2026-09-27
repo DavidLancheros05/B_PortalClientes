@@ -10,7 +10,6 @@ import {
   contarSolicitudesQueBloqueanVersion,
   resolverFvId,
 } from './version-formulario.util';
-import { ClienteDatosNormalizadosService } from '../../cliente-datos-normalizados/cliente-datos-normalizados.service';
 
 export interface Formularios_solicitudes {
   frs_id: number;
@@ -47,7 +46,6 @@ export class FormulariosService {
   constructor(
     @InjectDataSource()
     private readonly dataSource: DataSource,
-    private readonly clienteDatosNormalizadosService: ClienteDatosNormalizadosService,
   ) {}
 
   async listar(
@@ -366,23 +364,6 @@ export class FormulariosService {
       );
     }
 
-    // Falla explícita en vez de dato perdido en silencio (problemas.md,
-    // "Riesgo adicional", recomendación #2): si esta versión le quitó (o
-    // renombró sin dejarle codigo) una columna que SIESA espera, no se
-    // deja activar — mejor bloquear acá que descubrirlo semanas después
-    // con un campo NULL en producción.
-    const problemas =
-      await this.clienteDatosNormalizadosService.validarColumnasMapeadas(
-        fvId,
-        this.dataSource,
-      );
-    if (problemas.length > 0) {
-      throw new Error(
-        `No se puede activar la versión ${versionNumero}: ` +
-          problemas.join(' | '),
-      );
-    }
-
     await this.dataSource.query(
       `
       UPDATE Formularios_solicitudes
@@ -518,7 +499,7 @@ export class FormulariosService {
     }
     const columnas = fvIdOrigen ? await this.columnasAClonar() : null;
 
-    // Todo en una transacción (Fase 6, plan-correccion-modelo-datos-formulario.md):
+    // Todo en una transacción:
     // antes la versión se insertaba y el clonado iba en consultas sueltas, así
     // que un fallo a mitad dejaba una versión a medio copiar.
     const queryRunner = this.dataSource.createQueryRunner();
@@ -570,8 +551,19 @@ export class FormulariosService {
     }
   }
 
-  // Columnas que NO se copian tal cual al clonar: las identity y las que toman
-  // un valor propio de la versión nueva.
+  // Columnas que apuntan a OTRA fila de Formulario_pregunta (fp_id de la
+  // versión de origen) — tras clonar hay que reescribirlas para que
+  // apunten al fp_id NUEVO del mismo pariente ya clonado. Las FKs
+  // (columna, fp_fv_id) -> (fp_id, fp_fv_id) no dejan insertarlas con el
+  // valor viejo, así que se insertan en NULL y se asignan después.
+  private static readonly COLUMNAS_AUTORREFERENCIA = [
+    'fp_pregunta_padre_id',
+    'fp_tabla_limite_pregunta_id',
+    'fp_catalogo_filtro_pregunta_id',
+  ];
+
+  // Columnas que NO se copian tal cual al clonar: las identity, las que toman
+  // un valor propio de la versión nueva y las autorreferencias (ver arriba).
   private static readonly COLUMNAS_CLONAR_EXCLUIDAS: Record<string, string[]> =
     {
       Formulario_secciones: ['fs_id', 'fs_fv_id', 'fs_created_at'],
@@ -580,19 +572,10 @@ export class FormulariosService {
         'fp_fv_id',
         'fp_created_at',
         'fp_fs_id',
+        ...FormulariosService.COLUMNAS_AUTORREFERENCIA,
       ],
       Formulario_pregunta_opcion: ['fpo_id', 'fpo_fp_id'],
     };
-
-  // Columnas que apuntan a OTRA fila de Formulario_pregunta (fp_id de la
-  // versión de origen) — tras clonar hay que reescribirlas para que
-  // apunten al fp_id NUEVO del mismo pariente ya clonado, si no quedan
-  // colgando de una pregunta de la versión vieja.
-  private static readonly COLUMNAS_AUTORREFERENCIA = [
-    'fp_pregunta_padre_id',
-    'fp_tabla_limite_pregunta_id',
-    'fp_catalogo_filtro_pregunta_id',
-  ];
 
   // La lista de columnas sale de INFORMATION_SCHEMA, así que una columna
   // nueva se copia sola. Antes preguntas tenía una lista a mano (~12 de ~25):
@@ -639,12 +622,26 @@ export class FormulariosService {
     const cSec = columnas.Formulario_secciones;
     const cPreg = columnas.Formulario_pregunta;
     const cOpc = columnas.Formulario_pregunta_opcion;
+    // La copia quedó con la autorreferencia en NULL; el valor viejo se lee de
+    // la pregunta de origen (o) y se traduce con @preg. Si una pregunta activa
+    // apunta a algo que no se clonó, se aborta: antes quedaba apuntando a la
+    // versión vieja sin avisar. En una desactivada (arrastrada solo porque
+    // otra la referencia) la referencia sin pareja se deja en NULL.
     const remapeos = FormulariosService.COLUMNAS_AUTORREFERENCIA.map(
       (c) => `
+      IF EXISTS (
+        SELECT 1 FROM @preg yo
+        JOIN Formulario_pregunta o ON o.fp_id = yo.viejo
+        WHERE o.[${c}] IS NOT NULL AND o.fp_estado = 1
+          AND NOT EXISTS (SELECT 1 FROM @preg m WHERE m.viejo = o.[${c}])
+      )
+        THROW 50021, 'Clonado: una pregunta activa referencia (${c}) una pregunta que no se copió a la versión nueva.', 1;
+
       UPDATE p SET p.[${c}] = m.nuevo
       FROM Formulario_pregunta p
       JOIN @preg yo ON yo.nuevo = p.fp_id
-      JOIN @preg m ON m.viejo = p.[${c}];`,
+      JOIN Formulario_pregunta o ON o.fp_id = yo.viejo
+      JOIN @preg m ON m.viejo = o.[${c}];`,
     ).join('\n');
 
     await queryRunner.query(
@@ -690,7 +687,10 @@ export class FormulariosService {
       SELECT m.nuevo, ${lista(cOpc, 'o.')}
       FROM Formulario_pregunta_opcion o
       JOIN @preg m ON m.viejo = o.fpo_fp_id
-      WHERE o.fpo_estado = 1;
+      WHERE o.fpo_estado = 1
+      -- Las opciones se muestran por fpo_id: con ORDER BY, SQL Server asigna
+      -- los identity nuevos en este orden; sin él no lo garantiza.
+      ORDER BY o.fpo_id;
       `,
       [fvIdOrigen, fvIdNueva],
     );
@@ -795,9 +795,9 @@ export class FormulariosService {
     }
 
     const preguntasConOpciones = preguntas.map(
-      (p: { fp_id: number; fp_frs_id: number | null }) => ({
+      (p: { fp_id: number }) => ({
         ...p,
-        frs_id: p.fp_frs_id,
+        frs_id: formularioId,
         opciones: opcionesPorPregunta.get(p.fp_id) || [],
       }),
     );

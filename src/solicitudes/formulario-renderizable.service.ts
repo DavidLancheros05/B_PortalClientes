@@ -188,11 +188,10 @@ export class FormularioRenderizableService {
             fp.fp_maximo,
             fp.fp_codigo
           FROM Formulario_pregunta fp
-          WHERE fp.fp_frs_id = @0
-            AND fp.fp_estado = 1
-            AND fp.fp_fv_id = @1
+          WHERE fp.fp_estado = 1
+            AND fp.fp_fv_id = @0
           ORDER BY fp.fp_fs_id, fp.fp_orden`,
-          [formularioId, sol_fv_id],
+          [sol_fv_id],
         ),
       ]);
       // Limpiar: tomar solo la primera línea y remover espacios extras
@@ -452,10 +451,10 @@ export class FormularioRenderizableService {
     const preguntas = await this.dataSource.query(
       `SELECT fp_id, fp_codigo, fp_tabla_columnas
        FROM Formulario_pregunta
-       WHERE fp_frs_id = @0 AND fp_fv_id = @1 AND fp_estado = 1
+       WHERE fp_fv_id = @0 AND fp_estado = 1
          AND fp_tipo = 'TABLA'
          AND fp_codigo IN ('REP_LEGAL_TABLA', 'REP_LEGAL_SUPLENTES', 'ACCIONISTAS_TABLA')`,
-      [formularioId, fvId],
+      [fvId],
     );
 
     const preguntaRepLegal = preguntas.find(

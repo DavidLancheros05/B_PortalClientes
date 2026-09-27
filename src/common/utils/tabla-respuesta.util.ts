@@ -1,9 +1,8 @@
 // Respuestas de preguntas TABLA (Formulario_respuesta.fr_valor_texto): un JSON
-// con un objeto por fila. Desde la Fase 4 de
-// plan-correccion-modelo-datos-formulario.md cada celda se guarda bajo el
-// `codigo` de su columna (estable ante renombrados), no bajo su `nombre`
-// visible. Las respuestas viejas pueden seguir por nombre, así que toda
-// lectura acepta ambas claves: `codigo` primero, `nombre` de respaldo.
+// con un objeto por fila. Cada celda se guarda bajo el `codigo` de su columna
+// (estable ante renombrados), no bajo su `nombre` visible. Toda lectura acepta
+// ambas claves (`codigo` primero, `nombre` de respaldo) por si llega un JSON
+// armado con el formato anterior.
 
 export interface ColumnaTablaClave {
   nombre: string;

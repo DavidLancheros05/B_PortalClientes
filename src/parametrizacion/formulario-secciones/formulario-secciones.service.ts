@@ -21,7 +21,7 @@ export interface Seccion {
   fs_fv_id: number | null;
 }
 
-// Desde la Fase 3 (plan-correccion-modelo-datos-formulario.md) cada sección
+// Cada sección
 // pertenece a UNA versión del formulario (fs_fv_id), igual que sus preguntas:
 // cambiar una sección de una versión con solicitudes cambiaría cómo se ven
 // esas solicitudes, así que se bloquea con la misma regla que preguntas y

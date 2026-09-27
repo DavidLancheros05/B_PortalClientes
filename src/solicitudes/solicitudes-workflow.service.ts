@@ -1304,10 +1304,10 @@ export class SolicitudesWorkflowService {
             queryRunner,
           );
 
-        // Materializa direcciones/contactos/representantes/etc. del cliente
-        // (ver problemas.md) — misma transacción: si falla, se revierte
-        // junto con el resto de la aprobación.
-        await this.clienteDatosNormalizadosService.promoverTablasNormalizadas(
+        // Copia a Clientes razón social, tipo de documento, correo y
+        // país/depto/ciudad de esta solicitud — misma transacción: si
+        // falla, se revierte junto con el resto de la aprobación.
+        await this.clienteDatosNormalizadosService.sincronizarClienteDesdeSolicitud(
           clienteIdSolicitud,
           sa_sol_id,
           queryRunner,
