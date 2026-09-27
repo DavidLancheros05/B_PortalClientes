@@ -48,7 +48,7 @@ type TipoCampoDestino = 'TEXTO' | 'BIT' | 'DECIMAL' | 'CATALOGO_ID';
 interface CampoMapeado {
   // Etiquetas ("nombre" en fp_tabla_columnas / claves en fr_valor_texto)
   // que pueden identificar esta columna a través de distintas versiones
-  // del formulario — recopiladas contra la BD real (fp_version 9 a 15).
+  // del formulario — recopiladas contra la BD real (fp_fv_id 9 a 15).
   // Fallback de transición: solo se usa para columnas que todavía no
   // tengan `codigo` (ver ColumnaTablaDef.codigo). Si una versión futura
   // renombra la columna a algo no listado aquí Y la columna tampoco tiene
@@ -309,10 +309,10 @@ export class ClienteDatosNormalizadosService {
     queryRunner: any,
   ): Promise<void> {
     const [solicitud] = await queryRunner.query(
-      `SELECT sol_formulario_version FROM solicitudes WHERE sol_id = @0`,
+      `SELECT sol_fv_id FROM solicitudes WHERE sol_id = @0`,
       [solicitudId],
     );
-    const fpVersion = solicitud?.sol_formulario_version || 1;
+    const fvId = solicitud?.sol_fv_id;
 
     // Deshabilitado a propósito (2026-09-20, decisión del usuario): las 8
     // tablas de MAPEOS (cliente_accionistas, cliente_direcciones_envio,
@@ -326,14 +326,14 @@ export class ClienteDatosNormalizadosService {
     // depender de esta materialización — ver sol_sincro_siesa.
     //
     // for (const mapeo of MAPEOS) {
-    //   await this.promoverMapeo(queryRunner, clienteId, solicitudId, mapeo, fpVersion);
+    //   await this.promoverMapeo(queryRunner, clienteId, solicitudId, mapeo, fvId);
     // }
 
     await this.sincronizarCamposPlanos(
       queryRunner,
       clienteId,
       solicitudId,
-      fpVersion,
+      fvId,
     );
   }
 
@@ -350,7 +350,7 @@ export class ClienteDatosNormalizadosService {
     queryRunner: any,
     clienteId: number,
     solicitudId: number,
-    fpVersion: number,
+    fvId: number,
   ): Promise<void> {
     const sets: string[] = [];
     const params: any[] = [];
@@ -367,13 +367,9 @@ export class ClienteDatosNormalizadosService {
       `SELECT fp.fp_codigo, fr.fr_valor_texto, fr.fr_valor_numero, fr.fr_valor_opcion_id
        FROM Formulario_pregunta fp
        JOIN Formulario_respuesta fr ON fr.fr_fp_id = fp.fp_id AND fr.fr_sol_id = @0
-       WHERE fp.fp_version = @1
+       WHERE fp.fp_fv_id = @1
          AND fp.fp_codigo IN (SELECT value FROM OPENJSON(@2))`,
-      [
-        solicitudId,
-        fpVersion,
-        JSON.stringify(CAMPOS_PLANOS.map((c) => c.fpCodigo)),
-      ],
+      [solicitudId, fvId, JSON.stringify(CAMPOS_PLANOS.map((c) => c.fpCodigo))],
     );
     const respuestaPorCodigo = new Map<string, (typeof filas)[number]>();
     for (const f of filas) {
@@ -459,20 +455,20 @@ export class ClienteDatosNormalizadosService {
     clienteId: number,
     solicitudId: number,
     mapeo: MapeoTabla,
-    fpVersion: number,
+    fvId: number,
   ): Promise<void> {
-    // Resolver el fp_id por (fp_codigo, fp_version) de ESTA solicitud, nunca
+    // Resolver el fp_id por (fp_codigo, fp_fv_id) de ESTA solicitud, nunca
     // hardcodeado ni "la versión más reciente" — cada solicitud se lee
-    // contra las preguntas de su propia sol_formulario_version.
+    // contra las preguntas de su propia versión (sol_fv_id).
     const [pregunta] = await queryRunner.query(
       `SELECT fp_id, fp_tabla_columnas FROM Formulario_pregunta
-       WHERE fp_codigo = @0 AND fp_version = @1 AND fp_tipo = 'TABLA'`,
-      [mapeo.fpCodigo, fpVersion],
+       WHERE fp_codigo = @0 AND fp_fv_id = @1 AND fp_tipo = 'TABLA'`,
+      [mapeo.fpCodigo, fvId],
     );
 
     if (!pregunta) {
       this.logger.warn(
-        `[promoverTablasNormalizadas] fp_codigo=${mapeo.fpCodigo} no existe en fp_version=${fpVersion} — se omite ${mapeo.tabla} para cliente ${clienteId}`,
+        `[promoverTablasNormalizadas] fp_codigo=${mapeo.fpCodigo} no existe en fv_id=${fvId} — se omite ${mapeo.tabla} para cliente ${clienteId}`,
       );
       return;
     }
@@ -540,10 +536,14 @@ export class ClienteDatosNormalizadosService {
         // (más confiable que la lista estática de aliases para leer el
         // valor de `fila`, que está keyeada por esa misma etiqueta).
         const def = this.resolverDefColumna(columnaDefs, campo);
-        const valorCrudo = this.obtenerValorCrudo(
-          fila,
-          def?.nombre ? [def.nombre, ...campo.aliases] : campo.aliases,
-        );
+        // La celda se guarda por `codigo` (Fase 4,
+        // plan-correccion-modelo-datos-formulario.md) o, en respuestas
+        // viejas, por su nombre.
+        const valorCrudo = this.obtenerValorCrudo(fila, [
+          ...(def?.codigo ? [def.codigo] : []),
+          ...(def?.nombre ? [def.nombre] : []),
+          ...campo.aliases,
+        ]);
 
         if (campo.kind === 'CATALOGO_ID') {
           const idPadre = def?.catalogo_columna_padre
@@ -574,7 +574,7 @@ export class ClienteDatosNormalizadosService {
     }
 
     this.logger.log(
-      `[promoverTablasNormalizadas] Cliente ${clienteId}: ${filas.length} fila(s) → ${mapeo.tabla} (${mapeo.fpCodigo}, fp_version=${fpVersion})`,
+      `[promoverTablasNormalizadas] Cliente ${clienteId}: ${filas.length} fila(s) → ${mapeo.tabla} (${mapeo.fpCodigo}, fv_id=${fvId})`,
     );
   }
 
@@ -602,7 +602,7 @@ export class ClienteDatosNormalizadosService {
    * todo bien) — quien llama decide si eso bloquea la activación.
    */
   async validarColumnasMapeadas(
-    fpVersion: number,
+    fvId: number,
     runner: { query: (sql: string, params?: any[]) => Promise<any> },
   ): Promise<string[]> {
     const problemas: string[] = [];
@@ -610,8 +610,8 @@ export class ClienteDatosNormalizadosService {
     for (const mapeo of MAPEOS) {
       const [pregunta] = await runner.query(
         `SELECT fp_id, fp_descripcion, fp_tabla_columnas FROM Formulario_pregunta
-         WHERE fp_codigo = @0 AND fp_version = @1 AND fp_tipo = 'TABLA'`,
-        [mapeo.fpCodigo, fpVersion],
+         WHERE fp_codigo = @0 AND fp_fv_id = @1 AND fp_tipo = 'TABLA'`,
+        [mapeo.fpCodigo, fvId],
       );
 
       if (!pregunta) {
@@ -667,6 +667,10 @@ export class ClienteDatosNormalizadosService {
           if (c && typeof c === 'object' && typeof c.nombre === 'string') {
             return {
               nombre: c.nombre,
+              // Sin esto resolverDefColumna nunca encontraba la columna por
+              // codigo y siempre caía a los aliases por nombre.
+              codigo:
+                typeof c.codigo === 'string' && c.codigo ? c.codigo : undefined,
               tipo: c.tipo ?? 'TEXTO',
               catalogo_tabla: c.catalogo_tabla,
               catalogo_columna: c.catalogo_columna,

@@ -55,7 +55,63 @@ export class OpcionesService {
         : dto.fpo_valor,
     };
 
-    return this.repo.update(fpo_id, normalizedDto);
+    const resultado = await this.repo.update(fpo_id, normalizedDto);
+    if (normalizedDto.fpo_valor) {
+      await this.sincronizarTextoEnDependientes(fpo_id, normalizedDto.fpo_valor);
+    }
+    return resultado;
+  }
+
+  // Las condiciones van por fpo_codigo (Fase 5,
+  // plan-correccion-modelo-datos-formulario.md), así que renombrar la opción
+  // ya no las rompe. Igual se actualiza el texto guardado junto al código
+  // (fp_valor_padre_disparador y "valor" de las reglas) para que el editor
+  // siga mostrando la opción correcta.
+  private async sincronizarTextoEnDependientes(fpoId: number, valor: string) {
+    const [opcion] = await this.repo.manager.query(
+      `SELECT fpo_fp_id, fpo_codigo FROM Formulario_pregunta_opcion WHERE fpo_id = @0`,
+      [fpoId],
+    );
+    if (!opcion?.fpo_codigo) return;
+
+    await this.repo.manager.query(
+      `UPDATE Formulario_pregunta SET fp_valor_padre_disparador = @0
+       WHERE fp_pregunta_padre_id = @1 AND fp_fpo_codigo_disparador = @2`,
+      [valor, opcion.fpo_fp_id, opcion.fpo_codigo],
+    );
+
+    for (const [columnaReglas, columnaPadre] of [
+      ['fp_tabla_limite_reglas', 'fp_tabla_limite_pregunta_id'],
+      ['fp_catalogo_filtro_reglas', 'fp_catalogo_filtro_pregunta_id'],
+    ]) {
+      const preguntas: { fp_id: number; reglas: string }[] =
+        await this.repo.manager.query(
+          `SELECT fp_id, ${columnaReglas} AS reglas FROM Formulario_pregunta
+           WHERE ${columnaPadre} = @0 AND ${columnaReglas} IS NOT NULL`,
+          [opcion.fpo_fp_id],
+        );
+      for (const pregunta of preguntas) {
+        let reglas: Record<string, unknown>[];
+        try {
+          reglas = JSON.parse(pregunta.reglas);
+          if (!Array.isArray(reglas)) continue;
+        } catch {
+          continue;
+        }
+        let cambio = false;
+        const nuevas = reglas.map((r) => {
+          if (r.opcion_codigo !== opcion.fpo_codigo || r.valor === valor) return r;
+          cambio = true;
+          return { ...r, valor };
+        });
+        if (cambio) {
+          await this.repo.manager.query(
+            `UPDATE Formulario_pregunta SET ${columnaReglas} = @0 WHERE fp_id = @1`,
+            [JSON.stringify(nuevas), pregunta.fp_id],
+          );
+        }
+      }
+    }
   }
 
   async remove(fpo_id: number) {
@@ -71,7 +127,7 @@ export class OpcionesService {
   private async assertVersionSinSolicitudes(fpoId: number, accion: string) {
     const opcion = await this.repo.manager.query(
       `
-      SELECT ISNULL(fp.fp_version, 1) AS fp_version
+      SELECT fp.fp_fv_id
       FROM Formulario_pregunta_opcion fpo
       JOIN Formulario_pregunta fp ON fp.fp_id = fpo.fpo_fp_id
       WHERE fpo.fpo_id = @0
@@ -82,7 +138,7 @@ export class OpcionesService {
 
     const total = await contarSolicitudesQueBloqueanVersion(
       this.repo.manager,
-      opcion[0].fp_version,
+      opcion[0].fp_fv_id,
     );
     if (total > 0) {
       throw new Error(

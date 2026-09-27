@@ -1,11 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Raw, Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { FormularioPregunta } from './entities/formulario-pregunta.entity';
 import { CreateFormularioPreguntaDto } from './dto/create-formulario-pregunta.dto';
 import { UpdateFormularioPreguntaDto } from './dto/update-formulario-pregunta.dto';
 import { normalizeMojibake } from 'src/common/utils/text-encoding.util';
-import { contarSolicitudesQueBloqueanVersion } from '../formularios/version-formulario.util';
+import {
+  contarSolicitudesQueBloqueanVersion,
+  obtenerFormularioYVersionActiva,
+  resolverFvId,
+} from '../formularios/version-formulario.util';
 import { FormularioPreguntaOpcion } from '../opciones/entities/formulario-pregunta-opcion.entity';
 import { Seccion } from '../formulario-secciones/entities/seccion.entity';
 import {
@@ -21,10 +25,28 @@ export class FormularioPreguntasService {
   ) {}
 
   async create(dto: CreateFormularioPreguntaDto) {
-    const { frs_id, ...dtoSinFormularioId } = dto;
+    const { frs_id, fv_numero, ...dtoSinFormularioId } = dto;
+    // La pregunta se amarra a su versión por fv_id (Fase 2,
+    // plan-correccion-modelo-datos-formulario.md); la API manda formulario +
+    // número de versión.
+    const versionNumero = fv_numero ?? 1;
+    const fvId = frs_id
+      ? await resolverFvId(
+          this.formularioPreguntaRepository.manager,
+          frs_id,
+          versionNumero,
+        )
+      : null;
+    if (!fvId) {
+      throw new BadRequestException(
+        `No existe la versión ${versionNumero} del formulario ${frs_id ?? '(sin formulario)'}.`,
+      );
+    }
+    await this.assertSeccionDeLaVersion(dto.fp_fs_id, fvId);
     const normalizedDto = {
       ...dtoSinFormularioId,
       fp_frs_id: frs_id,
+      fp_fv_id: fvId,
       fp_descripcion: dto.fp_descripcion
         ? normalizeMojibake(dto.fp_descripcion)
         : dto.fp_descripcion,
@@ -32,6 +54,7 @@ export class FormularioPreguntasService {
         dto.fp_tabla_columnas,
       ),
       fp_created_at: new Date(),
+      ...(await this.derivarCondiciones(dto, null)),
     };
 
     const creada = await this.formularioPreguntaRepository.save(normalizedDto);
@@ -60,22 +83,12 @@ export class FormularioPreguntasService {
   // pregunta ya respondida sin que el usuario tenga que saber el
   // formularioId/versión de memoria.
   async findPreguntasFormularioActivo() {
-    const result = await this.formularioPreguntaRepository.manager.query(`
-      SELECT TOP 1
-        f.frs_id AS frs_id,
-        ISNULL(
-          f.frs_version_activa,
-          (SELECT MAX(fv.fv_numero) FROM Formulario_versiones fv WHERE fv.fv_frs_id = f.frs_id)
-        ) AS version
-      FROM Formularios_solicitudes f
-      WHERE f.frs_activo = 1
-      ORDER BY f.frs_id
-    `);
-    const formularioId = result?.[0]?.frs_id;
-    const version = result?.[0]?.version || 1;
-    if (!formularioId) return [];
+    const activa = await obtenerFormularioYVersionActiva(
+      this.formularioPreguntaRepository.manager,
+    );
+    if (!activa) return [];
 
-    return this.findAll(formularioId, version, true);
+    return this.findAll(activa.frs_id, activa.fv_numero, true);
   }
 
   async findAll(
@@ -100,9 +113,20 @@ export class FormularioPreguntasService {
     }
 
     if (version) {
-      where.fp_version = Raw((alias) => `ISNULL(${alias}, 1) = :version`, {
+      if (!formularioId) {
+        // Un número de versión sin formulario es ambiguo (cada formulario
+        // tiene su propia v1, v2...).
+        throw new BadRequestException(
+          'Para filtrar por versión hay que indicar también el formulario.',
+        );
+      }
+      const fvId = await resolverFvId(
+        this.formularioPreguntaRepository.manager,
+        formularioId,
         version,
-      });
+      );
+      if (!fvId) return [];
+      where.fp_fv_id = fvId;
     }
 
     if (soloActivas) {
@@ -111,7 +135,7 @@ export class FormularioPreguntasService {
 
     const preguntas = await this.formularioPreguntaRepository.find({
       where,
-      order: { seccion_id: 'ASC', fp_orden: 'ASC' },
+      order: { fp_fs_id: 'ASC', fp_orden: 'ASC' },
     });
 
     if (preguntas.length === 0) return [];
@@ -120,7 +144,7 @@ export class FormularioPreguntasService {
     const seccionIds = [
       ...new Set(
         preguntas
-          .map((p) => p.seccion_id)
+          .map((p) => p.fp_fs_id)
           .filter((id): id is number => id != null),
       ),
     ];
@@ -149,7 +173,7 @@ export class FormularioPreguntasService {
 
     return preguntas.map((p) => {
       const seccion =
-        p.seccion_id != null ? seccionPorId.get(p.seccion_id) : undefined;
+        p.fp_fs_id != null ? seccionPorId.get(p.fp_fs_id) : undefined;
       const motivoProteccion = p.fp_codigo
         ? (preguntasProtegidas.get(p.fp_codigo) ?? null)
         : null;
@@ -236,14 +260,32 @@ export class FormularioPreguntasService {
     await this.assertVersionSinSolicitudes(id, 'editar');
     await this.assertNoCambiaTipoPreguntaProtegida(id, dto);
 
+    // Una pregunta no se cambia de formulario ni de versión al editarla: se
+    // descartan esos campos para que fp_fv_id no quede desamarrado.
+    const {
+      frs_id: _frsId,
+      fv_numero: _fvNumero,
+      ...dtoEditable
+    } = dto as UpdateFormularioPreguntaDto & { frs_id?: number };
+    const [actual] = await this.formularioPreguntaRepository.manager.query(
+      `SELECT fp_fv_id, fp_pregunta_padre_id, fp_valor_padre_disparador,
+              fp_fpo_codigo_disparador, fp_tabla_limite_pregunta_id,
+              fp_catalogo_filtro_pregunta_id
+       FROM Formulario_pregunta WHERE fp_id = @0`,
+      [id],
+    );
+    if (dto.fp_fs_id != null && actual) {
+      await this.assertSeccionDeLaVersion(dto.fp_fs_id, actual.fp_fv_id);
+    }
     const normalizedDto = {
-      ...dto,
+      ...dtoEditable,
       fp_descripcion: dto.fp_descripcion
         ? normalizeMojibake(dto.fp_descripcion)
         : dto.fp_descripcion,
       fp_tabla_columnas: this.asegurarCodigosColumnasTabla(
         dto.fp_tabla_columnas,
       ),
+      ...(await this.derivarCondiciones(dto, actual ?? null)),
     };
 
     return this.formularioPreguntaRepository.update(id, normalizedDto);
@@ -300,6 +342,20 @@ export class FormularioPreguntasService {
       return columna;
     });
 
+    // Las celdas de la respuesta se guardan por codigo (Fase 4,
+    // plan-correccion-modelo-datos-formulario.md): dos columnas con el mismo
+    // codigo compartirían la misma celda.
+    const vistos = new Set<string>();
+    for (const columna of conCodigo) {
+      const codigo = String(columna.codigo);
+      if (vistos.has(codigo)) {
+        throw new BadRequestException(
+          `Dos columnas de la tabla tienen el mismo código "${codigo}".`,
+        );
+      }
+      vistos.add(codigo);
+    }
+
     return JSON.stringify(conCodigo);
   }
 
@@ -319,6 +375,175 @@ export class FormularioPreguntasService {
     }
 
     return this.formularioPreguntaRepository.update(id, { fp_estado: false });
+  }
+
+  // Condiciones entre preguntas amarradas al código de la opción, no a su
+  // texto (Fase 5, plan-correccion-modelo-datos-formulario.md). El editor
+  // sigue mandando el texto (fp_valor_padre_disparador, "valor" de cada
+  // regla): acá se deriva el fpo_codigo de la opción del padre con ese texto.
+  // Si el texto no coincide con ninguna opción (p. ej. quedó viejo tras un
+  // renombrado) se conserva el código que ya tenía, en vez de borrarlo. Solo
+  // devuelve los campos que hay que escribir.
+  private async derivarCondiciones(
+    dto: Partial<CreateFormularioPreguntaDto>,
+    actual: {
+      fp_pregunta_padre_id: number | null;
+      fp_valor_padre_disparador: string | null;
+      fp_fpo_codigo_disparador: string | null;
+      fp_tabla_limite_pregunta_id: number | null;
+      fp_catalogo_filtro_pregunta_id: number | null;
+    } | null,
+  ): Promise<Record<string, unknown>> {
+    const cambios: Record<string, unknown> = {};
+    const toca = (campo: string) => campo in dto;
+
+    if (
+      toca('fp_pregunta_padre_id') ||
+      toca('fp_valor_padre_disparador') ||
+      toca('fp_fpo_codigo_disparador')
+    ) {
+      const padreId = toca('fp_pregunta_padre_id')
+        ? (dto.fp_pregunta_padre_id ?? null)
+        : (actual?.fp_pregunta_padre_id ?? null);
+      const texto = toca('fp_valor_padre_disparador')
+        ? (dto.fp_valor_padre_disparador ?? null)
+        : (actual?.fp_valor_padre_disparador ?? null);
+      const mismoPadre = padreId === (actual?.fp_pregunta_padre_id ?? null);
+      const opciones = padreId ? await this.opcionesDe(padreId) : [];
+
+      let codigo: string | null = null;
+      if (toca('fp_fpo_codigo_disparador') && dto.fp_fpo_codigo_disparador) {
+        const opcion = opciones.find(
+          (o) => o.fpo_codigo === dto.fp_fpo_codigo_disparador,
+        );
+        if (!opcion) {
+          throw new BadRequestException(
+            `La opción "${dto.fp_fpo_codigo_disparador}" no pertenece a la pregunta padre.`,
+          );
+        }
+        codigo = opcion.fpo_codigo;
+        cambios.fp_valor_padre_disparador = opcion.fpo_valor;
+      } else if (texto) {
+        codigo =
+          this.codigoPorTexto(opciones, texto) ??
+          (mismoPadre ? (actual?.fp_fpo_codigo_disparador ?? null) : null);
+      }
+      cambios.fp_fpo_codigo_disparador = padreId ? codigo : null;
+      // Con código, el texto guardado es siempre el actual de la opción
+      // (aunque el editor haya mandado uno viejo).
+      const opcionElegida = codigo
+        ? opciones.find((o) => o.fpo_codigo === codigo)
+        : undefined;
+      if (opcionElegida) {
+        cambios.fp_valor_padre_disparador = opcionElegida.fpo_valor;
+      }
+    }
+
+    const reglas: [string, string][] = [
+      ['fp_tabla_limite_reglas', 'fp_tabla_limite_pregunta_id'],
+      ['fp_catalogo_filtro_reglas', 'fp_catalogo_filtro_pregunta_id'],
+    ];
+    for (const [campoReglas, campoPadre] of reglas) {
+      if (!toca(campoReglas)) continue;
+      const json = (dto as Record<string, unknown>)[campoReglas] as
+        | string
+        | null
+        | undefined;
+      const padreId = toca(campoPadre)
+        ? ((dto as Record<string, unknown>)[campoPadre] as number | null)
+        : ((actual as Record<string, unknown> | null)?.[campoPadre] as
+            | number
+            | null);
+      cambios[campoReglas] = await this.agregarCodigoOpcionAReglas(
+        json,
+        padreId ?? null,
+      );
+    }
+
+    return cambios;
+  }
+
+  private async opcionesDe(
+    fpId: number,
+  ): Promise<{ fpo_codigo: string; fpo_valor: string }[]> {
+    return this.formularioPreguntaRepository.manager.query(
+      `SELECT fpo_codigo, fpo_valor FROM Formulario_pregunta_opcion
+       WHERE fpo_fp_id = @0 AND fpo_estado = 1 AND fpo_codigo IS NOT NULL`,
+      [fpId],
+    );
+  }
+
+  // Código de la única opción activa con ese texto (sin distinguir
+  // mayúsculas ni espacios); null si no hay ninguna o hay varias.
+  private codigoPorTexto(
+    opciones: { fpo_codigo: string; fpo_valor: string }[],
+    texto: string,
+  ): string | null {
+    const norm = (v: string) => (v ?? '').trim().toLowerCase();
+    const coinciden = opciones.filter((o) => norm(o.fpo_valor) === norm(texto));
+    return coinciden.length === 1 ? coinciden[0].fpo_codigo : null;
+  }
+
+  // Cada regla {valor, ...} gana opcion_codigo (la opción del padre con ese
+  // texto). Una regla que ya trae opcion_codigo se valida y se le actualiza
+  // el texto.
+  private async agregarCodigoOpcionAReglas(
+    json: string | null | undefined,
+    padreId: number | null,
+  ): Promise<string | null | undefined> {
+    if (!json || !padreId) return json;
+    let reglas: Record<string, unknown>[];
+    try {
+      const parsed = JSON.parse(json);
+      if (!Array.isArray(parsed)) return json;
+      reglas = parsed;
+    } catch {
+      return json;
+    }
+    const opciones = await this.opcionesDe(padreId);
+    if (opciones.length === 0) return json; // padre sin opciones: va por texto
+
+    const conCodigo = reglas.map((regla) => {
+      const codigo =
+        typeof regla.opcion_codigo === 'string' ? regla.opcion_codigo : null;
+      if (codigo) {
+        const opcion = opciones.find((o) => o.fpo_codigo === codigo);
+        if (!opcion) {
+          throw new BadRequestException(
+            `La opción "${codigo}" de una regla no pertenece a la pregunta de la que depende.`,
+          );
+        }
+        return { ...regla, valor: opcion.fpo_valor };
+      }
+      const derivado =
+        typeof regla.valor === 'string'
+          ? this.codigoPorTexto(opciones, regla.valor)
+          : null;
+      return derivado ? { ...regla, opcion_codigo: derivado } : regla;
+    });
+    return JSON.stringify(conCodigo);
+  }
+
+  // Las secciones son de cada versión (Fase 3,
+  // plan-correccion-modelo-datos-formulario.md): una pregunta no puede
+  // quedar en la sección de otra versión.
+  private async assertSeccionDeLaVersion(
+    seccionId: number | null | undefined,
+    fvId: number,
+  ) {
+    if (seccionId == null) return;
+    const [seccion] = await this.formularioPreguntaRepository.manager.query(
+      `SELECT fs_fv_id FROM Formulario_secciones WHERE fs_id = @0`,
+      [seccionId],
+    );
+    if (!seccion) {
+      throw new BadRequestException(`La sección ${seccionId} no existe.`);
+    }
+    if (seccion.fs_fv_id !== fvId) {
+      throw new BadRequestException(
+        'La sección elegida pertenece a otra versión del formulario.',
+      );
+    }
   }
 
   // "Preguntas protegidas": fp_codigo anclado a lógica hardcodeada en el
@@ -373,14 +598,14 @@ export class FormularioPreguntasService {
   // salida segura es "crear nueva versión" desde Parametrización.
   private async assertVersionSinSolicitudes(fpId: number, accion: string) {
     const pregunta = await this.formularioPreguntaRepository.manager.query(
-      `SELECT ISNULL(fp_version, 1) AS fp_version FROM Formulario_pregunta WHERE fp_id = @0`,
+      `SELECT fp_fv_id FROM Formulario_pregunta WHERE fp_id = @0`,
       [fpId],
     );
     if (pregunta.length === 0) return;
 
     const total = await contarSolicitudesQueBloqueanVersion(
       this.formularioPreguntaRepository.manager,
-      pregunta[0].fp_version,
+      pregunta[0].fp_fv_id,
     );
     if (total > 0) {
       throw new Error(

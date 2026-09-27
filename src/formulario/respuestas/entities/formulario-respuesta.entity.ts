@@ -58,9 +58,6 @@ export class FormularioRespuestaEntity {
   @Column({ type: 'int', nullable: true, name: 'fr_actualizado_por' })
   fr_actualizado_por: number;
 
-  @Column({ type: 'int', nullable: true, name: 'fr_valor_archivo_id' })
-  fr_valor_archivo_id: number;
-
   @Column({ type: 'varchar', nullable: true, name: 'fr_valor_catalogo_tipo' })
   fr_valor_catalogo_tipo: string;
 

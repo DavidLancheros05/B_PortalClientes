@@ -15,7 +15,7 @@ import {
   CarpetaAlmacenamientoService,
   TIPO_ARCHIVO_URLS,
 } from '../common/storage/carpeta-almacenamiento.service';
-import { SolicitudEstadosService } from '../common/solicitud-estados/solicitud-estados.service';
+import { SolicitudEstadosService } from '../parametrizacion/solicitud-estados/solicitud-estados.service';
 import { generarCartaPdf } from '../common/utils/carta-pdf.util';
 import {
   FormularioRenderizableService,
@@ -52,7 +52,7 @@ export class SolicitudesWorkflowService {
   ): Record<string, string> {
     const mapa: Record<string, string> = {};
     for (const p of preguntas) {
-      const claves = [`${p.seccion_id}|${p.fp_descripcion}`];
+      const claves = [`${p.fp_fs_id}|${p.fp_descripcion}`];
       if (p.fp_codigo) claves.unshift(`cod:${p.fp_codigo}`);
       for (const clave of claves) {
         if (!(clave in mapa)) mapa[clave] = p.valor_resuelto;
@@ -125,7 +125,7 @@ export class SolicitudesWorkflowService {
     const [[solicitud], subidos] = await Promise.all([
       runner.query(
         `
-        SELECT s.sol_formulario_version, ISNULL(c.cli_es_distribuidor, 0) AS cli_es_distribuidor
+        SELECT s.sol_fv_id, ISNULL(c.cli_es_distribuidor, 0) AS cli_es_distribuidor
         FROM solicitudes s
         JOIN Clientes c ON c.cli_id = s.sol_cli_id
         WHERE s.sol_id = @0
@@ -144,7 +144,7 @@ export class SolicitudesWorkflowService {
         [solicitudId],
       ),
     ]);
-    const version = solicitud?.sol_formulario_version ?? 1;
+    const version = solicitud?.sol_fv_id;
     const esDistribuidor = !!solicitud?.cli_es_distribuidor;
 
     // tdo_solo_distribuidor=1: documentos adicionales (ej. "solicitud"/
@@ -161,7 +161,7 @@ export class SolicitudesWorkflowService {
       FROM Formulario_pregunta fp
       JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tdo_id
       WHERE fp.fp_estado = 1
-        AND ISNULL(fp.fp_version, 1) = @0
+        AND fp.fp_fv_id = @0
         AND ${condicionDocumentoDiferido('@1')}
       `,
       [version, esDistribuidor ? 1 : 0],
@@ -705,7 +705,9 @@ export class SolicitudesWorkflowService {
     contexto: string,
   ): asserts usuarioId is number {
     if (!usuarioId) {
-      throw new Error(`${contexto}: falta el usuario interno que realiza la acción`);
+      throw new Error(
+        `${contexto}: falta el usuario interno que realiza la acción`,
+      );
     }
   }
 
@@ -1535,17 +1537,17 @@ export class SolicitudesWorkflowService {
     observaciones: string | null,
   ) {
     const [solicitudActual] = await this.dataSource.query(
-      `SELECT sol_formulario_version FROM solicitudes WHERE sol_id = @0`,
+      `SELECT sol_fv_id FROM solicitudes WHERE sol_id = @0`,
       [sa_sol_id],
     );
-    const version = solicitudActual?.sol_formulario_version ?? 1;
+    const version = solicitudActual?.sol_fv_id;
 
     const preguntas: { fp_id: number; fp_codigo: string }[] =
       await this.dataSource.query(
         `SELECT fp_id, fp_codigo FROM Formulario_pregunta
          WHERE fp_codigo IN ('CONCEPTO_EJECUTIVO_NOMBRE', 'CONCEPTO_OBSERVACIONES',
                               'CONCEPTO_CONSUMO_PROYECTADO', 'CONCEPTO_TONELADAS_PROYECTADO')
-           AND fp_estado = 1 AND ISNULL(fp_version, 1) = @0`,
+           AND fp_estado = 1 AND fp_fv_id = @0`,
         [version],
       );
     if (!preguntas.length) {
@@ -1621,17 +1623,17 @@ export class SolicitudesWorkflowService {
     condiciones?: { cupo?: number; plazoPago?: number; formaPago?: string },
   ) {
     const [solicitudActual] = await queryRunner.query(
-      `SELECT sol_formulario_version FROM solicitudes WHERE sol_id = @0`,
+      `SELECT sol_fv_id FROM solicitudes WHERE sol_id = @0`,
       [sa_sol_id],
     );
-    const version = solicitudActual?.sol_formulario_version ?? 1;
+    const version = solicitudActual?.sol_fv_id;
 
     const preguntas: { fp_id: number; fp_codigo: string }[] =
       await queryRunner.query(
         `SELECT fp_id, fp_codigo FROM Formulario_pregunta
          WHERE fp_codigo IN ('USO_EXCL_DECISION', 'USO_EXCL_CUPO', 'USO_EXCL_PLAZO_PAGO',
                               'USO_EXCL_FORMA_PAGO', 'USO_EXCL_APRUEBA_NOMBRE', 'USO_EXCL_FIRMA')
-           AND fp_estado = 1 AND ISNULL(fp_version, 1) = @0`,
+           AND fp_estado = 1 AND fp_fv_id = @0`,
         [version],
       );
     if (!preguntas.length) {
@@ -1871,7 +1873,7 @@ export class SolicitudesWorkflowService {
          WHERE sa.sa_sol_id = @0
            AND sa.sa_estado = 'activo'
            AND fp.fp_estado = 1
-           AND ISNULL(fp.fp_version, 1) = ISNULL(s.sol_formulario_version, 1)
+           AND fp.fp_fv_id = s.sol_fv_id
            AND ${condicionDocumentoDiferido('c.cli_es_distribuidor')}`,
         [solicitudId],
       );

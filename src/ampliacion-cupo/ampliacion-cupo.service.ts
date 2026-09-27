@@ -17,7 +17,7 @@ import {
   TIPO_ARCHIVO_URLS,
 } from '../common/storage/carpeta-almacenamiento.service';
 import { HistorialWorkflowService } from '../workflow/historial/historial-workflow.service';
-import { obtenerVersionFormularioActivo } from '../common/utils/formulario-activo.util';
+import { obtenerFvIdFormularioActivo } from '../parametrizacion/formularios/version-formulario.util';
 
 const CAMPOS_SOLICITUD_AMPLIACION = `
   sol_id, sol_cli_id, sol_cupo_solicitado, sol_cupo_actual_referencia,
@@ -138,8 +138,8 @@ export class AmpliacionCupoService {
       const numeroSolicitud =
         await this.obtenerSiguienteNumeroSolicitud(queryRunner);
 
-      const formularioVersion =
-        await obtenerVersionFormularioActivo(queryRunner);
+      // Las preguntas se buscan por fv_id.
+      const formularioVersion = await obtenerFvIdFormularioActivo(queryRunner);
 
       // 5. Obtener etapas del workflow
       const etapaClienteResult = await queryRunner.query(
@@ -170,7 +170,7 @@ export class AmpliacionCupoService {
         INSERT INTO solicitudes (
           sol_cli_id, sol_ses_id,
           sol_fecha_creacion, sol_created_at, sol_updated_at,
-          sol_version, sol_formulario_version, sol_numero,
+          sol_version, sol_fv_id, sol_numero,
           sol_ejng_id, sol_wet_id, sol_wee_id,
           sol_cupo_solicitado, sol_justificacion_ampliacion, sol_cupo_actual_referencia,
           sol_consumo_mensual_proyectado, sol_toneladas_proyectadas
@@ -187,7 +187,7 @@ export class AmpliacionCupoService {
         now, // @3 created_at
         now, // @4 updated_at
         1, // @5 version
-        formularioVersion, // @6 formulario_version
+        formularioVersion, // @6 sol_fv_id
         numeroSolicitud, // @7 numero_solicitud
         ejecutivoId, // @8 ejecutivo_id
         etapaId, // @9 etapa_actual_id
@@ -297,14 +297,14 @@ export class AmpliacionCupoService {
       await queryRunner.query(
         `SELECT fp_id, fp_codigo FROM Formulario_pregunta
          WHERE fp_codigo IN (${codigosRequeridos.map((_, i) => `@${i + 1}`).join(', ')})
-           AND fp_estado = 1 AND ISNULL(fp_version, 1) = @0`,
+           AND fp_estado = 1 AND fp_fv_id = @0`,
         [formularioVersion, ...codigosRequeridos],
       );
     const fpIdPorCodigo = new Map(preguntas.map((p) => [p.fp_codigo, p.fp_id]));
     const faltantes = codigosRequeridos.filter((c) => !fpIdPorCodigo.has(c));
     if (faltantes.length > 0) {
       throw new Error(
-        `Faltan preguntas activas en el formulario (versión ${formularioVersion}) para la ampliación de cupo: ${faltantes.join(', ')}.`,
+        `Faltan preguntas activas en el formulario (fv_id ${formularioVersion}) para la ampliación de cupo: ${faltantes.join(', ')}.`,
       );
     }
     const fpId = (codigo: string) => fpIdPorCodigo.get(codigo)!;
@@ -403,7 +403,7 @@ export class AmpliacionCupoService {
       fp_tipo: string;
     }[] = await queryRunner.query(
       `SELECT fp_id, fp_codigo, fp_tipo FROM Formulario_pregunta
-       WHERE fp_estado = 1 AND ISNULL(fp_version, 1) = @0
+       WHERE fp_estado = 1 AND fp_fv_id = @0
          AND fp_codigo IS NOT NULL
          AND fp_precarga_fuente IN ('ultima_solicitud', 'cliente_primero')
          AND fp_codigo NOT IN (${CODIGOS_PREGUNTAS_AMPLIACION.map((c) => `'${c}'`).join(', ')})
@@ -447,7 +447,11 @@ export class AmpliacionCupoService {
     // Opciones activas de las preguntas destino, en una sola consulta, para
     // traducir cada opción de origen por su fpo_codigo (antes era una
     // consulta por fila).
-    const opciones: { fpo_id: number; fpo_fp_id: number; fpo_codigo: string }[] =
+    const opciones: {
+      fpo_id: number;
+      fpo_fp_id: number;
+      fpo_codigo: string;
+    }[] =
       preguntasNuevas.length === 0
         ? []
         : await queryRunner.query(
@@ -554,7 +558,7 @@ export class AmpliacionCupoService {
       fp_tdo_id: number;
     }[] = await queryRunner.query(
       `SELECT fp_id, fp_tdo_id FROM Formulario_pregunta
-         WHERE fp_estado = 1 AND ISNULL(fp_version, 1) = @0
+         WHERE fp_estado = 1 AND fp_fv_id = @0
            AND fp_tdo_id IS NOT NULL`,
       [formularioVersion],
     );
@@ -571,8 +575,9 @@ export class AmpliacionCupoService {
     // actual (ej. subido por otra vía): no hay dónde ponerlo, se omite.
     const aClonar = documentosCliente
       .map((doc) => ({ doc, fpId: fpIdPorTdoId.get(doc.ca_tdo_id) }))
-      .filter((x): x is { doc: (typeof documentosCliente)[number]; fpId: number } =>
-        Boolean(x.fpId),
+      .filter(
+        (x): x is { doc: (typeof documentosCliente)[number]; fpId: number } =>
+          Boolean(x.fpId),
       );
 
     // Copias en paralelo (antes una tras otra). Sin try/catch: si el

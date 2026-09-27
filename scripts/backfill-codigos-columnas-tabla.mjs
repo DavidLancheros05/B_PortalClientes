@@ -30,24 +30,28 @@
  *   node scripts/backfill-codigos-columnas-tabla.mjs --apply   # escribe de verdad
  */
 
-import sql from "mssql";
-import { readFileSync } from "fs";
-import { resolve, dirname } from "path";
-import { fileURLToPath } from "url";
+import sql from 'mssql';
+import { readFileSync } from 'fs';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const BACKEND_ROOT = resolve(__dirname, "..");
+const BACKEND_ROOT = resolve(__dirname, '..');
 
 function loadEnv(envPath) {
   try {
-    const lines = readFileSync(envPath, "utf-8").split("\n");
+    const lines = readFileSync(envPath, 'utf-8').split('\n');
     for (const line of lines) {
       const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const eqIdx = trimmed.indexOf("=");
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eqIdx = trimmed.indexOf('=');
       if (eqIdx === -1) continue;
       const key = trimmed.slice(0, eqIdx).trim();
-      const val = trimmed.slice(eqIdx + 1).trim().replace(/#.*$/, "").trim();
+      const val = trimmed
+        .slice(eqIdx + 1)
+        .trim()
+        .replace(/#.*$/, '')
+        .trim();
       if (key && !process.env[key]) process.env[key] = val;
     }
   } catch {
@@ -55,7 +59,7 @@ function loadEnv(envPath) {
   }
 }
 
-loadEnv(resolve(BACKEND_ROOT, ".env"));
+loadEnv(resolve(BACKEND_ROOT, '.env'));
 
 const dbConfig = {
   user: process.env.DB_USER,
@@ -70,86 +74,95 @@ const dbConfig = {
 // lo necesario para decidir el `codigo` determinístico de cada columna.
 const MAPEOS = [
   {
-    fpCodigo: "AUTO_Q1231",
+    fpCodigo: 'AUTO_Q1231',
     campos: [
-      { aliases: ["Pais"], columna: "cde_pai_id" },
-      { aliases: ["Departamento"], columna: "cde_dpto_id" },
-      { aliases: ["Ciudad"], columna: "cde_ciu_id" },
-      { aliases: ["Direccion"], columna: "cde_direccion" },
-      { aliases: ["Zona Franca"], columna: "cde_zona_franca" },
-      { aliases: ["Horario"], columna: "cde_horario" },
+      { aliases: ['Pais'], columna: 'cde_pai_id' },
+      { aliases: ['Departamento'], columna: 'cde_dpto_id' },
+      { aliases: ['Ciudad'], columna: 'cde_ciu_id' },
+      { aliases: ['Direccion'], columna: 'cde_direccion' },
+      { aliases: ['Zona Franca'], columna: 'cde_zona_franca' },
+      { aliases: ['Horario'], columna: 'cde_horario' },
     ],
   },
   {
-    fpCodigo: "REP_LEGAL_TABLA",
+    fpCodigo: 'REP_LEGAL_TABLA',
     campos: [
-      { aliases: ["Apellidos y Nombre"], columna: "crl_nombre" },
-      { aliases: ["Identificacion"], columna: "crl_identificacion" },
-      { aliases: ["Ciudad de Expedición"], columna: "crl_ciu_expedicion_id" },
-      { aliases: ["Direccion"], columna: "crl_direccion" },
+      { aliases: ['Apellidos y Nombre'], columna: 'crl_nombre' },
+      { aliases: ['Identificacion'], columna: 'crl_identificacion' },
+      { aliases: ['Ciudad de Expedición'], columna: 'crl_ciu_expedicion_id' },
+      { aliases: ['Direccion'], columna: 'crl_direccion' },
     ],
   },
   {
-    fpCodigo: "REP_LEGAL_SUPLENTES",
+    fpCodigo: 'REP_LEGAL_SUPLENTES',
     campos: [
-      { aliases: ["Apellidos y Nombre"], columna: "crl_nombre" },
-      { aliases: ["Identificacion"], columna: "crl_identificacion" },
-      { aliases: ["Ciudad de Expedición"], columna: "crl_ciu_expedicion_id" },
-      { aliases: ["Direccion"], columna: "crl_direccion" },
+      { aliases: ['Apellidos y Nombre'], columna: 'crl_nombre' },
+      { aliases: ['Identificacion'], columna: 'crl_identificacion' },
+      { aliases: ['Ciudad de Expedición'], columna: 'crl_ciu_expedicion_id' },
+      { aliases: ['Direccion'], columna: 'crl_direccion' },
     ],
   },
   {
     // Real en la BD es 'ACCIONISTAS_TABLA', no 'AUTO_Q2659' — ver el fix
     // del mismo bug en cliente-datos-normalizados.service.ts (2026-09-14).
-    fpCodigo: "ACCIONISTAS_TABLA",
+    fpCodigo: 'ACCIONISTAS_TABLA',
     campos: [
-      { aliases: ["Nombre Completo / Razón Social"], columna: "cac_nombre_razon_social" },
-      { aliases: ["Tipo de Identificación"], columna: "cac_tid_id" },
-      { aliases: ["No. Identificación"], columna: "cac_no_identificacion" },
-      { aliases: ["% Participáción", "% Participación"], columna: "cac_porcentaje_participacion" },
+      {
+        aliases: ['Nombre Completo / Razón Social'],
+        columna: 'cac_nombre_razon_social',
+      },
+      { aliases: ['Tipo de Identificación'], columna: 'cac_tid_id' },
+      { aliases: ['No. Identificación'], columna: 'cac_no_identificacion' },
+      {
+        aliases: ['% Participáción', '% Participación'],
+        columna: 'cac_porcentaje_participacion',
+      },
     ],
   },
   {
-    fpCodigo: "AUTO_Q2651",
+    fpCodigo: 'AUTO_Q2651',
     campos: [
-      { aliases: ["Nombre"], columna: "cca_nombre" },
-      { aliases: ["Cargo"], columna: "cca_cargo" },
-      { aliases: ["Telefono"], columna: "cca_telefono" },
-      { aliases: ["Correo electronico"], columna: "cca_correo" },
+      { aliases: ['Nombre'], columna: 'cca_nombre' },
+      { aliases: ['Cargo'], columna: 'cca_cargo' },
+      { aliases: ['Telefono'], columna: 'cca_telefono' },
+      { aliases: ['Correo electronico'], columna: 'cca_correo' },
     ],
   },
   {
-    fpCodigo: "AUTO_Q2671",
+    fpCodigo: 'AUTO_Q2671',
     campos: [
-      { aliases: ["Nombre"], columna: "cbc_nombre" },
-      { aliases: ["Identificacion"], columna: "cbc_identificacion" },
-      { aliases: ["Direccion"], columna: "cbc_direccion" },
+      { aliases: ['Nombre'], columna: 'cbc_nombre' },
+      { aliases: ['Identificacion'], columna: 'cbc_identificacion' },
+      { aliases: ['Direccion'], columna: 'cbc_direccion' },
     ],
   },
   {
-    fpCodigo: "AUTO_Q2661",
+    fpCodigo: 'AUTO_Q2661',
     campos: [
-      { aliases: ["Nombre"], columna: "cfe_nombre" },
-      { aliases: ["Cargo"], columna: "cfe_cargo" },
-      { aliases: ["Correo electronico"], columna: "cfe_correo" },
+      { aliases: ['Nombre'], columna: 'cfe_nombre' },
+      { aliases: ['Cargo'], columna: 'cfe_cargo' },
+      { aliases: ['Correo electronico'], columna: 'cfe_correo' },
     ],
   },
   {
-    fpCodigo: "AUTO_Q2675",
+    fpCodigo: 'AUTO_Q2675',
     campos: [
-      { aliases: ["Nombre Persona a contactar", "Nombre"], columna: "crc_nombre_contacto" },
-      { aliases: ["Telefono"], columna: "crc_telefono" },
-      { aliases: ["Correo"], columna: "crc_correo" },
-      { aliases: ["Cupo credito"], columna: "crc_cupo_credito" },
+      {
+        aliases: ['Nombre Persona a contactar', 'Nombre'],
+        columna: 'crc_nombre_contacto',
+      },
+      { aliases: ['Telefono'], columna: 'crc_telefono' },
+      { aliases: ['Correo'], columna: 'crc_correo' },
+      { aliases: ['Cupo credito'], columna: 'crc_cupo_credito' },
     ],
   },
   {
-    fpCodigo: "AUTO_Q2676",
+    fpCodigo: 'AUTO_Q2676',
     campos: [
-      { aliases: ["Nombre"], columna: "crb_nombre_banco" },
-      { aliases: ["Sucursal"], columna: "crb_sucursal" },
-      { aliases: ["Cuenta No."], columna: "crb_cuenta_no" },
-      { aliases: ["Telefono"], columna: "crb_telefono" },
+      { aliases: ['Nombre'], columna: 'crb_nombre_banco' },
+      { aliases: ['Sucursal'], columna: 'crb_sucursal' },
+      { aliases: ['Cuenta No.'], columna: 'crb_cuenta_no' },
+      { aliases: ['Telefono'], columna: 'crb_telefono' },
     ],
   },
 ];
@@ -163,15 +176,18 @@ function resolverCodigoDeterministico(fpCodigo, nombreColumna) {
   return campo?.columna ?? null;
 }
 
-
 async function main() {
-  const apply = process.argv.includes("--apply");
-  console.log(apply ? "MODO: --apply (va a escribir)" : "MODO: dry-run (no escribe, agregá --apply para escribir)");
+  const apply = process.argv.includes('--apply');
+  console.log(
+    apply
+      ? 'MODO: --apply (va a escribir)'
+      : 'MODO: dry-run (no escribe, agregá --apply para escribir)',
+  );
 
   await sql.connect(dbConfig);
   try {
     const result = await sql.query(
-      `SELECT fp_id, fp_codigo, fp_version, fp_tabla_columnas
+      `SELECT fp_id, fp_codigo, fp_fv_id, fp_tabla_columnas
        FROM Formulario_pregunta
        WHERE fp_tipo = 'TABLA' AND fp_tabla_columnas IS NOT NULL`,
     );
@@ -188,12 +204,16 @@ async function main() {
       try {
         const parsed = JSON.parse(p.fp_tabla_columnas);
         if (!Array.isArray(parsed)) {
-          console.warn(`fp_id=${p.fp_id}: fp_tabla_columnas no es un array, se omite`);
+          console.warn(
+            `fp_id=${p.fp_id}: fp_tabla_columnas no es un array, se omite`,
+          );
           continue;
         }
         columnas = parsed;
       } catch {
-        console.warn(`fp_id=${p.fp_id}: fp_tabla_columnas no es JSON válido, se omite`);
+        console.warn(
+          `fp_id=${p.fp_id}: fp_tabla_columnas no es JSON válido, se omite`,
+        );
         continue;
       }
 
@@ -203,20 +223,24 @@ async function main() {
       // máximo código puramente numérico ya presente en este array).
       let consecutivo = 0;
       for (const c of columnas) {
-        const codigo = typeof c === "object" && c ? c.codigo : undefined;
-        if (typeof codigo === "string" && /^\d+$/.test(codigo)) {
+        const codigo = typeof c === 'object' && c ? c.codigo : undefined;
+        if (typeof codigo === 'string' && /^\d+$/.test(codigo)) {
           consecutivo = Math.max(consecutivo, Number(codigo));
         }
       }
 
       let cambio = false;
       const columnasConCodigo = columnas.map((c) => {
-        const columna = typeof c === "string" ? { nombre: c, tipo: "TEXTO" } : { ...c };
+        const columna =
+          typeof c === 'string' ? { nombre: c, tipo: 'TEXTO' } : { ...c };
         if (columna.codigo) {
           columnasYaTenianCodigo++;
           return columna;
         }
-        const codigoDeterministico = resolverCodigoDeterministico(p.fp_codigo, columna.nombre);
+        const codigoDeterministico = resolverCodigoDeterministico(
+          p.fp_codigo,
+          columna.nombre,
+        );
         if (codigoDeterministico) {
           columna.codigo = codigoDeterministico;
         } else {
@@ -233,26 +257,28 @@ async function main() {
       preguntasActualizadas++;
       const nuevoJson = JSON.stringify(columnasConCodigo);
       console.log(
-        `fp_id=${p.fp_id} fp_codigo=${p.fp_codigo ?? "(sin código)"} fp_version=${p.fp_version}: ` +
-          columnasConCodigo.map((c) => `${c.nombre} -> ${c.codigo}`).join(", "),
+        `fp_id=${p.fp_id} fp_codigo=${p.fp_codigo ?? '(sin código)'} fp_fv_id=${p.fp_fv_id}: ` +
+          columnasConCodigo.map((c) => `${c.nombre} -> ${c.codigo}`).join(', '),
       );
 
       if (apply) {
         const request = new sql.Request();
-        request.input("fpTablaColumnas", sql.NVarChar(sql.MAX), nuevoJson);
-        request.input("fpId", sql.Int, p.fp_id);
+        request.input('fpTablaColumnas', sql.NVarChar(sql.MAX), nuevoJson);
+        request.input('fpId', sql.Int, p.fp_id);
         await request.query(
           `UPDATE Formulario_pregunta SET fp_tabla_columnas = @fpTablaColumnas WHERE fp_id = @fpId`,
         );
       }
     }
 
-    console.log("---");
+    console.log('---');
     console.log(`Preguntas actualizadas: ${preguntasActualizadas}`);
     console.log(`Columnas con código nuevo: ${columnasConCodigoNuevo}`);
     console.log(`Columnas que ya tenían código: ${columnasYaTenianCodigo}`);
     if (!apply) {
-      console.log("Dry-run: no se escribió nada. Correr con --apply para aplicar.");
+      console.log(
+        'Dry-run: no se escribió nada. Correr con --apply para aplicar.',
+      );
     }
   } finally {
     await sql.close();

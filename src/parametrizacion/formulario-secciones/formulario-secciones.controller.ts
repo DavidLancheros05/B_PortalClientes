@@ -6,6 +6,7 @@ import {
   Delete,
   Param,
   Body,
+  Query,
   ParseIntPipe,
   HttpException,
   HttpStatus,
@@ -27,6 +28,10 @@ interface CreateSeccionDto {
   seccion_descripcion?: string;
   seccion_orden: number;
   seccion_oculta_en_formulario?: boolean;
+  // Versión a la que pertenece. Si no vienen, la versión activa del
+  // formulario activo (lo que hacía siempre la pantalla global).
+  formulario_id?: number;
+  formulario_version?: number;
 }
 
 interface UpdateSeccionDto {
@@ -44,9 +49,20 @@ export class FormularioSeccionesController {
     private readonly formularioSeccionesService: FormularioSeccionesService,
   ) {}
 
+  @Get('formulario-activo')
+  async listarFormularioActivo() {
+    return await this.formularioSeccionesService.listarFormularioActivo();
+  }
+
   @Get()
-  async listar() {
-    return await this.formularioSeccionesService.listar();
+  async listar(
+    @Query('formularioId') formularioId?: string,
+    @Query('version') version?: string,
+  ) {
+    return await this.formularioSeccionesService.listar(
+      formularioId ? parseInt(formularioId) : undefined,
+      version ? parseInt(version) : undefined,
+    );
   }
 
   @Post()

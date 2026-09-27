@@ -25,6 +25,10 @@ export class Seccion {
   @Column({ type: 'bit', default: 0, name: 'fs_oculta_en_formulario' })
   fs_oculta_en_formulario: boolean;
 
-  @Column({ type: 'datetime2', name: 'created_at' })
-  created_at: Date;
+  @Column({ type: 'datetime2', name: 'fs_created_at' })
+  fs_created_at: Date;
+
+  // Versión del formulario a la que pertenece (FK a Formulario_versiones).
+  @Column({ type: 'int', name: 'fs_fv_id', nullable: true })
+  fs_fv_id: number | null;
 }

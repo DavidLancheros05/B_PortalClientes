@@ -1,4 +1,9 @@
 import { Injectable } from '@nestjs/common';
+import {
+  filasPorNombre,
+  parseColumnasTabla,
+  respuestaTablaPorNombre,
+} from '../common/utils/tabla-respuesta.util';
 import { DataSource } from 'typeorm';
 
 export interface PreguntaRenderizable {
@@ -6,7 +11,7 @@ export interface PreguntaRenderizable {
   fp_tipo: string;
   fp_descripcion: string;
   fp_descripcion_adicional?: string | null;
-  seccion_id: number;
+  fp_fs_id: number;
   fp_orden: number;
   fp_requerida: boolean;
   // Código lógico estable de la pregunta (sobrevive renames y versiones
@@ -79,9 +84,10 @@ export class FormularioRenderizableService {
       this.dataSource.query(
         `SELECT
         sol_id, sol_numero, cli_razon_social, sol_fecha_envio,
-        sol_formulario_version
+        s.sol_fv_id, v.fv_numero, v.fv_frs_id
       FROM solicitudes s
       LEFT JOIN Clientes c ON c.cli_id = s.sol_cli_id
+      LEFT JOIN Formulario_versiones v ON v.fv_id = s.sol_fv_id
       WHERE s.sol_id = @0`,
         [solicitudId],
       ),
@@ -93,12 +99,12 @@ export class FormularioRenderizableService {
         fr.fr_valor_numero,
         fr.fr_valor_fecha,
         fr.fr_valor_opcion_id,
-        fr.fr_valor_archivo_id,
         fp.fp_tipo,
         fp.fp_subtipo,
         fp.fp_catalogo_tabla,
         fp.fp_catalogo_columna,
-        fp.fp_catalogo_pk_column
+        fp.fp_catalogo_pk_column,
+        fp.fp_tabla_columnas
       FROM (
         SELECT
           fr_fp_id,
@@ -106,7 +112,6 @@ export class FormularioRenderizableService {
           fr_valor_numero,
           fr_valor_fecha,
           fr_valor_opcion_id,
-          fr_valor_archivo_id,
           ROW_NUMBER() OVER (PARTITION BY fr_fp_id ORDER BY fr_updated_at DESC) AS rn
         FROM Formulario_respuesta
         WHERE fr_sol_id = @0
@@ -144,19 +149,15 @@ export class FormularioRenderizableService {
       sol_numero,
       cli_razon_social,
       sol_fecha_envio,
-      sol_formulario_version,
+      sol_fv_id,
+      fv_numero,
+      fv_frs_id,
     } = solicitud[0];
-    const version = sol_formulario_version || 1;
-
-    // 3. Obtener formulario ID
-    const formResult = await this.dataSource.query(
-      `SELECT fv_frs_id FROM Formulario_versiones
-       WHERE fv_numero = @0 AND fv_frs_id IN (
-         SELECT frs_id FROM Formularios_solicitudes WHERE frs_activo = 1
-       )`,
-      [version],
-    );
-    const formularioId = formResult[0]?.fv_frs_id;
+    // 3. El formulario sale de la versión de la solicitud (sol_fv_id), no de
+    // "el formulario activo": una solicitud vieja se sigue viendo completa
+    // aunque su formulario se haya desactivado.
+    const version = fv_numero;
+    const formularioId = fv_frs_id;
 
     // 4. Nombre del formulario y preguntas (ambas solo dependen de
     // formularioId/version, ya resueltos arriba — en paralelo).
@@ -171,7 +172,7 @@ export class FormularioRenderizableService {
         this.dataSource.query(
           `SELECT
             fp.fp_id,
-            fp.seccion_id,
+            fp.fp_fs_id,
             fp.fp_descripcion,
             fp.fp_descripcion_adicional,
             fp.fp_tipo,
@@ -179,6 +180,7 @@ export class FormularioRenderizableService {
             fp.fp_requerida,
             fp.fp_pregunta_padre_id,
             fp.fp_valor_padre_disparador,
+            fp.fp_fpo_codigo_disparador,
             fp.fp_catalogo_tabla,
             fp.fp_catalogo_columna,
             fp.fp_catalogo_pk_column,
@@ -188,9 +190,9 @@ export class FormularioRenderizableService {
           FROM Formulario_pregunta fp
           WHERE fp.fp_frs_id = @0
             AND fp.fp_estado = 1
-            AND fp.fp_version = @1
-          ORDER BY fp.seccion_id, fp.fp_orden`,
-          [formularioId, version],
+            AND fp.fp_fv_id = @1
+          ORDER BY fp.fp_fs_id, fp.fp_orden`,
+          [formularioId, sol_fv_id],
         ),
       ]);
       // Limpiar: tomar solo la primera línea y remover espacios extras
@@ -226,6 +228,17 @@ export class FormularioRenderizableService {
     // principal causa de la demora al abrir esta página.
     const respuestasMap = new Map<number, string>();
     const tablaFilasMap = new Map<number, Record<string, string>[]>();
+    // TABLA: las celdas se guardan por `codigo` de columna (o por nombre en
+    // respuestas viejas). Todo lo que sigue (PDF, plantillas, representante
+    // legal) trabaja con el nombre visible, así que se traduce acá una vez.
+    for (const respuesta of respuestas) {
+      if (respuesta.fp_tipo === 'TABLA') {
+        respuesta.fr_valor_texto = respuestaTablaPorNombre(
+          respuesta.fr_valor_texto,
+          respuesta.fp_tabla_columnas,
+        );
+      }
+    }
     const opciones = await this.cargarValoresOpcion(respuestas);
     const valoresResueltos = await Promise.all(
       respuestas.map((respuesta) =>
@@ -247,11 +260,36 @@ export class FormularioRenderizableService {
       }
     });
 
-    // 7. Crear mapa de visibilidad (condicionales)
+    // 7. Crear mapa de visibilidad (condicionales). Con
+    // fp_fpo_codigo_disparador la condición va por el código de la opción y
+    // mira TODAS las opciones elegidas (respuestasMap guarda una sola fila
+    // por pregunta: en una MULTISELECT con varias marcadas se perdían las
+    // demás). Sin código (padre de texto/número/fecha) sigue por texto.
+    const codigosElegidos = new Map<number, Set<string>>();
+    const filasOpcion: { fr_fp_id: number; fpo_codigo: string }[] =
+      await this.dataSource.query(
+        `SELECT r.fr_fp_id, o.fpo_codigo
+         FROM Formulario_respuesta r
+         JOIN Formulario_pregunta_opcion o ON o.fpo_id = r.fr_valor_opcion_id
+         WHERE r.fr_sol_id = @0 AND o.fpo_codigo IS NOT NULL`,
+        [solicitudId],
+      );
+    for (const fila of filasOpcion) {
+      const set = codigosElegidos.get(fila.fr_fp_id) ?? new Set<string>();
+      set.add(fila.fpo_codigo);
+      codigosElegidos.set(fila.fr_fp_id, set);
+    }
+
     const visibilidadMap = new Map<number, boolean>();
     for (const pregunta of preguntas) {
       let esVisible = true;
-      if (pregunta.fp_pregunta_padre_id && pregunta.fp_valor_padre_disparador) {
+      if (pregunta.fp_pregunta_padre_id && pregunta.fp_fpo_codigo_disparador) {
+        esVisible = Boolean(
+          codigosElegidos
+            .get(pregunta.fp_pregunta_padre_id)
+            ?.has(pregunta.fp_fpo_codigo_disparador),
+        );
+      } else if (pregunta.fp_pregunta_padre_id && pregunta.fp_valor_padre_disparador) {
         const respuestaPadre = respuestasMap.get(pregunta.fp_pregunta_padre_id);
         esVisible = respuestaPadre === pregunta.fp_valor_padre_disparador;
       }
@@ -287,7 +325,7 @@ export class FormularioRenderizableService {
           fp_descripcion: p.fp_descripcion,
           fp_descripcion_adicional: p.fp_descripcion_adicional,
           fp_codigo: p.fp_codigo,
-          seccion_id: p.seccion_id,
+          fp_fs_id: p.fp_fs_id,
           fp_orden: p.fp_orden,
           fp_requerida: p.fp_requerida,
           es_visible: visibilidadMap.get(p.fp_id) ?? true,
@@ -361,11 +399,9 @@ export class FormularioRenderizableService {
     const filas = await this.dataSource.query(
       `SELECT fp.fp_codigo, fp.fp_tipo, fp.fp_subtipo, fp.fp_catalogo_tabla,
               fp.fp_catalogo_columna, fp.fp_catalogo_pk_column,
-              fr.fr_valor_texto, fr.fr_valor_numero, fr.fr_valor_opcion_id,
-              fr.fr_valor_archivo_id
+              fr.fr_valor_texto, fr.fr_valor_numero, fr.fr_valor_opcion_id
        FROM (
          SELECT fr_fp_id, fr_valor_texto, fr_valor_numero, fr_valor_opcion_id,
-           fr_valor_archivo_id,
            ROW_NUMBER() OVER (PARTITION BY fr_fp_id ORDER BY fr_updated_at DESC) AS rn
          FROM Formulario_respuesta
          WHERE fr_sol_id = @0
@@ -403,7 +439,7 @@ export class FormularioRenderizableService {
     representantesSuplentes: TablaPersonaResuelta | null;
     accionistas: TablaPersonaResuelta | null;
   }> {
-    const { formularioId, version } =
+    const { formularioId, fvId } =
       await this.resolverFormularioVersion(solicitudId);
     if (!formularioId) {
       return {
@@ -416,10 +452,10 @@ export class FormularioRenderizableService {
     const preguntas = await this.dataSource.query(
       `SELECT fp_id, fp_codigo, fp_tabla_columnas
        FROM Formulario_pregunta
-       WHERE fp_frs_id = @0 AND fp_version = @1 AND fp_estado = 1
+       WHERE fp_frs_id = @0 AND fp_fv_id = @1 AND fp_estado = 1
          AND fp_tipo = 'TABLA'
          AND fp_codigo IN ('REP_LEGAL_TABLA', 'REP_LEGAL_SUPLENTES', 'ACCIONISTAS_TABLA')`,
-      [formularioId, version],
+      [formularioId, fvId],
     );
 
     const preguntaRepLegal = preguntas.find(
@@ -449,25 +485,22 @@ export class FormularioRenderizableService {
   // regresión de rendimiento en un camino ya optimizado a propósito.
   private async resolverFormularioVersion(
     solicitudId: number,
-  ): Promise<{ formularioId: number | null; version: number }> {
+  ): Promise<{ formularioId: number | null; fvId: number | null }> {
     const [solicitud] = await this.dataSource.query(
-      `SELECT sol_formulario_version FROM solicitudes WHERE sol_id = @0`,
+      `SELECT s.sol_fv_id, v.fv_frs_id
+       FROM solicitudes s
+       LEFT JOIN Formulario_versiones v ON v.fv_id = s.sol_fv_id
+       WHERE s.sol_id = @0`,
       [solicitudId],
     );
     if (!solicitud) {
       throw new Error('Solicitud no encontrada');
     }
-    const version = solicitud.sol_formulario_version || 1;
 
-    const formResult = await this.dataSource.query(
-      `SELECT fv_frs_id FROM Formulario_versiones
-       WHERE fv_numero = @0 AND fv_frs_id IN (
-         SELECT frs_id FROM Formularios_solicitudes WHERE frs_activo = 1
-       )`,
-      [version],
-    );
-
-    return { formularioId: formResult[0]?.fv_frs_id ?? null, version };
+    return {
+      formularioId: solicitud.fv_frs_id ?? null,
+      fvId: solicitud.sol_fv_id ?? null,
+    };
   }
 
   private async resolverTablaPersona(
@@ -488,7 +521,12 @@ export class FormularioRenderizableService {
     if (respuesta?.fr_valor_texto) {
       try {
         const parsed = JSON.parse(respuesta.fr_valor_texto);
-        if (Array.isArray(parsed)) filas = parsed;
+        if (Array.isArray(parsed)) {
+          filas = filasPorNombre(
+            parsed,
+            parseColumnasTabla(pregunta.fp_tabla_columnas),
+          );
+        }
       } catch {
         // Ignorar JSON inválido
       }
@@ -612,19 +650,6 @@ export class FormularioRenderizableService {
     }
     if (respuesta.fr_valor_fecha) {
       return new Date(respuesta.fr_valor_fecha).toLocaleDateString('es-CO');
-    }
-
-    // Archivo
-    if (respuesta.fr_valor_archivo_id) {
-      try {
-        const archivo = await this.dataSource.query(
-          `SELECT sa_nombre_original FROM Solicitud_archivo WHERE sa_id = @0`,
-          [respuesta.fr_valor_archivo_id],
-        );
-        return archivo?.[0]?.sa_nombre_original || 'Sin respuesta';
-      } catch {
-        return 'Sin respuesta';
-      }
     }
 
     return 'Sin respuesta';

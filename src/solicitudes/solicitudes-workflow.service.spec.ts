@@ -38,8 +38,6 @@ describe('SolicitudesWorkflowService.reiniciarEdicionSolicitud', () => {
       {} as any,
       {} as any,
       {} as any,
-      {} as any,
-      {} as any,
     );
 
     queryRunner.query.mockImplementation(async (sql: string) => {

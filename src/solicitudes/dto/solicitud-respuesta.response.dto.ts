@@ -6,7 +6,6 @@ export class SolicitudRespuestaDto {
   fr_valor_numero?: number | null;
   fr_valor_fecha?: Date | null;
   fr_valor_opcion_id?: number | null;
-  fr_valor_archivo_id?: number | null;
   fr_es_multiselect?: boolean;
   fr_completado?: boolean;
   fr_observaciones?: string | null;

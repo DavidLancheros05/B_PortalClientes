@@ -36,7 +36,7 @@ export class SolicitudListadoGestionDto {
   sol_forma_pago?: string;
 
   // Versión
-  sol_formulario_version?: number;
+  fv_numero?: number; // número visible de la versión del formulario
 
   // Timeline: Oficial Cumplimiento
   sol_fecha_est_gest_oc?: Date;

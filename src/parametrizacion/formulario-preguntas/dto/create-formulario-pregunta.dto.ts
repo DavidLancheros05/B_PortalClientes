@@ -29,9 +29,11 @@ export class CreateFormularioPreguntaDto {
   @IsInt()
   fp_orden?: number;
 
+  // Número visible de la versión (fv_numero) a la que va la pregunta; junto
+  // con frs_id se resuelve a fp_fv_id en el servicio.
   @IsOptional()
   @IsInt()
-  fp_version?: number;
+  fv_numero?: number;
 
   @IsOptional()
   @IsBoolean()
@@ -51,7 +53,7 @@ export class CreateFormularioPreguntaDto {
 
   @IsOptional()
   @IsInt()
-  seccion_id?: number | null;
+  fp_fs_id?: number | null;
 
   @IsOptional()
   @IsBoolean()
@@ -100,6 +102,10 @@ export class CreateFormularioPreguntaDto {
   @IsOptional()
   @IsString()
   fp_valor_padre_disparador?: string | null;
+
+  @IsOptional()
+  @IsString()
+  fp_fpo_codigo_disparador?: string | null;
 
   @IsOptional()
   @IsString()

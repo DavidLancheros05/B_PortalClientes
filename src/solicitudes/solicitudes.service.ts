@@ -3,7 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import axios from 'axios';
 import { addBusinessDays } from '../common/utils/business-days.util';
-import { obtenerVersionFormularioActivo } from '../common/utils/formulario-activo.util';
+import { obtenerFvIdFormularioActivo } from '../parametrizacion/formularios/version-formulario.util';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { HistorialWorkflowService } from '../workflow/historial/historial-workflow.service';
 import { FormularioRenderizableService } from './formulario-renderizable.service';
@@ -79,15 +79,12 @@ export class SolicitudesService {
   }
 
   async crearSolicitud(body: any) {
-
-
     const queryRunner = this.dataSource.createQueryRunner();
 
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
-
       const clienteId = body.cliente_id || body.solicitud?.cliente_id;
 
       if (!clienteId) {
@@ -141,10 +138,11 @@ export class SolicitudesService {
       // Días por etapa unidos por wet_id (no por el nombre del área, que se
       // edita en parametrización) y calendario hábil desde BD. Sin
       // defaults: si falta cualquier dato, revienta.
-      const dias = await this.historialWorkflowService.obtenerDiasRespuestaPorEtapa(
-        queryRunner,
-        ['EJN', 'ASC', 'OFC', 'CC1', 'CC2'],
-      );
+      const dias =
+        await this.historialWorkflowService.obtenerDiasRespuestaPorEtapa(
+          queryRunner,
+          ['EJN', 'ASC', 'OFC', 'CC1', 'CC2'],
+        );
       const { festivos, diasNoHabilesSemana } =
         await this.historialWorkflowService.cargarCalendarioHabil(queryRunner);
 
@@ -186,14 +184,13 @@ export class SolicitudesService {
         diasNoHabilesSemana,
       );
 
-      const formularioVersion =
-        await obtenerVersionFormularioActivo(queryRunner);
+      const formularioFvId = await obtenerFvIdFormularioActivo(queryRunner);
 
       const insertSolicitudSQL = `
         INSERT INTO solicitudes (
           sol_cli_id, sol_ses_id,
           sol_fecha_creacion, sol_created_at,
-          sol_updated_at, sol_version, sol_formulario_version, sol_usr_id_crea,
+          sol_updated_at, sol_version, sol_fv_id, sol_usr_id_crea,
           sol_numero,
           sol_ejng_id, sol_fecha_envio,
           sol_fecha_est_gest_ejn, sol_fecha_est_gest_asc,
@@ -235,13 +232,11 @@ export class SolicitudesService {
 
       const fechaEnvio = estadoId === 2 ? now : null; // Si es PENDIENTE, establecer fecha de envío
 
-
       let documentosDiferidosFaltantes: {
         tdo_id: number;
         tdo_nombre: string;
       }[] = [];
       if (estadoId === 2) {
-
         documentosDiferidosFaltantes = await queryRunner.query(
           `
           SELECT DISTINCT td.tdo_id, td.tdo_nombre
@@ -249,10 +244,10 @@ export class SolicitudesService {
           JOIN Tipos_documentos td ON td.tdo_id = fp.fp_tdo_id
           LEFT JOIN Clientes c ON c.cli_id = @1
           WHERE fp.fp_estado = 1
-            AND ISNULL(fp.fp_version, 1) = @0
+            AND fp.fp_fv_id = @0
             AND ${condicionDocumentoDiferido('c.cli_es_distribuidor')}
           `,
-          [formularioVersion, clienteId],
+          [formularioFvId, clienteId],
         );
       }
       const hayDocumentosDiferidos = documentosDiferidosFaltantes.length > 0;
@@ -297,7 +292,7 @@ export class SolicitudesService {
 
         // Versiones
         1, // @5 version
-        formularioVersion, // @6 formulario_version
+        formularioFvId, // @6 sol_fv_id
 
         // Usuario (puede ser NULL si es un cliente)
         body.usuario_crea || null, // @7 usuario_crea
@@ -334,7 +329,6 @@ export class SolicitudesService {
         throw new Error('No se obtuvo ID de la solicitud');
       }
 
- 
       // 6. Registrar en historial de estados
       const histCols = await this.resolveHistorialColumns();
       const historialSQL = `
@@ -474,13 +468,13 @@ export class SolicitudesService {
         solicitudId,
       );
 
-    // Agrupar preguntas por seccion_id
+    // Agrupar preguntas por fp_fs_id
     const seccionesMap = new Map<number, any>();
     for (const pregunta of formulario.preguntas) {
-      const seccionId = pregunta.seccion_id;
+      const seccionId = pregunta.fp_fs_id;
       if (!seccionesMap.has(seccionId)) {
         seccionesMap.set(seccionId, {
-          seccion_id: seccionId,
+          fp_fs_id: seccionId,
           preguntas: [],
         });
       }
@@ -496,7 +490,7 @@ export class SolicitudesService {
       const seccionIds = Array.from(seccionesMap.keys());
       const placeholders = seccionIds.map((_, idx) => `@${idx}`).join(',');
       const seccionesInfo = await this.dataSource.query(
-        `SELECT fs_id as seccion_id, fs_nombre as seccion_nombre, fs_orden as seccion_orden
+        `SELECT fs_id as fp_fs_id, fs_nombre as seccion_nombre, fs_orden as seccion_orden
          FROM Formulario_secciones
          WHERE fs_id IN (${placeholders})
          ORDER BY fs_orden`,
@@ -507,10 +501,10 @@ export class SolicitudesService {
       // quedaba solo la barra de título azul, sin nada debajo).
       secciones = seccionesInfo
         .map((s: any) => ({
-          seccion_id: s.seccion_id,
+          fp_fs_id: s.fp_fs_id,
           seccion_nombre: s.seccion_nombre,
           seccion_orden: s.seccion_orden,
-          preguntas: seccionesMap.get(s.seccion_id)?.preguntas || [],
+          preguntas: seccionesMap.get(s.fp_fs_id)?.preguntas || [],
         }))
         .filter((s: any) => s.preguntas.length > 0);
     }
@@ -1253,7 +1247,9 @@ export class SolicitudesService {
           preguntaLines.length === 1 &&
           respuestaLines.length === 1 &&
           respuestaText.length < 30 &&
-          anchoPregunta + 2 + helvetica.widthOfTextAtSize(respuestaLines[0], 8) <=
+          anchoPregunta +
+            2 +
+            helvetica.widthOfTextAtSize(respuestaLines[0], 8) <=
             maxColWidth;
         const altura = enMismaLinea
           ? 10

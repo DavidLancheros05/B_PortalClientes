@@ -31,7 +31,7 @@ export class SolicitudClienteDto {
   sol_forma_pago?: string;
 
   // Metadata
-  sol_formulario_version?: number;
+  fv_numero?: number; // número visible de la versión del formulario
   sol_version?: number;
   sol_usr_id_apr_cond?: number;
   sol_observacion_cliente?: string;

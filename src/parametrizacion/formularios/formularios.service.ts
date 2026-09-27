@@ -1,8 +1,15 @@
-import { Injectable } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { DataSource, QueryRunner } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { normalizeMojibake } from 'src/common/utils/text-encoding.util';
-import { contarSolicitudesQueBloqueanVersion } from './version-formulario.util';
+import {
+  contarSolicitudesQueBloqueanVersion,
+  resolverFvId,
+} from './version-formulario.util';
 import { ClienteDatosNormalizadosService } from '../../cliente-datos-normalizados/cliente-datos-normalizados.service';
 
 export interface Formularios_solicitudes {
@@ -14,6 +21,26 @@ export interface Formularios_solicitudes {
   Formulario_versiones_totales: number;
   created_at: string;
 }
+
+// Número visible de la versión activa del formulario `alias` (fila de
+// Formularios_solicitudes). Si no hay versión activa marcada cae a la más
+// reciente, y a 1 si no tiene ninguna.
+const sqlVersionActiva = (alias: string) =>
+  `ISNULL((SELECT va.fv_numero FROM Formulario_versiones va WHERE va.fv_id = ${alias}.frs_fv_id_activa), ` +
+  `ISNULL((SELECT MAX(vm.fv_numero) FROM Formulario_versiones vm WHERE vm.fv_frs_id = ${alias}.frs_id), 1))`;
+
+// 547 = violación de FK/CHECK en SQL Server. Al borrar, la única FK que puede
+// saltar es FK_solicitudes_formulario_version: una solicitud creada entre el
+// conteo previo y el DELETE.
+const esViolacionFk = (error: any) =>
+  (error?.driverError?.number ?? error?.number) === 547;
+
+// "N solicitudes (M borradores)": los borradores también bloquean el borrado
+// (la FK los ve), aunque no bloqueen editar la versión.
+const describirSolicitudes = (total: number, borradores: number) =>
+  borradores > 0
+    ? `${total} solicitud(es), de las cuales ${borradores} son borradores`
+    : `${total} solicitud(es)`;
 
 @Injectable()
 export class FormulariosService {
@@ -33,18 +60,19 @@ export class FormulariosService {
         f.frs_nombre,
         f.frs_descripcion,
         f.frs_activo,
-        f.created_at,
-        ISNULL(f.frs_version_activa, ISNULL((SELECT MAX(v.fv_numero) FROM Formulario_versiones v WHERE v.fv_frs_id = f.frs_id), 1)) AS formulario_version,
+        f.frs_created_at AS created_at,
+        ${sqlVersionActiva('f')} AS formulario_version,
         ISNULL((SELECT COUNT(*) FROM Formulario_versiones v WHERE v.fv_frs_id = f.frs_id), 0) AS Formulario_versiones_totales
       FROM Formularios_solicitudes f
       WHERE 1=1
     `;
 
+    const params: string[] = [];
     if (busqueda && busqueda.trim()) {
-      const escapedBusqueda = busqueda.replace(/'/g, "''");
+      params.push(`%${busqueda.trim()}%`);
       query += ` AND (
-        f.frs_nombre LIKE '%${escapedBusqueda}%'
-        OR f.frs_descripcion LIKE '%${escapedBusqueda}%'
+        f.frs_nombre LIKE @0
+        OR f.frs_descripcion LIKE @0
       )`;
     }
 
@@ -56,7 +84,7 @@ export class FormulariosService {
 
     query += ` ORDER BY f.frs_id DESC`;
 
-    const result = await this.dataSource.query(query);
+    const result = await this.dataSource.query(query, params);
     return result;
   }
 
@@ -70,8 +98,8 @@ export class FormulariosService {
         f.frs_nombre,
         f.frs_descripcion,
         f.frs_activo,
-        f.created_at,
-        ISNULL(f.frs_version_activa, ISNULL((SELECT MAX(v.fv_numero) FROM Formulario_versiones v WHERE v.fv_frs_id = f.frs_id), 1)) AS formulario_version,
+        f.frs_created_at AS created_at,
+        ${sqlVersionActiva('f')} AS formulario_version,
         ISNULL((SELECT COUNT(*) FROM Formulario_versiones v WHERE v.fv_frs_id = f.frs_id), 0) AS Formulario_versiones_totales
       FROM Formularios_solicitudes f
       WHERE f.frs_id = @0
@@ -88,7 +116,7 @@ export class FormulariosService {
         f.frs_id,
         f.frs_nombre,
         f.frs_descripcion,
-        ISNULL(f.frs_version_activa, ISNULL((SELECT MAX(fv.fv_numero) FROM Formulario_versiones fv WHERE fv.fv_frs_id = f.frs_id), 1)) AS formulario_version
+        ${sqlVersionActiva('f')} AS formulario_version
       FROM Formularios_solicitudes f
       WHERE f.frs_activo = 1
       ORDER BY f.frs_id
@@ -101,51 +129,76 @@ export class FormulariosService {
     nombre: string,
     descripcion?: string,
   ): Promise<Formularios_solicitudes> {
-    const insertResult = await this.dataSource.query(
-      `
+    // Formulario + versión inicial en una transacción: antes eran dos
+    // consultas sueltas y un fallo en la segunda dejaba un formulario sin
+    // versión. La versión inicial queda marcada como activa: sin eso,
+    // obtenerFvIdFormularioActivo rechaza crear solicitudes con este
+    // formulario ("no tiene versión activa").
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    let insertResult: any[];
+    try {
+      insertResult = await queryRunner.query(
+        `
+      DECLARE @frs TABLE (
+        frs_id INT, frs_nombre NVARCHAR(MAX), frs_descripcion NVARCHAR(MAX),
+        frs_activo BIT, created_at DATETIME2
+      );
       INSERT INTO Formularios_solicitudes (
         frs_nombre,
         frs_descripcion,
         frs_activo,
-        created_at,
-        updated_at
+        frs_created_at,
+        frs_updated_at
       )
       OUTPUT
         INSERTED.frs_id,
         INSERTED.frs_nombre,
         INSERTED.frs_descripcion,
         INSERTED.frs_activo,
-        INSERTED.created_at
+        INSERTED.frs_created_at
+      INTO @frs
       VALUES (
         @0,
         @1,
         1,
         dbo.fn_ahora_colombia(),
         dbo.fn_ahora_colombia()
-      )
-    `,
-      [nombre, descripcion || null],
-    );
+      );
 
-    const nuevoFormulario = insertResult[0];
-
-    await this.dataSource.query(
-      `
+      DECLARE @frs_id INT = (SELECT frs_id FROM @frs);
+      DECLARE @fv TABLE (fv_id INT);
       INSERT INTO Formulario_versiones (
         fv_frs_id,
         fv_numero,
         fv_descripcion,
         fv_created_at
       )
+      OUTPUT INSERTED.fv_id INTO @fv
       VALUES (
-        @0,
+        @frs_id,
         1,
         'Versión inicial',
         dbo.fn_ahora_colombia()
-      )
+      );
+      UPDATE Formularios_solicitudes
+      SET frs_fv_id_activa = (SELECT fv_id FROM @fv)
+      WHERE frs_id = @frs_id;
+
+      SELECT * FROM @frs;
     `,
-      [nuevoFormulario.frs_id],
-    );
+        [nombre, descripcion || null],
+      );
+      await queryRunner.commitTransaction();
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+
+    const nuevoFormulario = insertResult[0];
 
     return {
       ...nuevoFormulario,
@@ -170,20 +223,22 @@ export class FormulariosService {
       );
     }
 
-    const usedInSolicitudes = await this.dataSource.query(
+    const [uso] = await this.dataSource.query(
       `
-      SELECT COUNT(*) AS total
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN sol_ses_id = 1 THEN 1 ELSE 0 END) AS borradores
       FROM solicitudes
-      WHERE sol_formulario_version IN (
-        SELECT fv_numero FROM Formulario_versiones WHERE fv_frs_id = @0
+      WHERE sol_fv_id IN (
+        SELECT fv_id FROM Formulario_versiones WHERE fv_frs_id = @0
       )
       `,
       [formularioId],
     );
 
-    if (usedInSolicitudes[0].total > 0) {
+    if (uso.total > 0) {
       throw new Error(
-        'No se puede eliminar el formulario porque ya tiene solicitudes asociadas a alguna de sus versiones.',
+        `No se puede eliminar el formulario porque sus versiones tienen ${describirSolicitudes(uso.total, uso.borradores)}.`,
       );
     }
 
@@ -198,14 +253,30 @@ export class FormulariosService {
         WHERE fpo_fp_id IN (
           SELECT fp_id
           FROM Formulario_pregunta
-          WHERE fp_frs_id = @0
+          WHERE fp_fv_id IN (SELECT fv_id FROM Formulario_versiones WHERE fv_frs_id = @0)
         )
       `,
         [formularioId],
       );
 
+      // Por versión, igual que secciones y versiones abajo: lo que bloquea
+      // el DELETE de Formulario_versiones es fp_fv_id, no fp_frs_id.
       await queryRunner.query(
-        `DELETE FROM Formulario_pregunta WHERE fp_frs_id = @0`,
+        `DELETE FROM Formulario_pregunta
+         WHERE fp_fv_id IN (SELECT fv_id FROM Formulario_versiones WHERE fv_frs_id = @0)`,
+        [formularioId],
+      );
+
+      await queryRunner.query(
+        `DELETE FROM Formulario_secciones
+         WHERE fs_fv_id IN (SELECT fv_id FROM Formulario_versiones WHERE fv_frs_id = @0)`,
+        [formularioId],
+      );
+
+      // FK_Formularios_solicitudes_version_activa: soltar la versión activa
+      // antes de borrar las versiones.
+      await queryRunner.query(
+        `UPDATE Formularios_solicitudes SET frs_fv_id_activa = NULL WHERE frs_id = @0`,
         [formularioId],
       );
 
@@ -223,6 +294,11 @@ export class FormulariosService {
       return true;
     } catch (error) {
       await queryRunner.rollbackTransaction();
+      if (esViolacionFk(error)) {
+        throw new Error(
+          'No se puede eliminar el formulario porque se acaba de crear una solicitud con una de sus versiones.',
+        );
+      }
       throw error;
     } finally {
       await queryRunner.release();
@@ -233,12 +309,12 @@ export class FormulariosService {
     const formulario = await this.dataSource.query(
       `
       SELECT
-        frs_id,
-        frs_nombre,
-        frs_activo,
-        ISNULL(frs_version_activa, ISNULL((SELECT MAX(fv_numero) FROM Formulario_versiones WHERE fv_frs_id = @0), 1)) AS formulario_version
-      FROM Formularios_solicitudes
-      WHERE frs_id = @0
+        f.frs_id,
+        f.frs_nombre,
+        f.frs_activo,
+        ${sqlVersionActiva('f')} AS formulario_version
+      FROM Formularios_solicitudes f
+      WHERE f.frs_id = @0
     `,
       [formularioId],
     );
@@ -255,14 +331,15 @@ export class FormulariosService {
         fv_descripcion AS version_descripcion,
         fv_created_at AS created_at,
         fv_created_by AS created_by,
-        (SELECT COUNT(*) FROM Formulario_pregunta WHERE fp_frs_id = @0 AND ISNULL(fp_version, 1) = fv_numero) AS total_preguntas,
+        -- Solo activas: las desactivadas no salen en el editor ni al diligenciar.
+        (SELECT COUNT(*) FROM Formulario_pregunta WHERE fp_fv_id = fv_id AND fp_estado = 1) AS total_preguntas,
         -- Necesita este conteo por CADA versión a la vez, así que va inline
         -- como subquery correlacionada en vez de llamar a
         -- contarSolicitudesQueBloqueanVersion() (./version-formulario.util)
         -- en un loop. La condición (sol_ses_id <> 1, un borrador no
         -- cuenta) debe mantenerse igual a la de ese util — es la misma
         -- regla de negocio, ver el comentario ahí para el porqué.
-        (SELECT COUNT(*) FROM solicitudes WHERE sol_formulario_version = fv_numero AND sol_ses_id <> 1) AS total_solicitudes
+        (SELECT COUNT(*) FROM solicitudes WHERE sol_fv_id = fv_id AND sol_ses_id <> 1) AS total_solicitudes
       FROM Formulario_versiones
       WHERE fv_frs_id = @0
       ORDER BY fv_numero DESC
@@ -277,16 +354,13 @@ export class FormulariosService {
   }
 
   async activarVersion(formularioId: number, versionNumero: number) {
-    // "formulario_version" no es una columna real — nunca lo fue. Esto
-    // nunca actualizaba nada (fallaba con "Invalid column name") y por eso
-    // "versión activa" en toda la app siempre terminaba siendo, sin que
-    // nadie lo pudiera cambiar, la más reciente creada. La columna real es
-    // frs_version_activa (migración 20260718_agregar_frs_version_activa).
-    const existe = await this.dataSource.query(
-      `SELECT 1 AS existe FROM Formulario_versiones WHERE fv_frs_id = @0 AND fv_numero = @1`,
-      [formularioId, versionNumero],
+    // La versión activa es frs_fv_id_activa (FK a Formulario_versiones).
+    const fvId = await resolverFvId(
+      this.dataSource,
+      formularioId,
+      versionNumero,
     );
-    if (existe.length === 0) {
+    if (!fvId) {
       throw new Error(
         `La versión ${versionNumero} no existe para este formulario`,
       );
@@ -299,7 +373,7 @@ export class FormulariosService {
     // con un campo NULL en producción.
     const problemas =
       await this.clienteDatosNormalizadosService.validarColumnasMapeadas(
-        versionNumero,
+        fvId,
         this.dataSource,
       );
     if (problemas.length > 0) {
@@ -312,10 +386,10 @@ export class FormulariosService {
     await this.dataSource.query(
       `
       UPDATE Formularios_solicitudes
-      SET frs_version_activa = @1
+      SET frs_fv_id_activa = @1
       WHERE frs_id = @0
     `,
-      [formularioId, versionNumero],
+      [formularioId, fvId],
     );
 
     return {
@@ -325,17 +399,10 @@ export class FormulariosService {
   }
 
   async eliminarVersion(formularioId: number, versionNumero: number) {
-    // "versión activa" = la fijada a mano con activarVersion
-    // (frs_version_activa), o si nadie la fijó, la más reciente creada —
-    // mismo criterio que obtenerActivo/listar/obtenerVersiones.
+    // "versión activa" = frs_fv_id_activa (la fija activarVersion; crear()
+    // ya deja marcada la versión inicial).
     const formulario = await this.dataSource.query(
-      `
-      SELECT
-        frs_id,
-        ISNULL(frs_version_activa, ISNULL((SELECT MAX(fv_numero) FROM Formulario_versiones WHERE fv_frs_id = frs_id), 1)) AS formulario_version
-      FROM Formularios_solicitudes
-      WHERE frs_id = @0
-      `,
+      `SELECT frs_id, frs_fv_id_activa FROM Formularios_solicitudes WHERE frs_id = @0`,
       [formularioId],
     );
 
@@ -343,18 +410,32 @@ export class FormulariosService {
       throw new Error('Formulario no encontrado');
     }
 
-    if (formulario[0].formulario_version === versionNumero) {
+    const fvId = await resolverFvId(
+      this.dataSource,
+      formularioId,
+      versionNumero,
+    );
+    if (!fvId) {
+      throw new Error(
+        `La versión ${versionNumero} no existe para este formulario`,
+      );
+    }
+
+    if (formulario[0].frs_fv_id_activa === fvId) {
       throw new Error('No se puede eliminar la versión activa');
     }
 
-    const usedInSolicitudes = await this.dataSource.query(
-      `SELECT COUNT(*) AS total FROM solicitudes WHERE sol_formulario_version = @0`,
-      [versionNumero],
+    const [uso] = await this.dataSource.query(
+      `SELECT
+         COUNT(*) AS total,
+         SUM(CASE WHEN sol_ses_id = 1 THEN 1 ELSE 0 END) AS borradores
+       FROM solicitudes WHERE sol_fv_id = @0`,
+      [fvId],
     );
 
-    if (usedInSolicitudes[0].total > 0) {
+    if (uso.total > 0) {
       throw new Error(
-        'No se puede eliminar la versión porque ya está asociada a solicitudes existentes',
+        `No se puede eliminar la versión porque tiene ${describirSolicitudes(uso.total, uso.borradores)}.`,
       );
     }
 
@@ -369,26 +450,25 @@ export class FormulariosService {
         WHERE fpo_fp_id IN (
           SELECT fp_id
           FROM Formulario_pregunta
-          WHERE fp_frs_id = @0 AND ISNULL(fp_version, 1) = @1
+          WHERE fp_fv_id = @0
         )
       `,
-        [formularioId, versionNumero],
+        [fvId],
       );
 
       await queryRunner.query(
-        `
-        DELETE FROM Formulario_pregunta
-        WHERE fp_frs_id = @0 AND ISNULL(fp_version, 1) = @1
-      `,
-        [formularioId, versionNumero],
+        `DELETE FROM Formulario_pregunta WHERE fp_fv_id = @0`,
+        [fvId],
       );
 
       await queryRunner.query(
-        `
-        DELETE FROM Formulario_versiones
-        WHERE fv_frs_id = @0 AND fv_numero = @1
-      `,
-        [formularioId, versionNumero],
+        `DELETE FROM Formulario_secciones WHERE fs_fv_id = @0`,
+        [fvId],
+      );
+
+      await queryRunner.query(
+        `DELETE FROM Formulario_versiones WHERE fv_id = @0`,
+        [fvId],
       );
 
       await queryRunner.commitTransaction();
@@ -398,6 +478,13 @@ export class FormulariosService {
       };
     } catch (error) {
       await queryRunner.rollbackTransaction();
+      if (esViolacionFk(error)) {
+        // Entre las validaciones y el DELETE alguien la activó o creó una
+        // solicitud con ella (FK de frs_fv_id_activa o de sol_fv_id).
+        throw new Error(
+          `No se puede eliminar la versión ${versionNumero}: se acaba de activar o de usar en una solicitud.`,
+        );
+      }
       throw error;
     } finally {
       await queryRunner.release();
@@ -416,68 +503,86 @@ export class FormulariosService {
       throw new Error('formularioId inválido');
     }
 
-    const maxVersionResult = await this.dataSource.query(
-      `
-        SELECT ISNULL(MAX(fv_numero), 0) as max_version
-        FROM Formulario_versiones
-        WHERE fv_frs_id = @0
-      `,
-      [formularioId],
-    );
-
-    const nuevoNumeroVersion = maxVersionResult[0].max_version + 1;
-
-    const insertSql = `
-      INSERT INTO Formulario_versiones (
-        fv_frs_id,
-        fv_numero,
-        fv_descripcion,
-        fv_created_at,
-        fv_created_by
-      )
-      OUTPUT INSERTED.fv_id
-      VALUES (
-        @0,
-        @1,
-        @2,
-        dbo.fn_ahora_colombia(),
-        @3
-      )
-    `;
-
-    const insertResult = await this.dataSource.query(insertSql, [
-      formularioId,
-      nuevoNumeroVersion,
-      String(data.descripcion || '').trim() || null,
-      Number(data.usuarioId) || 1,
-    ]);
-    const versionId = insertResult[0]?.fv_id;
-
+    let fvIdOrigen: number | null = null;
     if (data.copiarDeVersion) {
-      await this.copiarPreguntasAVersion(
+      fvIdOrigen = await resolverFvId(
+        this.dataSource,
         formularioId,
         data.copiarDeVersion,
-        nuevoNumeroVersion,
       );
+      if (!fvIdOrigen) {
+        throw new Error(
+          `La versión ${data.copiarDeVersion} no existe para este formulario`,
+        );
+      }
     }
+    const columnas = fvIdOrigen ? await this.columnasAClonar() : null;
 
-    return {
-      success: true,
-      versionId,
-      versionNumero: nuevoNumeroVersion,
-      message: 'Versión creada exitosamente',
-    };
+    // Todo en una transacción (Fase 6, plan-correccion-modelo-datos-formulario.md):
+    // antes la versión se insertaba y el clonado iba en consultas sueltas, así
+    // que un fallo a mitad dejaba una versión a medio copiar.
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    try {
+      // MAX + 1 dentro de la transacción; UQ_Formulario_versiones_frs_numero
+      // rechaza el duplicado si dos personas crean una versión a la vez.
+      const [version] = await queryRunner.query(
+        `
+        DECLARE @v TABLE (fv_id INT, fv_numero INT);
+        INSERT INTO Formulario_versiones
+          (fv_frs_id, fv_numero, fv_descripcion, fv_created_at, fv_created_by)
+        OUTPUT INSERTED.fv_id, INSERTED.fv_numero INTO @v
+        SELECT @0, ISNULL(MAX(fv_numero), 0) + 1, @1, dbo.fn_ahora_colombia(), @2
+        FROM Formulario_versiones WITH (UPDLOCK, HOLDLOCK)
+        WHERE fv_frs_id = @0;
+        SELECT fv_id, fv_numero FROM @v;
+        `,
+        [
+          formularioId,
+          String(data.descripcion || '').trim() || null,
+          // Sin usuario queda NULL, no a nombre del admin 1.
+          Number(data.usuarioId) || null,
+        ],
+      );
+
+      if (fvIdOrigen && columnas) {
+        await this.clonarContenidoVersion(
+          queryRunner,
+          columnas,
+          fvIdOrigen,
+          version.fv_id,
+        );
+      }
+
+      await queryRunner.commitTransaction();
+      return {
+        success: true,
+        versionId: version.fv_id,
+        versionNumero: version.fv_numero,
+        message: 'Versión creada exitosamente',
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
   }
 
-  // Columnas de Formulario_pregunta que NO se copian tal cual al clonar a
-  // una versión nueva: fp_id es identity (se genera solo), y estas tres se
-  // fuerzan a un valor propio de la versión nueva en vez de heredar el de
-  // origen.
-  private static readonly COLUMNAS_CLONAR_EXCLUIDAS = new Set([
-    'fp_id',
-    'fp_version',
-    'fp_created_at',
-  ]);
+  // Columnas que NO se copian tal cual al clonar: las identity y las que toman
+  // un valor propio de la versión nueva.
+  private static readonly COLUMNAS_CLONAR_EXCLUIDAS: Record<string, string[]> =
+    {
+      Formulario_secciones: ['fs_id', 'fs_fv_id', 'fs_created_at'],
+      Formulario_pregunta: [
+        'fp_id',
+        'fp_fv_id',
+        'fp_created_at',
+        'fp_fs_id',
+      ],
+      Formulario_pregunta_opcion: ['fpo_id', 'fpo_fp_id'],
+    };
 
   // Columnas que apuntan a OTRA fila de Formulario_pregunta (fp_id de la
   // versión de origen) — tras clonar hay que reescribirlas para que
@@ -486,155 +591,109 @@ export class FormulariosService {
   private static readonly COLUMNAS_AUTORREFERENCIA = [
     'fp_pregunta_padre_id',
     'fp_tabla_limite_pregunta_id',
+    'fp_catalogo_filtro_pregunta_id',
   ];
 
-  // Clona todas las preguntas (y sus opciones) de `versionOrigen` a
-  // `versionNueva`, dentro del mismo formulario.
-  //
-  // Antes esto tenía una lista de columnas a mano (~12 de las ~25 que
-  // tiene la tabla) — cualquier columna agregada después (fp_codigo,
-  // fp_tabla_columnas, fp_catalogo_*, fp_tdo_id,
-  // fp_oculto_en_formulario, ...) quedaba afuera en silencio: una pregunta
-  // tipo tabla perdía sus columnas, un CATALOGO perdía el vínculo a su
-  // tabla externa, una pregunta oculta (ver fp_oculto_en_formulario) volvía
-  // a aparecer visible en la versión nueva. Ahora se lee la lista de
-  // columnas de INFORMATION_SCHEMA, así que una columna nueva se copia
-  // automáticamente sin tener que acordarse de tocar este método.
-  private async copiarPreguntasAVersion(
-    formularioId: number,
-    versionOrigen: number,
-    versionNueva: number,
-  ) {
-    const columnasInfo = await this.dataSource.query(`
-      SELECT COLUMN_NAME
-      FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_NAME = 'Formulario_pregunta'
-      ORDER BY ORDINAL_POSITION
-    `);
-    const columnasACopiar: string[] = columnasInfo
-      .map((c: { COLUMN_NAME: string }) => c.COLUMN_NAME)
-      .filter(
-        (c: string) => !FormulariosService.COLUMNAS_CLONAR_EXCLUIDAS.has(c),
+  // La lista de columnas sale de INFORMATION_SCHEMA, así que una columna
+  // nueva se copia sola. Antes preguntas tenía una lista a mano (~12 de ~25):
+  // cualquier columna agregada después (fp_codigo, fp_tabla_columnas,
+  // fp_catalogo_*, fp_oculto_en_formulario...) se perdía en silencio al
+  // clonar; opciones seguía con lista a mano.
+  private async columnasAClonar(): Promise<Record<string, string[]>> {
+    const filas: { TABLE_NAME: string; COLUMN_NAME: string }[] = await this
+      .dataSource.query(`
+        SELECT TABLE_NAME, COLUMN_NAME
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_NAME IN ('Formulario_secciones', 'Formulario_pregunta', 'Formulario_pregunta_opcion')
+          AND COLUMNPROPERTY(OBJECT_ID(TABLE_NAME), COLUMN_NAME, 'IsComputed') = 0
+        ORDER BY TABLE_NAME, ORDINAL_POSITION
+      `);
+    const resultado: Record<string, string[]> = {};
+    for (const tabla of Object.keys(
+      FormulariosService.COLUMNAS_CLONAR_EXCLUIDAS,
+    )) {
+      const excluidas = new Set(
+        FormulariosService.COLUMNAS_CLONAR_EXCLUIDAS[tabla],
       );
+      resultado[tabla] = filas
+        .filter((f) => f.TABLE_NAME === tabla && !excluidas.has(f.COLUMN_NAME))
+        .map((f) => f.COLUMN_NAME);
+    }
+    return resultado;
+  }
 
-    const preguntasOrigen: any[] = await this.dataSource.query(
+  // Clona secciones, preguntas y opciones de `fvIdOrigen` a `fvIdNueva` en un
+  // solo lote SQL. MERGE ... OUTPUT devuelve la
+  // pareja id viejo -> id nuevo, que un INSERT ... SELECT no puede dar; con eso
+  // se reasignan secciones, autorreferencias y opciones sin un viaje a la base
+  // por fila (uno por fila tardaba más de 2 minutos contra la base remota, y
+  // dentro de una transacción no se puede repartir en varias conexiones).
+  private async clonarContenidoVersion(
+    queryRunner: QueryRunner,
+    columnas: Record<string, string[]>,
+    fvIdOrigen: number,
+    fvIdNueva: number,
+  ) {
+    const lista = (cols: string[], prefijo = '') =>
+      cols.map((c) => `${prefijo}[${c}]`).join(', ');
+    const cSec = columnas.Formulario_secciones;
+    const cPreg = columnas.Formulario_pregunta;
+    const cOpc = columnas.Formulario_pregunta_opcion;
+    const remapeos = FormulariosService.COLUMNAS_AUTORREFERENCIA.map(
+      (c) => `
+      UPDATE p SET p.[${c}] = m.nuevo
+      FROM Formulario_pregunta p
+      JOIN @preg yo ON yo.nuevo = p.fp_id
+      JOIN @preg m ON m.viejo = p.[${c}];`,
+    ).join('\n');
+
+    await queryRunner.query(
       `
-        SELECT fp_id, ${columnasACopiar.map((c) => `[${c}]`).join(', ')}
-        FROM Formulario_pregunta
-        WHERE fp_frs_id = @0 AND ISNULL(fp_version, 1) = @1
+      DECLARE @secc TABLE (viejo INT, nuevo INT);
+      DECLARE @preg TABLE (viejo INT, nuevo INT);
+
+      MERGE Formulario_secciones AS t
+      USING (SELECT * FROM Formulario_secciones WHERE fs_fv_id = @0) AS s
+      ON 1 = 0
+      WHEN NOT MATCHED THEN
+        INSERT (${lista(cSec)}, fs_fv_id, fs_created_at)
+        VALUES (${lista(cSec, 's.')}, @1, dbo.fn_ahora_colombia())
+      OUTPUT s.fs_id, INSERTED.fs_id INTO @secc (viejo, nuevo);
+
+      MERGE Formulario_pregunta AS t
+      USING (
+        SELECT p.*, ms.nuevo AS fs_nuevo
+        FROM Formulario_pregunta p
+        LEFT JOIN @secc ms ON ms.viejo = p.fp_fs_id
+        WHERE p.fp_fv_id = @0
+          -- Las desactivadas no se arrastran (nada las reactiva), salvo que
+          -- una activa las referencie: sin ellas el remapeo de abajo no
+          -- encontraría pareja y la referencia quedaría en la versión vieja.
+          AND (
+            p.fp_estado = 1
+            OR EXISTS (
+              SELECT 1 FROM Formulario_pregunta a
+              WHERE a.fp_fv_id = @0 AND a.fp_estado = 1
+                AND p.fp_id IN (${FormulariosService.COLUMNAS_AUTORREFERENCIA.map((c) => `a.[${c}]`).join(', ')})
+            )
+          )
+      ) AS s
+      ON 1 = 0
+      WHEN NOT MATCHED THEN
+        INSERT (${lista(cPreg)}, fp_fs_id, fp_fv_id, fp_created_at)
+        VALUES (${lista(cPreg, 's.')}, ISNULL(s.fs_nuevo, s.fp_fs_id), @1, dbo.fn_ahora_colombia())
+      OUTPUT s.fp_id, INSERTED.fp_id INTO @preg (viejo, nuevo);
+
+      ${remapeos}
+
+      INSERT INTO Formulario_pregunta_opcion (fpo_fp_id, ${lista(cOpc)})
+      SELECT m.nuevo, ${lista(cOpc, 'o.')}
+      FROM Formulario_pregunta_opcion o
+      JOIN @preg m ON m.viejo = o.fpo_fp_id
+      WHERE o.fpo_estado = 1;
       `,
-      [formularioId, versionOrigen],
+      [fvIdOrigen, fvIdNueva],
     );
-
-    if (preguntasOrigen.length === 0) return;
-
-    // fp_id de la versión de origen -> fp_id ya clonado en la versión nueva.
-    // Cada INSERT necesita su propio viaje a la base para capturar el
-    // fp_id que genera el IDENTITY (no se puede armar en un solo INSERT
-    // multi-fila sin perder la correlación fila-a-fila) — pero con
-    // concurrencia acotada en vez de uno por uno: un formulario real de
-    // ~90 preguntas tardaba más de 2 minutos en secuencial contra la base
-    // remota.
-    const mapaIds = new Map<number, number>();
-    await this.enConcurrencia(preguntasOrigen, 8, async (pregunta) => {
-      const columnasInsert = [
-        ...columnasACopiar,
-        'fp_version',
-        'fp_created_at',
-      ];
-      const valores: any[] = columnasACopiar.map((c) => pregunta[c]);
-      const placeholders = valores.map((_, i) => `@${i}`);
-      placeholders.push(`@${valores.length}`, 'dbo.fn_ahora_colombia()');
-      valores.push(versionNueva);
-
-      const insertResult = await this.dataSource.query(
-        `
-          INSERT INTO Formulario_pregunta (${columnasInsert.map((c) => `[${c}]`).join(', ')})
-          OUTPUT INSERTED.fp_id
-          VALUES (${placeholders.join(', ')})
-        `,
-        valores,
-      );
-      mapaIds.set(pregunta.fp_id, insertResult[0].fp_id);
-    });
-
-    // Reescribir las auto-referencias para que apunten al clon nuevo del
-    // mismo pariente, no al de la versión de origen. Se filtra primero:
-    // en la mayoría de los formularios son pocas preguntas condicionales
-    // entre decenas simples, no vale la pena tocar la base por cada una.
-    const conAutorreferencia = preguntasOrigen.filter((p) =>
-      FormulariosService.COLUMNAS_AUTORREFERENCIA.some((c) => p[c]),
-    );
-    await this.enConcurrencia(conAutorreferencia, 8, async (pregunta) => {
-      const nuevoPropioId = mapaIds.get(pregunta.fp_id);
-      if (!nuevoPropioId) return;
-
-      for (const columna of FormulariosService.COLUMNAS_AUTORREFERENCIA) {
-        const viejoPadreId = pregunta[columna];
-        if (!viejoPadreId) continue;
-        const nuevoPadreId = mapaIds.get(viejoPadreId);
-        if (!nuevoPadreId) continue;
-
-        await this.dataSource.query(
-          `UPDATE Formulario_pregunta SET [${columna}] = @0 WHERE fp_id = @1`,
-          [nuevoPadreId, nuevoPropioId],
-        );
-      }
-    });
-
-    // Opciones: se copian por el fp_id exacto ya mapeado (no por
-    // coincidencia de texto de la descripción — ya hay un caso real de dos
-    // preguntas "Tipo de solicitud" con el mismo texto en Aviso legal), y
-    // en un único INSERT set-based con la correlación viejo->nuevo inline,
-    // en vez de una consulta por pregunta.
-    const pares = Array.from(mapaIds.entries());
-    for (const lote of this.enLotes(pares, 200)) {
-      const params: number[] = [];
-      const filasValues = lote
-        .map(([viejoId, nuevoId]) => {
-          const i = params.length;
-          params.push(viejoId, nuevoId);
-          return `(@${i}, @${i + 1})`;
-        })
-        .join(', ');
-
-      await this.dataSource.query(
-        `
-          INSERT INTO Formulario_pregunta_opcion (fpo_fp_id, fpo_valor, fpo_estado, fpo_codigo)
-          SELECT m.nuevo_id, fpo.fpo_valor, fpo.fpo_estado, fpo.fpo_codigo
-          FROM Formulario_pregunta_opcion fpo
-          INNER JOIN (VALUES ${filasValues}) AS m(viejo_id, nuevo_id)
-            ON fpo.fpo_fp_id = m.viejo_id
-        `,
-        params,
-      );
-    }
-  }
-
-  private enLotes<T>(items: T[], tamano: number): T[][] {
-    const lotes: T[][] = [];
-    for (let i = 0; i < items.length; i += tamano) {
-      lotes.push(items.slice(i, i + tamano));
-    }
-    return lotes;
-  }
-
-  private async enConcurrencia<T>(
-    items: T[],
-    concurrencia: number,
-    fn: (item: T) => Promise<void>,
-  ) {
-    let indice = 0;
-    const trabajadores = Array.from(
-      { length: Math.min(concurrencia, items.length) },
-      async () => {
-        while (indice < items.length) {
-          const actual = items[indice++];
-          await fn(actual);
-        }
-      },
-    );
-    await Promise.all(trabajadores);
   }
 
   async getFormularioCompleto(formularioId: number, version?: string) {
@@ -644,60 +703,44 @@ export class FormulariosService {
     }
 
     const versionNum = version
-      ? parseInt(version)
+      ? Number(version)
       : formulario.formulario_version;
+    if (!Number.isInteger(versionNum) || versionNum <= 0) {
+      throw new BadRequestException(`Versión inválida: ${version}`);
+    }
+    const fvId = await resolverFvId(this.dataSource, formularioId, versionNum);
+    if (!fvId) {
+      throw new NotFoundException(
+        `La versión ${versionNum} no existe para este formulario`,
+      );
+    }
 
     const [secciones, preguntas, tipos, totalSolicitudesQueBloquean] =
       await Promise.all([
+        // SELECT * por lo mismo que en preguntas (abajo): el editor de
+        // secciones devuelve fs_oculta_en_formulario y fs_descripcion.
         this.dataSource.query(
           `
-        SELECT
-          fs_id,
-          fs_nombre,
-          fs_orden,
-          fs_activo
+        SELECT *
         FROM Formulario_secciones
+        WHERE fs_fv_id = @0
         ORDER BY fs_orden ASC
       `,
+          [fvId],
         ),
+        // SELECT * a propósito: el editor devuelve al guardar todo lo que
+        // recibe, y una columna que faltara acá le llegaba vacía y pisaba la
+        // configuración guardada (pasó con fp_oculto_en_formulario y
+        // fp_catalogo_filtro_*). Mismo criterio que columnasAClonar().
         this.dataSource.query(
           `
-        SELECT
-          fp_id,
-          fp_frs_id,
-          fp_descripcion,
-          fp_tipo,
-          fp_subtipo,
-          seccion_id,
-          fp_estado,
-          fp_requerida,
-          fp_orden,
-          fp_version,
-          fp_minimo,
-          fp_maximo,
-          fp_patron,
-          fp_tabla_maestro,
-          fp_pregunta_padre_id,
-          fp_valor_padre_disparador,
-          fp_catalogo_base_datos,
-          fp_catalogo_tabla,
-          fp_catalogo_columna,
-          fp_catalogo_pk_column,
-          fp_tdo_id,
-          fp_precarga_fuente,
-          fp_precarga_campo_cliente,
-          fp_tabla_columnas,
-          fp_ancho_columnas,
-          fp_tabla_limite_modo,
-          fp_tabla_limite_pregunta_id,
-          fp_tabla_limite_reglas
+        SELECT *
         FROM Formulario_pregunta
-        WHERE fp_frs_id = @0
-          AND fp_version = @1
+        WHERE fp_fv_id = @0
           AND fp_estado = 1
         ORDER BY fp_orden ASC
       `,
-          [formularioId, versionNum],
+          [fvId],
         ),
         this.dataSource.query(`
         SELECT
@@ -712,7 +755,7 @@ export class FormulariosService {
         // tiene solicitudes (sin contar Borradores), el frontend debe avisar
         // antes de que el usuario intente editar, no recién al fallar el
         // guardado.
-        contarSolicitudesQueBloqueanVersion(this.dataSource, versionNum),
+        contarSolicitudesQueBloqueanVersion(this.dataSource, fvId),
       ]);
 
     const idsConOpciones = preguntas
@@ -728,7 +771,7 @@ export class FormulariosService {
         .join(', ');
       const opciones = await this.dataSource.query(
         `
-          SELECT fpo_id, fpo_fp_id, fpo_valor, fpo_estado
+          SELECT fpo_id, fpo_fp_id, fpo_valor, fpo_codigo, fpo_estado
           FROM Formulario_pregunta_opcion
           WHERE fpo_estado = 1
             AND fpo_fp_id IN (${placeholders})

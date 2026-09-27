@@ -48,8 +48,9 @@ export class FormularioPregunta {
   @Column({ type: 'int' })
   fp_orden: number;
 
-  @Column({ type: 'int' })
-  fp_version: number;
+  // Versión a la que pertenece la pregunta (FK a Formulario_versiones).
+  @Column({ type: 'int', nullable: true })
+  fp_fv_id: number | null;
 
   @CreateDateColumn({ type: 'datetime2' })
   fp_created_at: Date;
@@ -64,7 +65,7 @@ export class FormularioPregunta {
   fp_frs_id: number | null;
 
   @Column({ type: 'int', nullable: true })
-  seccion_id: number | null;
+  fp_fs_id: number | null;
 
   @Column({ type: 'bit', default: false })
   fp_requerida: boolean;
@@ -102,6 +103,13 @@ export class FormularioPregunta {
   @Column({ type: 'nvarchar', length: 500, nullable: true })
   fp_valor_padre_disparador: string | null;
 
+  // fpo_codigo de la opción del padre que muestra esta pregunta. Cuando está,
+  // manda sobre fp_valor_padre_disparador (que queda como texto visible y
+  // respaldo para padres sin opciones). Ver Fase 5 de
+  // plan-correccion-modelo-datos-formulario.md.
+  @Column({ type: 'nvarchar', length: 200, nullable: true })
+  fp_fpo_codigo_disparador: string | null;
+
   @Column({ type: 'nvarchar', length: 'MAX', nullable: true })
   fp_tabla_columnas: string | null;
 
@@ -136,7 +144,7 @@ export class FormularioPregunta {
   fp_oculto_en_formulario: boolean;
 
   @ManyToOne(() => Seccion, { nullable: true })
-  @JoinColumn({ name: 'seccion_id' })
+  @JoinColumn({ name: 'fp_fs_id' })
   seccion: Seccion;
 
   @OneToMany(() => FormularioPreguntaOpcion, (op) => op.pregunta)

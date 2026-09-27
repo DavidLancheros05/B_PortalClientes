@@ -47,13 +47,15 @@ export class SolicitudesDocumentosService {
           wr.wee_nombre as resultado_nombre,
           wr.wee_codigo as resultado_codigo,
           s.sol_fecha_aprobacion as fecha_aprobacion,
+          (SELECT fv.fv_numero FROM Formulario_versiones fv WHERE fv.fv_id = s.sol_fv_id) as fv_numero,
+          (SELECT fv.fv_frs_id FROM Formulario_versiones fv WHERE fv.fv_id = s.sol_fv_id) as fv_frs_id,
           (
             SELECT TOP 1 fr.fr_valor_numero
             FROM Formulario_respuesta fr
             JOIN Formulario_pregunta fp ON fp.fp_id = fr.fr_fp_id
             WHERE fr.fr_sol_id = s.sol_id
               AND fp.fp_codigo = 'CONCEPTO_CONSUMO_PROYECTADO'
-              AND ISNULL(fp.fp_version, 1) = s.sol_formulario_version
+              AND fp.fp_fv_id = s.sol_fv_id
           ) as cliente_consumo_mensual_proyectado,
           (
             SELECT TOP 1 fr.fr_valor_numero
@@ -61,7 +63,7 @@ export class SolicitudesDocumentosService {
             JOIN Formulario_pregunta fp ON fp.fp_id = fr.fr_fp_id
             WHERE fr.fr_sol_id = s.sol_id
               AND fp.fp_codigo = 'CONCEPTO_TONELADAS_PROYECTADO'
-              AND ISNULL(fp.fp_version, 1) = s.sol_formulario_version
+              AND fp.fp_fv_id = s.sol_fv_id
           ) as cliente_toneladas_proyectadas
         FROM solicitudes s
         LEFT JOIN clientes c ON s.sol_cli_id = c.cli_id
@@ -450,7 +452,7 @@ export class SolicitudesDocumentosService {
       INNER JOIN Formulario_pregunta fp ON fp.fp_tdo_id = td.${COLUMNAS.TIPOS_DOCUMENTOS.id}
       INNER JOIN solicitudes s ON s.sol_id = @0
       WHERE fp.fp_estado = 1
-        AND ISNULL(fp.fp_version, 1) = ISNULL(s.sol_formulario_version, 1)
+        AND fp.fp_fv_id = s.sol_fv_id
       ORDER BY td.${COLUMNAS.TIPOS_DOCUMENTOS.nombre} ASC
     `;
 
