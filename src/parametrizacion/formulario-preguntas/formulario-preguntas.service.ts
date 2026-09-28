@@ -1,9 +1,13 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
-import { FormularioPregunta } from './entities/formulario-pregunta.entity';
+import {
+  FormularioPregunta,
+  TipoPregunta,
+} from './entities/formulario-pregunta.entity';
 import { CreateFormularioPreguntaDto } from './dto/create-formulario-pregunta.dto';
 import { UpdateFormularioPreguntaDto } from './dto/update-formulario-pregunta.dto';
+import { ReordenarPreguntasDto } from './dto/reordenar-preguntas.dto';
 import { normalizeMojibake } from 'src/common/utils/text-encoding.util';
 import {
   contarSolicitudesQueBloqueanVersion,
@@ -16,6 +20,13 @@ import {
   mapaPreguntasProtegidas,
   motivoProteccionPregunta,
 } from './preguntas-protegidas.constant';
+
+// Tipos cuyas respuestas son opciones de Formulario_pregunta_opcion.
+const TIPOS_CON_OPCIONES: string[] = [
+  TipoPregunta.SELECT,
+  TipoPregunta.MULTISELECT,
+  TipoPregunta.DOCUMENTOS_TABLA,
+];
 
 @Injectable()
 export class FormularioPreguntasService {
@@ -275,6 +286,55 @@ export class FormularioPreguntasService {
     };
   }
 
+  // Guarda el orden de una sección en una transacción. Antes el editor
+  // mandaba un PUT por pregunta en paralelo: si uno fallaba, la BD quedaba
+  // con parte del orden nuevo y parte del viejo.
+  async reordenar(dto: ReordenarPreguntasDto) {
+    const ids = dto.fp_ids;
+    if (new Set(ids).size !== ids.length) {
+      throw new BadRequestException(
+        'La lista de preguntas tiene ids repetidos',
+      );
+    }
+
+    await this.formularioPreguntaRepository.manager.transaction(
+      async (manager) => {
+        const filas: { fp_id: number; fp_fv_id: number }[] =
+          await manager.query(
+            `SELECT fp_id, fp_fv_id FROM Formulario_pregunta
+           WHERE fp_fs_id = @0
+             AND fp_id IN (${ids.map((_, i) => `@${i + 1}`).join(', ')})`,
+            [dto.fs_id, ...ids],
+          );
+        if (filas.length !== ids.length) {
+          throw new BadRequestException(
+            'Alguna de las preguntas no pertenece a esta sección. Recarga el editor.',
+          );
+        }
+
+        // Mismo criterio que update: una versión con solicitudes no se toca.
+        const total = await contarSolicitudesQueBloqueanVersion(
+          manager,
+          filas[0].fp_fv_id,
+        );
+        if (total > 0) {
+          throw new BadRequestException(
+            'No se puede cambiar el orden porque esta versión del formulario ya tiene solicitudes asociadas. Creá una nueva versión del formulario para hacer cambios.',
+          );
+        }
+
+        for (const [index, fpId] of ids.entries()) {
+          await manager.query(
+            `UPDATE Formulario_pregunta SET fp_orden = @0 WHERE fp_id = @1`,
+            [index + 1, fpId],
+          );
+        }
+      },
+    );
+
+    return { ok: true };
+  }
+
   async update(id: number, dto: UpdateFormularioPreguntaDto) {
     await this.assertVersionSinSolicitudes(id, 'editar');
     await this.assertNoCambiaTipoPreguntaProtegida(id, dto);
@@ -286,8 +346,19 @@ export class FormularioPreguntasService {
       fv_numero: _fvNumero,
       ...dtoEditable
     } = dto as UpdateFormularioPreguntaDto & { frs_id?: number };
-    const [actual] = await this.formularioPreguntaRepository.manager.query(
-      `SELECT fp_fv_id, fp_pregunta_padre_id, fp_valor_padre_disparador,
+    const [actual]: (
+      | {
+          fp_fv_id: number;
+          fp_tipo: string;
+          fp_pregunta_padre_id: number | null;
+          fp_valor_padre_disparador: string | null;
+          fp_fpo_codigo_disparador: string | null;
+          fp_tabla_limite_pregunta_id: number | null;
+          fp_catalogo_filtro_pregunta_id: number | null;
+        }
+      | undefined
+    )[] = await this.formularioPreguntaRepository.manager.query(
+      `SELECT fp_fv_id, fp_tipo, fp_pregunta_padre_id, fp_valor_padre_disparador,
               fp_fpo_codigo_disparador, fp_tabla_limite_pregunta_id,
               fp_catalogo_filtro_pregunta_id
        FROM Formulario_pregunta WHERE fp_id = @0`,
@@ -310,7 +381,65 @@ export class FormularioPreguntasService {
       ...(await this.derivarCondiciones(dto, actual ?? null)),
     };
 
-    return this.formularioPreguntaRepository.update(id, normalizedDto);
+    // Cambio de tipo: lo que solo tiene sentido para el tipo anterior no se
+    // deja huérfano (antes las opciones quedaban activas y reaparecían si la
+    // pregunta volvía a ser de selección).
+    const tipoNuevo = dto.fp_tipo ?? actual?.fp_tipo;
+    const pierdeOpciones =
+      !!actual &&
+      TIPOS_CON_OPCIONES.includes(actual.fp_tipo) &&
+      !TIPOS_CON_OPCIONES.includes(tipoNuevo);
+    if (tipoNuevo && tipoNuevo !== TipoPregunta.SELECT_TABLA) {
+      Object.assign(normalizedDto, {
+        fp_catalogo_filtro_columna: null,
+        fp_catalogo_filtro_pregunta_id: null,
+        fp_catalogo_filtro_reglas: null,
+      });
+    }
+    if (pierdeOpciones) {
+      await this.assertSinDependientesDeOpciones(id);
+    }
+
+    return this.formularioPreguntaRepository.manager.transaction(
+      async (manager) => {
+        const resultado = await manager
+          .getRepository(FormularioPregunta)
+          .update(id, normalizedDto);
+        if (pierdeOpciones) {
+          await manager.query(
+            `UPDATE Formulario_pregunta_opcion SET fpo_estado = 0
+             WHERE fpo_fp_id = @0 AND fpo_estado = 1`,
+            [id],
+          );
+        }
+        return resultado;
+      },
+    );
+  }
+
+  // Si otras preguntas se muestran, limitan o filtran según las opciones de
+  // esta, quitarle las opciones las rompería en silencio: se pide cambiar
+  // esas condiciones primero.
+  private async assertSinDependientesDeOpciones(fpId: number) {
+    const dependientes: { fp_descripcion: string }[] =
+      await this.formularioPreguntaRepository.manager.query(
+        `SELECT fp_descripcion FROM Formulario_pregunta
+         WHERE fp_estado = 1 AND fp_id <> @0 AND (
+           (fp_pregunta_padre_id = @0 AND fp_fpo_codigo_disparador IS NOT NULL)
+           OR fp_tabla_limite_pregunta_id = @0
+           OR fp_catalogo_filtro_pregunta_id = @0
+         )`,
+        [fpId],
+      );
+    if (dependientes.length > 0) {
+      throw new BadRequestException(
+        `No se puede cambiar el tipo: las preguntas "${dependientes
+          .map((d) => d.fp_descripcion)
+          .join(
+            '", "',
+          )}" dependen de sus opciones. Cambia o quita primero esas condiciones.`,
+      );
+    }
   }
 
   // Identidad estable por columna de una pregunta TABLA, análoga a
@@ -556,7 +685,9 @@ export class FormularioPreguntasService {
     fvId: number,
   ) {
     if (seccionId == null) {
-      throw new BadRequestException('La pregunta debe pertenecer a una sección.');
+      throw new BadRequestException(
+        'La pregunta debe pertenecer a una sección.',
+      );
     }
     const [seccion] = await this.formularioPreguntaRepository.manager.query(
       `SELECT fs_fv_id FROM Formulario_secciones WHERE fs_id = @0`,

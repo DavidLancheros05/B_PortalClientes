@@ -18,6 +18,7 @@ import { FormularioPreguntasService } from './formulario-preguntas.service';
 import { OpcionesService } from '../opciones/opciones.service';
 import { CreateFormularioPreguntaDto } from './dto/create-formulario-pregunta.dto';
 import { UpdateFormularioPreguntaDto } from './dto/update-formulario-pregunta.dto';
+import { ReordenarPreguntasDto } from './dto/reordenar-preguntas.dto';
 import { CreateFormularioPreguntaOpcionDto } from '../opciones/dto/create-formulario-pregunta-opcion.dto';
 import { UpdateFormularioPreguntaOpcionDto } from '../opciones/dto/update-formulario-pregunta-opcion.dto';
 import { AplicarCambiosOpcionesDto } from '../opciones/dto/aplicar-cambios-opciones.dto';
@@ -134,6 +135,13 @@ export class FormularioPreguntasController {
   @Get(':id')
   findOne(@Param('id') id: number) {
     return this.service.findOne(+id);
+  }
+
+  // Declarada antes de PUT :id para que "orden" no se tome como id.
+  @Put('orden')
+  @RequierePermiso('/parametrizacion/formulario-preguntas', 'editar')
+  reordenar(@Body() dto: ReordenarPreguntasDto) {
+    return this.service.reordenar(dto);
   }
 
   @Put(':id')
