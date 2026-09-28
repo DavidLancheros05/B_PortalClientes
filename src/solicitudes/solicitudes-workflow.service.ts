@@ -1095,6 +1095,7 @@ export class SolicitudesWorkflowService {
       cupo?: number;
       plazoPago?: number;
       formaPago?: string;
+      condicionPago?: string;
     },
   ) {
     this.exigirUsuarioInterno(usuario_modifica, 'guardarConceptoGenerico');
@@ -1217,6 +1218,11 @@ export class SolicitudesWorkflowService {
         if (condiciones.formaPago) {
           updateSQL += `, sol_forma_pago = @${paramIndex}`;
           params.push(condiciones.formaPago);
+          paramIndex++;
+        }
+        if (condiciones.condicionPago) {
+          updateSQL += `, sol_condicion_pago = @${paramIndex}`;
+          params.push(condiciones.condicionPago);
           paramIndex++;
         }
         if (usuario_modifica) {
@@ -1697,15 +1703,15 @@ export class SolicitudesWorkflowService {
         });
       }
 
-      // Forma de pago (SELECT_TABLA sobre Forma_pago): guarda el fpg_id en
+      // Forma de pago (SELECT_TABLA sobre Condicion_pago): guarda el cp_id en
       // fr_valor_numero, igual que el resto de respuestas SELECT_TABLA
       const formaPregunta = porCodigo('USO_EXCL_FORMA_PAGO');
       if (formaPregunta && condiciones.formaPago) {
-        const [fp] = await queryRunner.query(
-          `SELECT fpg_id FROM Forma_pago WHERE fpg_nombre = @0`,
+        const [cp] = await queryRunner.query(
+          `SELECT cp_id FROM Condicion_pago WHERE cp_descripcion = @0`,
           [condiciones.formaPago],
         );
-        if (fp) await upsert(formaPregunta.fp_id, { numero: fp.fpg_id });
+        if (cp) await upsert(formaPregunta.fp_id, { numero: cp.cp_id });
       }
     }
   }
@@ -2026,6 +2032,7 @@ export class SolicitudesWorkflowService {
       cupo?: number;
       plazoPago?: number;
       formaPago?: string;
+      condicionPago?: string;
     },
   ) {
     try {
@@ -2040,6 +2047,7 @@ export class SolicitudesWorkflowService {
           s.sol_cupo_aprobado,
           s.sol_plazo_pago,
           s.sol_forma_pago,
+          s.sol_condicion_pago,
           s.sol_fecha_aprobacion
         FROM solicitudes s
         LEFT JOIN clientes c ON c.${lookup.cliId} = s.sol_cli_id
@@ -2112,6 +2120,7 @@ export class SolicitudesWorkflowService {
         '{{cliente_nombre}}': solicitud.cliente_nombre || '-',
         '{{cupo_aprobado}}': this.formatCurrency(solicitud.sol_cupo_aprobado),
         '{{forma_pago}}': solicitud.sol_forma_pago || '-',
+        '{{condicion_pago}}': solicitud.sol_condicion_pago || '-',
         '{{plazo}}': solicitud.sol_plazo_pago
           ? `${solicitud.sol_plazo_pago} días`
           : '-',

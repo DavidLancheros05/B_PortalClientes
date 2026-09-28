@@ -1760,7 +1760,7 @@ export class SolicitudesController {
       console.log(
         `💾 [CONTROLLER] PUT /solicitudes/${id}/concepto-comite-credito-2`,
       );
-      const { comentario, recomendacion, cupo, plazoPago, formaPago } = body;
+      const { comentario, recomendacion, cupo, plazoPago, formaPago, condicionPago } = body;
       const usuario_modifica = req.user.usr_id;
       const aprobado = recomendacion === 'aprobado';
 
@@ -1774,6 +1774,7 @@ export class SolicitudesController {
             cupo: cupo ? parseFloat(cupo) : undefined,
             plazoPago: plazoPago ? parseInt(plazoPago) : undefined,
             formaPago: formaPago || undefined,
+            condicionPago: condicionPago || undefined,
           }
         : undefined;
 

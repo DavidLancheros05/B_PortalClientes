@@ -57,7 +57,7 @@ export class CreateFormularioPreguntaDto {
 
   @IsOptional()
   @IsBoolean()
-  fp_requerida?: boolean;
+  fp_obligatoria?: boolean;
 
   @IsOptional()
   @IsInt()

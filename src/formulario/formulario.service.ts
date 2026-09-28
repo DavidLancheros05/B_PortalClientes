@@ -39,7 +39,7 @@ export class FormularioService {
         fp.fp_tipo,
         fp.fp_subtipo,
         fp.fp_orden,
-        fp.fp_requerida,
+        fp.fp_obligatoria,
         fp.fp_minimo,
         fp.fp_maximo,
         fp.fp_patron,

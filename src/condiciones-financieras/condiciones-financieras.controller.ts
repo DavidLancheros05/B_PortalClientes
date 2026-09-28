@@ -28,11 +28,11 @@ export class CondicionesFinancierasController {
     return this.service.findAll();
   }
 
-  // Debe declararse antes de @Get(':id') para que "formas-pago" no
+  // Debe declararse antes de @Get(':id') para que "condiciones-pago" no
   // caiga en el ParseIntPipe de esa ruta
-  @Get('formas-pago')
-  getFormasPago() {
-    return this.service.getFormasPago();
+  @Get('condiciones-pago')
+  getCondicionesPago() {
+    return this.service.getCondicionesPago();
   }
 
   @Get('solicitud/:solicitudId')

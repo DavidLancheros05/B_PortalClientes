@@ -424,12 +424,12 @@ export class AmpliacionCupoService {
       fr_valor_numero: number | null;
       fr_valor_fecha: string | null;
       fr_valor_opcion_id: number | null;
-      fr_es_multiselect: boolean | null;
       fp_codigo: string;
+      fp_tipo: string;
       fpo_codigo: string | null;
     }[] = await queryRunner.query(
       `SELECT fr.fr_fp_id, fr.fr_valor_texto, fr.fr_valor_numero, fr.fr_valor_fecha,
-              fr.fr_valor_opcion_id, fr.fr_es_multiselect, fp.fp_codigo, fpo.fpo_codigo
+              fr.fr_valor_opcion_id, fp.fp_codigo, fp.fp_tipo, fpo.fpo_codigo
        FROM Formulario_respuesta fr
        JOIN Formulario_pregunta fp ON fp.fp_id = fr.fr_fp_id
        LEFT JOIN Formulario_pregunta_opcion fpo ON fpo.fpo_id = fr.fr_valor_opcion_id
@@ -472,7 +472,6 @@ export class AmpliacionCupoService {
       numero: number | null;
       fecha: string | null;
       opcion_id: number | null;
-      multi: boolean | null;
     }[] = [];
 
     for (const filas of porFpIdOrigen.values()) {
@@ -509,7 +508,6 @@ export class AmpliacionCupoService {
           numero: fila.fr_valor_numero,
           fecha: fila.fr_valor_fecha,
           opcion_id: opcionId,
-          multi: fila.fr_es_multiselect,
         });
       }
     }
@@ -519,11 +517,11 @@ export class AmpliacionCupoService {
     await queryRunner.query(
       `INSERT INTO Formulario_respuesta
          (fr_sol_id, fr_fp_id, fr_valor_texto, fr_valor_numero, fr_valor_fecha,
-          fr_valor_opcion_id, fr_es_multiselect, fr_actualizado_por, fr_completado, fr_created_at)
-       SELECT @0, fp_id, texto, numero, fecha, opcion_id, multi, @2, 1, dbo.fn_ahora_colombia()
+          fr_valor_opcion_id, fr_actualizado_por, fr_completado, fr_created_at)
+       SELECT @0, fp_id, texto, numero, fecha, opcion_id, @2, 1, dbo.fn_ahora_colombia()
        FROM OPENJSON(@1) WITH (
          fp_id INT, texto NVARCHAR(MAX), numero DECIMAL(18, 0), fecha DATE,
-         opcion_id BIGINT, multi BIT
+         opcion_id BIGINT
        )`,
       [solicitudIdNueva, JSON.stringify(filasNuevas), usuarioId],
     );

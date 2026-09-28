@@ -46,9 +46,6 @@ export class FormularioRespuestaEntity {
   @UpdateDateColumn({ name: 'fr_updated_at', nullable: true })
   fr_updated_at: Date;
 
-  @Column({ type: 'bit', nullable: true, name: 'fr_es_multiselect' })
-  fr_es_multiselect: boolean;
-
   @Column({ type: 'bit', nullable: true, name: 'fr_completado' })
   fr_completado: boolean;
 

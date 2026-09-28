@@ -15,9 +15,9 @@ export class CondicionesFinancierasService {
     return this.repo.find();
   }
 
-  getFormasPago(): Promise<{ fpg_id: number; fpg_nombre: string }[]> {
+  getCondicionesPago(): Promise<{ cp_id: number; cp_descripcion: string }[]> {
     return this.dataSource.query(
-      'SELECT fpg_id, fpg_nombre FROM Forma_pago ORDER BY fpg_nombre',
+      'SELECT cp_id, cp_descripcion FROM Condicion_pago WHERE cp_estado = 1 ORDER BY cp_descripcion',
     );
   }
 

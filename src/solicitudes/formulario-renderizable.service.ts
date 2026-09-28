@@ -13,7 +13,7 @@ export interface PreguntaRenderizable {
   fp_descripcion_adicional?: string | null;
   fp_fs_id: number;
   fp_orden: number;
-  fp_requerida: boolean;
+  fp_obligatoria: boolean;
   // Código lógico estable de la pregunta (sobrevive renames y versiones
   // nuevas del formulario) — ancla de los placeholders {{pregunta|cod:...}}
   // de las plantillas de documentos.
@@ -177,7 +177,7 @@ export class FormularioRenderizableService {
             fp.fp_descripcion_adicional,
             fp.fp_tipo,
             fp.fp_orden,
-            fp.fp_requerida,
+            fp.fp_obligatoria,
             fp.fp_pregunta_padre_id,
             fp.fp_valor_padre_disparador,
             fp.fp_fpo_codigo_disparador,
@@ -288,7 +288,10 @@ export class FormularioRenderizableService {
             .get(pregunta.fp_pregunta_padre_id)
             ?.has(pregunta.fp_fpo_codigo_disparador),
         );
-      } else if (pregunta.fp_pregunta_padre_id && pregunta.fp_valor_padre_disparador) {
+      } else if (
+        pregunta.fp_pregunta_padre_id &&
+        pregunta.fp_valor_padre_disparador
+      ) {
         const respuestaPadre = respuestasMap.get(pregunta.fp_pregunta_padre_id);
         esVisible = respuestaPadre === pregunta.fp_valor_padre_disparador;
       }
@@ -326,7 +329,7 @@ export class FormularioRenderizableService {
           fp_codigo: p.fp_codigo,
           fp_fs_id: p.fp_fs_id,
           fp_orden: p.fp_orden,
-          fp_requerida: p.fp_requerida,
+          fp_obligatoria: p.fp_obligatoria,
           es_visible: visibilidadMap.get(p.fp_id) ?? true,
           fp_pregunta_padre_id: p.fp_pregunta_padre_id,
           fp_valor_padre_disparador: p.fp_valor_padre_disparador,

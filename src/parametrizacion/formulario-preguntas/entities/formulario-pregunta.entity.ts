@@ -65,7 +65,7 @@ export class FormularioPregunta {
   fp_fs_id: number;
 
   @Column({ type: 'bit', default: false })
-  fp_requerida: boolean;
+  fp_obligatoria: boolean;
 
   @Column({ type: 'int', nullable: true })
   fp_minimo: number | null;

@@ -23,7 +23,6 @@ type FilaRespuesta = {
   numero: any;
   fecha: any;
   opcion_id: number | null;
-  multi: 0 | 1 | null;
 };
 
 @Injectable()
@@ -68,7 +67,6 @@ export class SolicitudesRespuestasService {
         fr_valor_numero AS [fr_valor_numero],
         fr_valor_fecha AS [fr_valor_fecha],
         fr_valor_opcion_id AS [fr_valor_opcion_id],
-        fr_es_multiselect AS [fr_es_multiselect],
         fr_completado AS [fr_completado],
         fr_observaciones AS [fr_observaciones],
         fr_created_at AS [fr_created_at],
@@ -101,7 +99,6 @@ export class SolicitudesRespuestasService {
         fr.fr_valor_numero AS [fr_valor_numero],
         fr.fr_valor_fecha AS [fr_valor_fecha],
         fr.fr_valor_opcion_id AS [fr_valor_opcion_id],
-        fr.fr_es_multiselect AS [fr_es_multiselect],
         fr.fr_completado AS [fr_completado],
         fr.fr_observaciones AS [fr_observaciones],
         fr.fr_created_at AS [fr_created_at],
@@ -184,22 +181,20 @@ export class SolicitudesRespuestasService {
       return null;
     }
 
-    const multi = esMultiselectTipo ? 1 : 0;
     const vacia: FilaRespuesta = {
       texto: null,
       numero: null,
       fecha: null,
       opcion_id: null,
-      multi: null,
     };
 
     // SELECT_TABLA guarda el id elegido en fr_valor_numero, no en
     // fr_valor_opcion_id (no es una Formulario_pregunta_opcion).
     if (esSelectTabla && opcionesIds.length > 0) {
-      return opcionesIds.map((id) => ({ ...vacia, numero: id, multi }));
+      return opcionesIds.map((id) => ({ ...vacia, numero: id }));
     }
     if (opcionesIds.length > 0) {
-      return opcionesIds.map((id) => ({ ...vacia, opcion_id: id, multi }));
+      return opcionesIds.map((id) => ({ ...vacia, opcion_id: id }));
     }
     return [
       { ...vacia, texto: valorTexto, numero: valorNumero, fecha: valorFecha },
@@ -219,11 +214,11 @@ export class SolicitudesRespuestasService {
       `
         INSERT INTO Formulario_respuesta
           (fr_sol_id, fr_fp_id, fr_valor_texto, fr_valor_numero, fr_valor_fecha,
-           fr_valor_opcion_id, fr_es_multiselect, fr_created_at)
-        SELECT @0, fp_id, texto, numero, fecha, opcion_id, multi, dbo.fn_ahora_colombia()
+           fr_valor_opcion_id, fr_created_at)
+        SELECT @0, fp_id, texto, numero, fecha, opcion_id, dbo.fn_ahora_colombia()
         FROM OPENJSON(@1) WITH (
           fp_id INT, texto NVARCHAR(MAX), numero NVARCHAR(100),
-          fecha NVARCHAR(50), opcion_id BIGINT, multi BIT
+          fecha NVARCHAR(50), opcion_id BIGINT
         )
       `,
       [solicitudId, JSON.stringify(filas)],
