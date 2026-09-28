@@ -3,7 +3,6 @@ import {
   Get,
   Query,
   ParseIntPipe,
-  ForbiddenException,
 } from '@nestjs/common';
 import { MaestrosService } from './maestros.service';
 import { RequierePermiso } from '../permissions/requiere-permiso.decorator';
@@ -73,11 +72,6 @@ export class MaestrosController {
     @Query('tabla') tabla?: string,
     @Query('q') q?: string,
   ) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new ForbiddenException(
-        'catalogo-esquema es una herramienta de desarrollo, deshabilitada en producción',
-      );
-    }
     return this.maestrosService.getCatalogoEsquema(mode, baseDatos, tabla, q);
   }
 }
