@@ -20,6 +20,7 @@ import { CreateFormularioPreguntaDto } from './dto/create-formulario-pregunta.dt
 import { UpdateFormularioPreguntaDto } from './dto/update-formulario-pregunta.dto';
 import { CreateFormularioPreguntaOpcionDto } from '../opciones/dto/create-formulario-pregunta-opcion.dto';
 import { UpdateFormularioPreguntaOpcionDto } from '../opciones/dto/update-formulario-pregunta-opcion.dto';
+import { AplicarCambiosOpcionesDto } from '../opciones/dto/aplicar-cambios-opciones.dto';
 
 @Controller('parametrizacion/formulario-preguntas')
 export class FormularioPreguntasController {
@@ -83,6 +84,17 @@ export class FormularioPreguntasController {
   ) {
     dto.fpo_fp_id = id;
     return this.opcionesService.create(dto);
+  }
+
+  // Guarda de una vez los cambios de opciones hechos en el editor (crear,
+  // renombrar, eliminar), en una transacción. Devuelve las opciones activas.
+  @Put(':id/opciones')
+  @RequierePermiso('/parametrizacion/formulario-preguntas', 'editar')
+  async aplicarCambiosOpciones(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: AplicarCambiosOpcionesDto,
+  ) {
+    return this.opcionesService.aplicarCambios(id, dto);
   }
 
   @Put(':id/opciones/:opcionId')
