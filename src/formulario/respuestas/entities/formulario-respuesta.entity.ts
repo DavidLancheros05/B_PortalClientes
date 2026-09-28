@@ -46,14 +46,11 @@ export class FormularioRespuestaEntity {
   @UpdateDateColumn({ name: 'fr_updated_at', nullable: true })
   fr_updated_at: Date;
 
-  @Column({ type: 'bit', nullable: true, name: 'fr_completado' })
-  fr_completado: boolean;
-
   @Column({ type: 'nvarchar', nullable: true, name: 'fr_observaciones' })
   fr_observaciones: string;
 
-  @Column({ type: 'int', nullable: true, name: 'fr_actualizado_por' })
-  fr_actualizado_por: number;
+  @Column({ type: 'int', nullable: true, name: 'fr_usr_id_actualizo' })
+  fr_usr_id_actualizo: number;
 
   @Column({ type: 'varchar', nullable: true, name: 'fr_valor_catalogo_tipo' })
   fr_valor_catalogo_tipo: string;

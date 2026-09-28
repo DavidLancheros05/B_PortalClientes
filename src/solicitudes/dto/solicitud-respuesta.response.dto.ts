@@ -6,10 +6,9 @@ export class SolicitudRespuestaDto {
   fr_valor_numero?: number | null;
   fr_valor_fecha?: Date | null;
   fr_valor_opcion_id?: number | null;
-  fr_completado?: boolean;
   fr_observaciones?: string | null;
   fr_created_at?: Date;
-  fr_actualizado_por?: number | null;
+  fr_usr_id_actualizo?: number | null;
   fr_updated_at?: Date;
   fr_valor_catalogo_tipo?: string | null;
   fr_valor_catalogo_id?: number | null;

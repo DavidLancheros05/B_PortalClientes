@@ -332,7 +332,7 @@ export class AmpliacionCupoService {
         await queryRunner.query(
           `UPDATE Formulario_respuesta SET
              fr_valor_texto = @0, fr_valor_numero = @1, fr_valor_opcion_id = @2,
-             fr_actualizado_por = @3, fr_updated_at = dbo.fn_ahora_colombia(), fr_completado = 1
+             fr_usr_id_actualizo = @3, fr_updated_at = dbo.fn_ahora_colombia()
            WHERE fr_id = @4`,
           [...params, existente.fr_id],
         );
@@ -340,8 +340,8 @@ export class AmpliacionCupoService {
         await queryRunner.query(
           `INSERT INTO Formulario_respuesta
              (fr_sol_id, fr_fp_id, fr_valor_texto, fr_valor_numero,
-              fr_valor_opcion_id, fr_actualizado_por, fr_completado, fr_created_at)
-           VALUES (@4, @5, @0, @1, @2, @3, 1, dbo.fn_ahora_colombia())`,
+              fr_valor_opcion_id, fr_usr_id_actualizo, fr_created_at)
+           VALUES (@4, @5, @0, @1, @2, @3, dbo.fn_ahora_colombia())`,
           [...params, solicitudId, fp_id],
         );
       }
@@ -517,8 +517,8 @@ export class AmpliacionCupoService {
     await queryRunner.query(
       `INSERT INTO Formulario_respuesta
          (fr_sol_id, fr_fp_id, fr_valor_texto, fr_valor_numero, fr_valor_fecha,
-          fr_valor_opcion_id, fr_actualizado_por, fr_completado, fr_created_at)
-       SELECT @0, fp_id, texto, numero, fecha, opcion_id, @2, 1, dbo.fn_ahora_colombia()
+          fr_valor_opcion_id, fr_usr_id_actualizo, fr_created_at)
+       SELECT @0, fp_id, texto, numero, fecha, opcion_id, @2, dbo.fn_ahora_colombia()
        FROM OPENJSON(@1) WITH (
          fp_id INT, texto NVARCHAR(MAX), numero DECIMAL(18, 0), fecha DATE,
          opcion_id BIGINT
